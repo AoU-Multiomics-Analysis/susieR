@@ -438,6 +438,11 @@ message("Number of overall unique group_ids: ", length(unique(phenotype_list$gro
 message("Number of groups in the batch: ", length(selected_group_ids))
 message("Number of phenotypes in the batch: ", length(selected_phenotypes))
 
+#Define fine-mapped regions
+region_df = dplyr::transmute(phenotype_list, phenotype_id, region = paste0("chr", chromosome, ":", 
+                                                                                        phenotype_pos - cis_distance, "-",
+                                                                                        phenotype_pos + cis_distance))
+
 #Extract credible sets from finemapping results
 message(" # Extract credible sets from finemapping results")
 res = purrr::map(results, extractResults) %>%

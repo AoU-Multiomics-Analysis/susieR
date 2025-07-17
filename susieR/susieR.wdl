@@ -39,3 +39,7 @@ output {
 
     }
 }
+
+workflow susieR_workflow {
+    call susieR 
+}

@@ -378,18 +378,18 @@ make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_
 }
 
 ######### LOAD DATA #######
-expression_matrix = readr::read_tsv(basename(expression_matrix_path)) %>% dplyr::rename('phenotype_id' = 'gene_id')
-covariates_matrix = importQtlmapCovariates(basename(covars_path))
+expression_matrix = readr::read_tsv(opt$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
+covariates_matrix = importQtlmapCovariates(opt$covariates)
 exclude_cov = apply(covariates_matrix, 2, sd) != 0
 covariates_matrix = covariates_matrix[,exclude_cov]
 
 
-cis_distance <- 1000000
-genotype_file <- geno_file
+cis_distance <- opt$cisdistance 
+genotype_file <- opt$genotype_matrix 
 
 # convert sample list into sample metadata 
 # required by eQTLUtils 
-sample_metadata <-  readr::read_tsv(basename(sample_list)) %>% 
+sample_metadata <-  readr::read_tsv(opt$sample_metadata) %>% 
     dplyr::rename('sample_id' =1 ) %>% 
     mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
     mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
@@ -404,7 +404,7 @@ phenotype_meta<- expression_matrix %>%
 
 # import permutation p values from tensorQTL. Note that i had 
 # to make slight changes to this function for it to work 
-phenotype_table = importQtlmapPermutedPvalues(basename(permutation_pvalues))
+phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list)
 
 filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05)
 phenotype_list = dplyr::semi_join(data.frame(group_id=phenotype_table$phenotype_id,phenotype_id=phenotype_table$phenotype_id) , filtered_list, by = "group_id")

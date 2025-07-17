@@ -8,6 +8,7 @@ task susieR {
     Int CisDistance
     String OutputPrefix
     File susie_rscript
+    Int memory
 
 command{
 
@@ -25,7 +26,7 @@ command{
 runtime {
         docker: 'quay.io/kfkf33/susier:v24.01.1'        
         memory: "${memory}GB"
-        disks: "local-disk ${disk_space} HDD"
+        disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
         cpu: "${num_threads}"
         preemptible: "${num_preempt}"

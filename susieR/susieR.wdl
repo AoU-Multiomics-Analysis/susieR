@@ -33,9 +33,9 @@ runtime {
     }
 
 output {
-    File SusieParquet "~{OutputPrefix}.parquet" 
-    File lbfParquet "~{OutputPrefix}.lbf_variable.parquet"
-    File FullSusieParquet "~{OutputPrefix}.full_susie.parquet"
+    File SusieParquet "${OutputPrefix}.parquet" 
+    File lbfParquet "${OutputPrefix}.lbf_variable.parquet"
+    File FullSusieParquet "${OutputPrefix}.full_susie.parquet"
 
     }
 }

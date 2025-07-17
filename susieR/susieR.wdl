@@ -28,7 +28,7 @@ runtime {
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
-        cpu: "${num_threads}"
+        cpu: "4"
         zones: ["us-central1-c"]
     }
 

@@ -29,7 +29,6 @@ runtime {
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
         cpu: "${num_threads}"
-        preemptible: "${num_preempt}"
         zones: ["us-central1-c"]
     }
 

@@ -389,7 +389,7 @@ genotype_file <- opt$genotype_matrix
 
 # convert sample list into sample metadata 
 # required by eQTLUtils 
-sample_metadata <-  fread(opt$sample_meta) %>% 
+sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
     dplyr::rename('sample_id' =1 ) %>% 
     mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
     mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))

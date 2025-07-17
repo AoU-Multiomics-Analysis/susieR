@@ -8,6 +8,9 @@ suppressPackageStartupMessages(library("tidyr"))
 suppressPackageStartupMessages(library("dplyr"))
 suppressPackageStartupMessages(library("arrow"))
 
+install.packages('Rfast')
+suppressPackageStartupMessages(library("Rfast"))
+
 
 ###### PARSE COMMAND LINE ARGUMENTS ########## 
 option_list <- list(

@@ -378,18 +378,18 @@ make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_
 }
 
 ######### LOAD DATA #######
-expression_matrix = readr::read_tsv(opt$expression_matrix)
-covariates_matrix = importQtlmapCovariates(opt$covariates)
+expression_matrix = readr::read_tsv(basename(expression_matrix_path)) %>% dplyr::rename('phenotype_id' = 'gene_id')
+covariates_matrix = importQtlmapCovariates(basename(covars_path))
 exclude_cov = apply(covariates_matrix, 2, sd) != 0
 covariates_matrix = covariates_matrix[,exclude_cov]
 
 
-cis_distance <- opt$cis_distance 
-genotype_file <- opt$genotype_matrix
+cis_distance <- 1000000
+genotype_file <- geno_file
 
 # convert sample list into sample metadata 
 # required by eQTLUtils 
-sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
+sample_metadata <-  readr::read_tsv(basename(sample_list)) %>% 
     dplyr::rename('sample_id' =1 ) %>% 
     mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
     mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
@@ -399,22 +399,20 @@ phenotype_meta<- expression_matrix %>%
     select(1,2,3,4) %>% 
     dplyr::rename('chromosome' = 1,'phenotype_pos' = 2) %>% 
     mutate(strand  = 1) %>% 
-    mutate(phenotype_id = gene_id,group_id = gene_id) %>% 
+    mutate(gene_id = phenotype_id,group_id = phenotype_id) %>% 
     select(phenotype_id,group_id,gene_id,chromosome,phenotype_pos,strand)
 
 # import permutation p values from tensorQTL. Note that i had 
 # to make slight changes to this function for it to work 
-phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list)
+phenotype_table = importQtlmapPermutedPvalues(basename(permutation_pvalues))
 
 filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05)
 phenotype_list = dplyr::semi_join(data.frame(group_id=phenotype_table$phenotype_id,phenotype_id=phenotype_table$phenotype_id) , filtered_list, by = "group_id")
 message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
-
 #Keep only those phenotypes that are present in the expression matrix
 phenotype_list = dplyr::filter(phenotype_list, phenotype_id %in% expression_matrix$phenotype_id)
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
-                                                            select(-1,-2,-3) %>% 
-                                                            dplyr::rename('phenotype_id' = 'gene_id'), 
+                                                            select(-1,-2,-3) , 
                                                          row_data = phenotype_meta, 
                                                          col_data = sample_metadata, 
                                                          quant_method = "gene_counts",

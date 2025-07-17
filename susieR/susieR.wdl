@@ -11,14 +11,14 @@ task susieR {
 
 command{
 
-    Rscript ~{susie_rscript} \
-        --genotype_matrix ~{GenotypeDosages} \
-        --sample_meta ~{SampleList} \
-        --phenotype_list ~{TensorQTLPermutations} \
-        --expresion_matrix ~{PhenotypeBed} \
-        --covariates ~{QTLCovariates} \
-        --out_prefix ~{OutputPrefix} \
-        --cisdistance ~{CisDistance}
+    Rscript ${susie_rscript} \
+        --genotype_matrix ${GenotypeDosages} \
+        --sample_meta ${SampleList} \
+        --phenotype_list ${TensorQTLPermutations} \
+        --expresion_matrix ${PhenotypeBed} \
+        --covariates ${QTLCovariates} \
+        --out_prefix ${OutputPrefix} \
+        --cisdistance ${CisDistance}
 
     } 
 

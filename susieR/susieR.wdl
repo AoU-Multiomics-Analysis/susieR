@@ -41,18 +41,18 @@ output {
 }
 
 workflow susieR_workflow {
-    call susieR{
-    input:
-        GenotypeDosages = GenotypeDosages
-        QTLCovariates = QTLCovariates
-        TensorQTLPermutations = TensorQTLPermutations
-        SampleList = SampleList 
-        PhenotypeBed = PhenotypeBed
-        CisDistance = CisDistance
-        susie_rscript = susie_rscript
-    output:
-        SusieParquet = susieR.SusieParquet
-        lbfParquet = susieR.lbfParquet
-        FullSusieParquet = susieR.FullSusieParquet
-    }
+    call susieR
+    #input:
+        #GenotypeDosages = GenotypeDosages
+        #QTLCovariates = QTLCovariates
+        #TensorQTLPermutations = TensorQTLPermutations
+        #SampleList = SampleList 
+        #PhenotypeBed = PhenotypeBed
+        #CisDistance = CisDistance
+        #susie_rscript = susie_rscript
+    #output:
+        #SusieParquet = susieR.SusieParquet
+        #lbfParquet = susieR.lbfParquet
+        #FullSusieParquet = susieR.FullSusieParquet
+    #}
 }

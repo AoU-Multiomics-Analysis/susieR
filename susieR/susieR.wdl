@@ -16,7 +16,7 @@ command{
         --genotype_matrix ${GenotypeDosages} \
         --sample_meta ${SampleList} \
         --phenotype_list ${TensorQTLPermutations} \
-        --expresion_matrix ${PhenotypeBed} \
+        --expression_matrix ${PhenotypeBed} \
         --covariates ${QTLCovariates} \
         --out_prefix ${OutputPrefix} \
         --cisdistance ${CisDistance}

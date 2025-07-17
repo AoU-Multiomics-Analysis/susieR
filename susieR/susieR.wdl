@@ -1,5 +1,5 @@
 task susieR {
-
+input{
     File GenotypeDosages 
     File QTLCovariates 
     File TensorQTLPermutations
@@ -9,7 +9,7 @@ task susieR {
     String OutputPrefix
     File susie_rscript
     Int memory
-
+    }
 command{
 
     Rscript ${susie_rscript} \
@@ -41,5 +41,18 @@ output {
 }
 
 workflow susieR_workflow {
-    call susieR 
+    call susieR{
+    input:
+        GenotypeDosages = GenotypeDosages
+        QTLCovariates = QTLCovariates
+        TensorQTLPermutations = TensorQTLPermutations
+        SampleList = SampleList 
+        PhenotypeBed = PhenotypeBed
+        CisDistance = CisDistance
+        susie_rscript = susie_rscript
+    output:
+        SusieParquet = susieR.SusieParquet
+        lbfParquet = susieR.lbfParquet
+        FullSusieParquet = susieR.FullSusieParquet
+    }
 }

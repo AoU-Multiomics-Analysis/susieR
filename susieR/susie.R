@@ -531,12 +531,12 @@ arrow::write_parquet(variant_df, paste0(opt$out_prefix, ".full_susie.parquet"))
 
 
 
-in_cs_variant_df_filt <- in_cs_variant_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
-cs_df_filt <- cs_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
-variant_df_filt <- variant_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
-lbf_df_filt <- lbf_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
-arrow::write_parquet(in_cs_variant_df_filt, paste0(opt$out_prefix, ".parquet"))
-arrow::write_parquet(lbf_df_filt, paste0(opt$out_prefix, ".lbf_variable.parquet"))
-arrow::write_parquet(variant_df_filt, paste0(opt$out_prefix, ".full_susie.parquet"))
+#in_cs_variant_df_filt <- in_cs_variant_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
+#cs_df_filt <- cs_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
+#variant_df_filt <- variant_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
+#lbf_df_filt <- lbf_df %>% dplyr::filter(molecular_trait_id %in% needed_phenotype_ids)
+#arrow::write_parquet(in_cs_variant_df_filt, paste0(opt$out_prefix, ".parquet"))
+#arrow::write_parquet(lbf_df_filt, paste0(opt$out_prefix, ".lbf_variable.parquet"))
+#arrow::write_parquet(variant_df_filt, paste0(opt$out_prefix, ".full_susie.parquet"))
 
 

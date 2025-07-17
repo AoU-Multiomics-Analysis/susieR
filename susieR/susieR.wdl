@@ -1,6 +1,7 @@
 task susieR {
 #input{
-    File GenotypeDosages 
+    File GenotypeDosages
+    File GenotypeDosageIndex
     File QTLCovariates 
     File TensorQTLPermutations
     File SampleList

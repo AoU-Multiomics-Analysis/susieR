@@ -1,5 +1,5 @@
 task susieR {
-input{
+#input{
     File GenotypeDosages 
     File QTLCovariates 
     File TensorQTLPermutations
@@ -9,7 +9,7 @@ input{
     String OutputPrefix
     File susie_rscript
     Int memory
-    }
+ #   }
 command{
 
     Rscript ${susie_rscript} \

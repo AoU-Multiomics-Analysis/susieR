@@ -437,10 +437,10 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
 message("Number of overall unique group_ids: ", length(unique(phenotype_list$group_id)))
 message("Number of groups in the batch: ", length(selected_group_ids))
 message("Number of phenotypes in the batch: ", length(selected_phenotypes))
-                                                                                       phenotype_pos + cis_distance))
-  #Extract credible sets from finemapping results
-  message(" # Extract credible sets from finemapping results")
-  res = purrr::map(results, extractResults) %>%
+
+#Extract credible sets from finemapping results
+message(" # Extract credible sets from finemapping results")
+res = purrr::map(results, extractResults) %>%
     purrr::transpose()
   
   #Extract information about all variants

@@ -409,7 +409,7 @@ phenotype_meta<- expression_matrix %>%
 # to make slight changes to this function for it to work 
 phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list)
 
-filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05)
+filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
 phenotype_list = dplyr::semi_join(data.frame(group_id=phenotype_table$phenotype_id,phenotype_id=phenotype_table$phenotype_id) , filtered_list, by = "group_id")
 message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
 #Keep only those phenotypes that are present in the expression matrix
@@ -439,10 +439,14 @@ message("Number of groups in the batch: ", length(selected_group_ids))
 message("Number of phenotypes in the batch: ", length(selected_phenotypes))
 
 #Define fine-mapped regions
-region_df = dplyr::transmute(phenotype_list, phenotype_id, region = paste0("chr", chromosome, ":", 
-                                                                                        phenotype_pos - cis_distance, "-",
-                                                                                        phenotype_pos + cis_distance))
-
+#region_df = dplyr::transmute(phenotype_list, phenotype_id, region = paste0("chr", chromosome, ":", 
+#                                                                                        phenotype_pos - cis_distance, "-",
+#                                                                                        phenotype_pos + cis_distance))
+region_df <- phenotype_meta %>% 
+                filter(phenotype_id %in% phenotype_list$phenotype_id) %>% 
+                transmute(phenotype_id,region = paste0(chromosome,':',
+                                                       phenotype_pos - cis_distance,'-',
+                                                       phenotype_pos + cis_distance))
 #Extract credible sets from finemapping results
 message(" # Extract credible sets from finemapping results")
 res = purrr::map(results, extractResults) %>%

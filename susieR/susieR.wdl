@@ -6,7 +6,7 @@ task splitPhenotypeBed {
         Int numSplits
     }
 
-    String baseName = basename(compressedBedFile, ".gz")
+    String baseName = basename(PhenotypeBed, ".gz")
 
     command <<<
         # Decompress the BED file

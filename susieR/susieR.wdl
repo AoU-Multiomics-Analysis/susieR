@@ -6,26 +6,32 @@ task splitPhenotypeBed {
         Int numSplits
     }
 
+    String baseName = basename(compressedBedFile, ".gz")
+
     command <<<
+        # Decompress the BED file
+        gunzip -c ~{PhenotypeBed} > ~{baseName}
+
         # Extract the header line
-        header=$(head -n 1 ${PhenotypeBed})
+        header=$(head -n 1 ~{baseName})
 
         # Get the total number of lines excluding the header
-        total_lines=$(wc -l < ${PhenotypeBed})
-        lines_per_file=$(( (total_lines - 1) / ${numSplits} ))
+        total_lines=$(wc -l < ~{baseName})
+        lines_per_file=$(( (total_lines - 1) / ~{numSplits} ))
 
         # Split the file into parts, excluding the header
-        tail -n +2 ${PhenotypeBed} | split -l ${lines_per_file} - ${PhenotypeBed}.part_
+        tail -n +2 ~{baseName} | split -l ${lines_per_file} - ~{baseName}.part_
 
-        # Add the header to each split file
-        for file in ${PhenotypeBed}.part_*; do
+        # Add the header to each split file and compress with bgzip
+        for file in ~{baseName}.part_*; do
             (echo "${header}" && cat "${file}") > "${file}.with_header"
             mv "${file}.with_header" "${file}"
+            bgzip "${file}"
         done
     >>>
 
     output {
-        Array[File] splitFiles = glob("${PhenotypeBed}.part_*")
+        Array[File] splitFiles = glob("${baseName}.part_*")
     }
 
     runtime {

@@ -35,7 +35,7 @@ task splitPhenotypeBed {
     }
 
     runtime {
-        docker: "quay.io/nf-core/ubuntu:22.04"
+        docker: "quay.io/biocontainers/htslib:1.22.1--h566b1c6_0"
         disks: "local-disk 500 SSD"
         memory: "2GB"
         cpu: "1"

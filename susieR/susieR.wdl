@@ -87,36 +87,38 @@ task susieR {
 }
 
 
-#task merge_susie {
-#    input {
-#    Array[File] SusieOutput 
-#    }
+task MergeSusie {
+    input {
+    Array[File] SusieOutput
+    String OutputPrefix
+    }
     
-#    command <<<
-#    for file in ~{sep='\n' some_file_array_in_WDL}; do
-#    echo $file >> filelist.txt
-#    done
+    command <<<
+    for file in ~{sep='\n' some_file_array_in_WDL}; do
+    echo $file >> filelist.txt
+    done
 
- #   Rscript merge_susie.R \ 
- #       --FilePaths filelist.txt \
- #       --OutputPrefix
- #   >>>
+    Rscript merge_susie.R \ 
+       --FilePaths filelist.txt \
+       --OutputPrefix ~{OutputPrefix}
+   >>>
 
-#runtime {
-#        docker: 'quay.io/kfkf33/susier:v24.01.1'
-#        memory: "${memory}GB"
-#        disks: "local-disk 500 SSD"
-#        bootDiskSizeGb: 25
-#        cpu: "1"
-#    }
-
-
-#    output {
+runtime {
+        docker: 'quay.io/kfkf33/susier:v24.01.1'
+        memory: "${memory}GB"
+        disks: "local-disk 500 SSD"
+        bootDiskSizeGb: 25
+        cpu: "1"
+    }
 
 
-#    }
+    output {
+    File MergedSusieParquet = "${OutputPrefix}_SusieMerged.parquet" 
+    File MergedSusieTsv = "${OutputPrefix}_SusieMerged.tsv.gz" 
 
-#}
+    }
+
+}
 
 workflow susieR_workflow {
     input {
@@ -130,6 +132,7 @@ workflow susieR_workflow {
         File susie_rscript
         Int memory
         Int numSplits
+        String OutputPrefix
     }
 
     call splitPhenotypeBed {
@@ -154,10 +157,18 @@ workflow susieR_workflow {
                 memory = memory
         }
     }
+    
+    call MergeSusie {
+        input:
+            SusieOutput = susieR.SusieParquet
+            OutputPrefix = OutputPrefix 
 
+    } 
     output {
-        Array[File] SusieParquets = susieR.SusieParquet
-        Array[File] lbfParquets = susieR.lbfParquet
-        Array[File] FullSusieParquets = susieR.FullSusieParquet
+        SusieParquet = MergeSusie.MergedSusieParquet
+        SusieTsv = MergeSusie.MergedSusieTsv
+        #Array[File] SusieParquets = susieR.SusieParquet
+        #Array[File] lbfParquets = susieR.lbfParquet
+        #Array[File] FullSusieParquets = susieR.FullSusieParquet
     }
 }

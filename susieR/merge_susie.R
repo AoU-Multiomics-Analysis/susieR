@@ -14,6 +14,41 @@ option_list <- list(
 
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 
+merged_parquet <- paste0(opt$OutputPrefix,'_SusieMerged.parquet') 
+merged_tsv <- paste0(opt$OutputPrefix,'_SusieMerged.tsv.gz') 
+
 
 ######## PARSE DATA #########
-filepath_df <- fread(opt$)
+filepath_df <- fread(opt$FilePaths,header = FALSE) %>% dplyr::rename('path' = 1) %>% pull(path)
+
+variant_df <- dplyr::tibble(
+  molecular_trait_id = character(),
+  variant = character(),
+  chromosome = character(),
+  position = integer(),
+  ref = character(),
+  alt = character(),
+  cs_id = character(),
+  cs_index = character(),
+  region = character(),
+  pip = numeric(),
+  z = numeric(),
+  cs_min_r2 = numeric(),
+  cs_avg_r2 = numeric(),
+  cs_size = integer(),
+  posterior_mean = numeric(),
+  posterior_sd = numeric(),
+  cs_log10bf = numeric()
+)
+
+counter <- 0
+for (x in filepath_df$path){
+current_dat <- arrow::read_parquet(x)
+variant_df <- bind_rows(variant_df,current_dat)
+counter <- counter + 1 
+print(counter)
+
+} 
+
+variant_df %>% fwrite(merged_tsv)
+variant_df %>% arrow::write_parquet(merged_parquet)

@@ -160,12 +160,12 @@ workflow susieR_workflow {
     
     call MergeSusie {
         input:
-                SusieOutput = susieR.SusieParquet
-                OutputPrefix = OutputPrefix 
+            SusieOutput = susieR.SusieParquet,
+            OutputPrefix = OutputPrefix 
 
     } 
     output {
-            SusieParquet = MergeSusie.MergedSusieParquet
+            SusieParquet = MergeSusie.MergedSusieParquet,
             SusieTsv = MergeSusie.MergedSusieTsv
         #Array[File] SusieParquets = susieR.SusieParquet
         #Array[File] lbfParquets = susieR.lbfParquet

@@ -2,6 +2,7 @@ version 1.0
 
 task splitPhenotypeBed {
     input {
+        File TensorQTLPermutations
         File PhenotypeBed
         Int numSplits
     }

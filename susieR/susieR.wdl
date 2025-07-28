@@ -165,8 +165,8 @@ workflow susieR_workflow {
 
     } 
     output {
-        SusieParquet = MergeSusie.MergedSusieParquet
-        SusieTsv = MergeSusie.MergedSusieTsv
+        File SusieParquet = MergeSusie.MergedSusieParquet
+        File SusieTsv = MergeSusie.MergedSusieTsv
         #Array[File] SusieParquets = susieR.SusieParquet
         #Array[File] lbfParquets = susieR.lbfParquet
         #Array[File] FullSusieParquets = susieR.FullSusieParquet

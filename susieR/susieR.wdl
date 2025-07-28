@@ -21,7 +21,7 @@ task splitPhenotypeBed {
 
         # Get the total number of lines excluding the header
         total_lines=$(wc -l < ~{baseName})
-        lines_per_file=1
+        lines_per_file=2
 
         # Split the file into parts, excluding the header
         tail -n +2 ~{baseName} | grep -Ff feature_list.txt    | split -l ${lines_per_file} - ~{baseName}.part_

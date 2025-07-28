@@ -24,7 +24,7 @@ task splitPhenotypeBed {
         lines_per_file=2
 
         # Split the file into parts, excluding the header
-        tail -n +2 ~{baseName} | grep -Ff feature_list.txt    | split -l ${lines_per_file} - ~{baseName}.part_
+        tail -n +2 ~{baseName} | grep -Ff feature_list.txt    | split -l ${lines_per_file} -d -a 5 - ~{baseName}.part_
 
         # Add the header to each split file and compress with bgzip
         for file in ~{baseName}.part_*; do
@@ -85,6 +85,32 @@ task susieR {
         File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
     }
 }
+
+
+#task merge_susie {
+#    input {
+#
+#    }
+#    
+#    command <<<
+#
+#    >>>
+
+#runtime {
+#        docker: 'quay.io/kfkf33/susier:v24.01.1'
+#        memory: "${memory}GB"
+#        disks: "local-disk 500 SSD"
+#        bootDiskSizeGb: 25
+#        cpu: "1"
+#    }
+
+
+#    output {
+
+
+#    }
+
+#}
 
 workflow susieR_workflow {
     input {

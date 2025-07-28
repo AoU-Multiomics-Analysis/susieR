@@ -24,7 +24,7 @@ task splitPhenotypeBed {
         lines_per_file=2
 
         # Split the file into parts, excluding the header
-        tail -n +2 ~{baseName} | grep -Ff feature_list.txt    | split -l ${lines_per_file} -d -a 15 - ~{baseName}.part_
+        tail -n +2 ~{baseName} | grep -Ff feature_list.txt    | split -l ${lines_per_file} -d -a 8 - ~{baseName}.part_
 
         # Add the header to each split file and compress with bgzip
         for file in ~{baseName}.part_*; do

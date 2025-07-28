@@ -20,6 +20,9 @@ merged_tsv <- paste0(opt$OutputPrefix,'_SusieMerged.tsv.gz')
 
 ######## PARSE DATA #########
 filepath_df <- fread(opt$FilePaths,header = FALSE) %>% dplyr::rename('path' = 1) %>% pull(path)
+number_files <- filepath_df %>% length() 
+
+message(paste0('Number of shards found: ',number_files))
 
 variant_df <- dplyr::tibble(
   molecular_trait_id = character(),

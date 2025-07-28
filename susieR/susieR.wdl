@@ -72,7 +72,7 @@ task susieR {
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
-        cpu: "4"
+        cpu: "1"
     }
 
     output {

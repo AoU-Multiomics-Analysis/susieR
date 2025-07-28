@@ -90,6 +90,7 @@ task susieR {
 task MergeSusie {
     input {
     Array[File] SusieOutput
+    Int memory
     String OutputPrefix
     }
     

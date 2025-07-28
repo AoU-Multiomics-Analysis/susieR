@@ -95,7 +95,7 @@ task MergeSusie {
     }
     
     command <<<
-    for file in ~{sep='\n' some_file_array_in_WDL}; do
+    for file in ~{sep='\n' SusieOutput}; do
     echo $file >> filelist.txt
     done
 

@@ -103,7 +103,7 @@ workflow susieR_workflow {
     }
 
     scatter (part in splitPhenotypeBed.splitFiles) {
-        String partName = basename(part, ".gz.parquet")
+        String partName = basename(part, ".gz")
         call susieR {
             input:
                 GenotypeDosages = GenotypeDosages,

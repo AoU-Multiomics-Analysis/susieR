@@ -161,7 +161,10 @@ workflow susieR_workflow {
     call PrepInputs {
         input:
             TensorQTLPermutations = TensorQTLPermutations,
-            PhenotypeID = PhenotypeID
+            PhenotypeID = PhenotypeID,
+            GenotypeDosages = GenotypeDosages,
+            GenotypeDosageIndex = GenotypeDosageIndex,
+            PhenotypeBed = PhenotypeBed
     }
 
     call susieR {

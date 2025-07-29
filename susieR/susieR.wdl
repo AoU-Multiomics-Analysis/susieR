@@ -135,7 +135,7 @@ workflow susieR_workflow {
         File QTLCovariates
         File TensorQTLPermutations
         File SampleList
-        File PhenotypeBed
+        #File PhenotypeBed
         Int CisDistance
         File susie_rscript
         Int memory

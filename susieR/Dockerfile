@@ -9,7 +9,8 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-tidyverse \
     conda-forge::datatable \
     conda-forge::r-optparse \
-    conda-forge::r-arrow
+    conda-forge::r-arrow \
+    r::r-rnomni
 
 COPY susieR/merge_susie.R . 
 

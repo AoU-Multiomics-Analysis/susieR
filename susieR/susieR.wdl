@@ -33,8 +33,8 @@ task PrepInputs {
     }
     command <<<
     # grab headers from all files
-    headerPermutations=$(zcat header=$(head -n 1 ~{TensorQTLPermutations}) | head -n 1)
-    headerBed=$(zcat header=$(head -n 1 ~{PhenotypeBed}) | head -n 1)
+    headerPermutations=$( header=$(zcat ~{TensorQTLPermutations}) | head -n 1)
+    headerBed=$( header=$( zcat ~{PhenotypeBed}) | head -n 1)
     
     # create subset featured bed  
     zcat ~{PhenotypeBed} | grep ~{PhenotypeID} > feature.bed

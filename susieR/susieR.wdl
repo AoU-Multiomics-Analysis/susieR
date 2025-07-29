@@ -38,7 +38,7 @@ task PrepInputs {
     
     # create subset featured bed  
     zcat ~{PhenotypeBed} | grep ~{PhenotypeID} > feature.bed
-    cat $headerBed feature.bed | bgzip > ~{PhenotypeID}.bed.gz
+    cat $headerBed feature.bed | bgzip -c - > ~{PhenotypeID}.bed.gz
   
     # create subset tensorQTL file
     zcat ~{TensorQTLPermutations} | grep ~{PhenotypeID} > feature.txt

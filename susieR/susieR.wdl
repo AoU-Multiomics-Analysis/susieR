@@ -78,7 +78,6 @@ task susieR {
         String OutputPrefix
         File susie_rscript
         Int memory
-        String PhenotypeID
     }
 
     command <<<

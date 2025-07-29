@@ -11,7 +11,7 @@ task splitPhenotypeBed {
 
     command <<<
         # Decompress the BED file
-        gunzip -c ~{PhenotypeBed} > ~{baseName}
+        #gunzip -c ~{PhenotypeBed} > ~{baseName}
         
         # filter permutations to significant QTLs
         #zcat ~{TensorQTLPermutations} | awk '$18 < 0.05' | awk '{print $1}' > feature_list.txt

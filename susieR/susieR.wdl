@@ -30,7 +30,6 @@ task PrepInputs {
         String PhenotypeID
         File PhenotypeBed
         File TensorQTLPermutations
-        Int CisWindow
     }
     command <<<
     # grab headers from all files

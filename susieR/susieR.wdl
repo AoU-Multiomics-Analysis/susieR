@@ -154,7 +154,6 @@ workflow susieR_workflow {
         Int CisDistance
         File susie_rscript
         Int memory
-        String PhenotypeID
         String OutputPrefix
     }
 

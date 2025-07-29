@@ -155,6 +155,7 @@ workflow susieR_workflow {
         File susie_rscript
         Int memory
         String OutputPrefix
+        String PhenotypeID
     }
 
     call PrepInputs {

@@ -9,7 +9,7 @@ This WDL is designed to run on terra with the use of data tables.The inputs are 
 5. `CisDistance`: integer that determines the window to be added to either side of the TSS for fine-mapping
 6. `PhenotypeID`: String containing the ID of gene or protein to be fine-mapped
 7. `QTLCovariates`: Table containing the covariates used in QTL calling, this is the same file that in given to tensorQTL 
-8. `SampleList`: List of sampleIDs that are being used in finemapping
+8. `SampleList`: List of sampleIDs that are being used in finemapping, no header is used here 
 
 
 

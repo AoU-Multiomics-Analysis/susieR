@@ -15,7 +15,12 @@ This WDL is designed to run on terra with the use of data tables.The inputs are 
 
 ## Tasks:
 1. `PrepInputs`: Using `PhenotypeID` this task subsets all of the input files to data just pertaining to the selected gene.
-2. `susieR`: 
+2. `susieR`: fine-maps individual phenotypeID, this tasks takes in all of the subsetted files except for the bed file. Creating a `summarizedExperiment` object with just a single entry fails so this cant take in a subsetted bed file
+
+## Outputs:
+1. SusieParquet - contains fine-mapping information for all variants that are in credible sets
+2. SusielbfParquet - contains log-bayes factor for each credible set (also present in SusieParquet)
+3. FullSusieParquet - contains all fine-mapping information for every variant tested in a cis window
 
 
 

@@ -35,16 +35,25 @@ task PrepInputs {
         echo "Extracting headers from files"
         headerPermutations=$(zcat "~{TensorQTLPermutations}" | head -n 1)
         headerBed=$(zcat "~{PhenotypeBed}" | head -n 1)
+        
+        echo "Bed file header:"
+        echo $headerBed
+
+        echo "TensorQTL file header"
+        echo $headerPermutations
 
         echo "Subsetting bed file"
-        zcat "~{PhenotypeBed}" | grep "~{PhenotypeID}" > feature.bed
+        zcat "~{PhenotypeBed}" | grep "~{PhenotypeID}" \
+            | awk 'BEGIN{OFS="\t"} {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' \
+            > feature.bed
+        
         echo "$headerBed" > temp_header.txt
         cat temp_header.txt feature.bed | bgzip -c - > "~{PhenotypeID}.bed.gz"
 
         echo "Subsetting TensorQTL file"
         zcat "~{TensorQTLPermutations}" | grep "~{PhenotypeID}" > feature.txt
         echo "$headerPermutations" > temp_header_perm.txt
-        cat temp_header_perm.txt feature.txt > "~{PhenotypeID}.tensorQTL.txt"
+        zcat temp_header_perm.txt feature.txt > "~{PhenotypeID}.tensorQTL.txt"
 
         echo "Subsetting dose file"
         tabix "~{GenotypeDosages}" -R "~{PhenotypeID}.bed.gz" | bgzip -c - > "~{PhenotypeID}.dose.tsv.gz"
@@ -59,7 +68,7 @@ task PrepInputs {
     }
     
     output {
-        File SubsetBed = "~{PhenotypeID}.bed.bz" 
+        #File SubsetBed = "~{PhenotypeID}.bed.bz" 
         File SubsetPermutationPvals = "~{PhenotypeID}.tensorqtl.txt"
         File SubsetDosages = "~{PhenotypeID}.dose.tsv.gz"
         File SubsetDosagesIndex = "~{PhenotypeID}.dose.tsv.gz.tbi"
@@ -175,7 +184,7 @@ workflow susieR_workflow {
             QTLCovariates = QTLCovariates,
             TensorQTLPermutations = PrepInputs.SubsetPermutationPvals,
             SampleList = SampleList,
-            PhenotypeBed = PrepInputs.SubsetBed ,
+            PhenotypeBed = PhenotypeBed ,
             CisDistance = CisDistance,
             OutputPrefix = PhenotypeID,
             susie_rscript = susie_rscript,

@@ -32,25 +32,23 @@ task PrepInputs {
         File TensorQTLPermutations
     }
     command <<<
-    # grab headers from all files
-    echo "Extracting header from files"
-    headerPermutations=$( header=$(zcat ~{TensorQTLPermutations}) | head -n 1)
-    headerBed=$( header=$( zcat ~{PhenotypeBed}) | head -n 1)
-    
-    echo "Subsetting bed file"
-    # create subset featured bed  
-    zcat ~{PhenotypeBed} | grep ~{PhenotypeID} > feature.bed
-    cat $headerBed feature.bed | bgzip -c - > ~{PhenotypeID}.bed.gz
-    
-    echo "Subsetting TensorQTL file"
-    # create subset tensorQTL file
-    zcat ~{TensorQTLPermutations} | grep ~{PhenotypeID} > feature.txt
-    cat $headerPermutations feature.txt > ~{PhenotypeID}.tensorQTL.txt
-    
-    echo "Subsetting dose file"
-    # create subset dose file
-    tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.gz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
-    tabix ~{PhenotypeID}.dose.tsv.gz 
+        echo "Extracting headers from files"
+        headerPermutations=$(zcat "~{TensorQTLPermutations}" | head -n 1)
+        headerBed=$(zcat "~{PhenotypeBed}" | head -n 1)
+
+        echo "Subsetting bed file"
+        zcat "~{PhenotypeBed}" | grep "~{PhenotypeID}" > feature.bed
+        echo "$headerBed" > temp_header.txt
+        cat temp_header.txt feature.bed | bgzip -c - > "~{PhenotypeID}.bed.gz"
+
+        echo "Subsetting TensorQTL file"
+        zcat "~{TensorQTLPermutations}" | grep "~{PhenotypeID}" > feature.txt
+        echo "$headerPermutations" > temp_header_perm.txt
+        cat temp_header_perm.txt feature.txt > "~{PhenotypeID}.tensorQTL.txt"
+
+        echo "Subsetting dose file"
+        tabix "~{GenotypeDosages}" -R "~{PhenotypeID}.bed.gz" | bgzip -c - > "~{PhenotypeID}.dose.tsv.gz"
+        tabix "~{PhenotypeID}.dose.tsv.gz"    
     >>>
     
     runtime {

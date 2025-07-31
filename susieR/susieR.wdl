@@ -33,7 +33,7 @@ task PrepInputs {
     }
     command <<<
         echo "Extracting headers from files"
-        headerPermutations=$(zcat "~{TensorQTLPermutations}" | head -n 1)
+        headerPermutations=$(zcat ~{TensorQTLPermutations} | head -n 1)
         headerBed=$(zcat "~{PhenotypeBed}" | head -n 1)
         
         echo "Bed file header:"
@@ -43,20 +43,20 @@ task PrepInputs {
         echo $headerPermutations
 
         echo "Subsetting bed file"
-        zcat "~{PhenotypeBed}" | grep "~{PhenotypeID}" \
+        zcat ~{PhenotypeBed} | grep "~{PhenotypeID}" \
             | awk 'BEGIN{OFS="\t"} {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' \
             > feature.bed
         
-        echo "$headerBed" > temp_header.txt
+        echo $headerBed > temp_header.txt
         cat temp_header.txt feature.bed | bgzip -c - > "~{PhenotypeID}.bed.gz"
 
         echo "Subsetting TensorQTL file"
-        zcat "~{TensorQTLPermutations}" | grep "~{PhenotypeID}" > feature.txt
-        echo "$headerPermutations" > temp_header_perm.txt
+        zcat ~{TensorQTLPermutations} | grep "~{PhenotypeID}" > feature.txt
+        echo $headerPermutations > temp_header_perm.txt
         cat temp_header_perm.txt feature.txt > "~{PhenotypeID}.tensorQTL.txt"
 
         echo "Subsetting dose file"
-        tabix "~{GenotypeDosages}" -R "~{PhenotypeID}.bed.gz" | bgzip -c - > "~{PhenotypeID}.dose.tsv.gz"
+        tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.gz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
         tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"    
     >>>
     

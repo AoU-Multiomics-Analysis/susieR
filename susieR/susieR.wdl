@@ -72,7 +72,8 @@ task PrepInputs {
     }
     
     output {
-        #File SubsetBed = "~{PhenotypeID}.bed.bgz" 
+        File SubsetBed = "~{PhenotypeID}.bed.bgz"
+        File SubsetBedIndex = "~{PhenotypeID}.bed.bgz.tbi" 
         File SubsetPermutationPvals = "~{PhenotypeID}.tensorqtl.txt"
         File SubsetDosages = "~{PhenotypeID}.dose.tsv.gz"
         File SubsetDosagesIndex = "~{PhenotypeID}.dose.tsv.gz.tbi"
@@ -205,5 +206,7 @@ workflow susieR_workflow {
         File SusieParquet = susieR.SusieParquet
         File SusielbfParquet = susieR.lbfParquet
         File FullSusieParquet = susieR.FullSusieParquet
+        File SubsetBed = PrepInputs.SubsetBed
+        File SubsetBedIndex = PrepInputs.SubsetBedIndex
     }
 }

@@ -42,7 +42,8 @@ task PrepInputs {
         echo "TensorQTL file header"
         echo $headerPermutations
         
-        zcat ~{GenotypeDosages} |  awk 'NR==1 { if ($0 ~ /^#/) print; else print "#" $0; exit }'  > dosage_header.txt
+        #zcat ~{GenotypeDosages} |  awk 'NR==1 { if ($0 ~ /^#/) print; else print "#" $0; exit }'  > dosage_header.txt
+        zcat ~{GenotypeDosages} |  awk 'NR==1 {print $0; exit }'  > dosage_header.txt
 
         echo "Subsetting bed file"
         zcat ~{PhenotypeBed} | grep "~{PhenotypeID}" \

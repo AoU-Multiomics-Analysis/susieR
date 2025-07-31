@@ -42,6 +42,8 @@ task PrepInputs {
         echo "TensorQTL file header"
         echo $headerPermutations
 
+        awk 'NR==1 { if ($0 ~ /^#/) print; else print "#" $0; exit }' ~{GenotypeDosages} > dosage_header.txt
+        zcat {GenotypeDosages} | awk 'NR==1 && $0 !~ /^#/ {print "#" $0; next} 1'
         echo "Subsetting bed file"
         zcat ~{PhenotypeBed} | grep "~{PhenotypeID}" \
             | awk 'BEGIN{OFS="\t"} {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' \
@@ -56,7 +58,8 @@ task PrepInputs {
         cat temp_header_perm.txt feature.txt > ~{PhenotypeID}.tensorqtl.txt
 
         echo "Subsetting dose file"
-        tabix -h ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
+        (cat dosage_header.txt; tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
+        #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
         tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"    
     >>>
     

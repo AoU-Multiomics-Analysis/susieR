@@ -57,7 +57,7 @@ task PrepInputs {
 
         echo "Subsetting dose file"
         tabix "~{GenotypeDosages}" -R "~{PhenotypeID}.bed.gz" | bgzip -c - > "~{PhenotypeID}.dose.tsv.gz"
-        tabix "~{PhenotypeID}.dose.tsv.gz"    
+        tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"    
     >>>
     
     runtime {

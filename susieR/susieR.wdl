@@ -52,6 +52,7 @@ task PrepInputs {
         
         echo $headerBed > temp_header.txt
         cat temp_header.txt feature.bed | bgzip -c - > ~{PhenotypeID}.bed.bgz
+        tabix ~{PhenotypeID}.bed.bgz
 
         echo "Subsetting TensorQTL file"
         zcat ~{TensorQTLPermutations} | grep "~{PhenotypeID}" > feature.txt
@@ -61,7 +62,7 @@ task PrepInputs {
         echo "Subsetting dose file"
         (cat dosage_header.txt; tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
         #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
-        tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"    
+        tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"   
     >>>
     
     runtime {

@@ -52,7 +52,7 @@ task PrepInputs {
         
         echo $headerBed > temp_header.txt
         cat temp_header.txt feature.bed | bgzip -c - > ~{PhenotypeID}.bed.bgz
-        tabix ~{PhenotypeID}.bed.bgz
+        #tabix ~{PhenotypeID}.bed.bgz
 
         echo "Subsetting TensorQTL file"
         zcat ~{TensorQTLPermutations} | grep "~{PhenotypeID}" > feature.txt
@@ -74,7 +74,7 @@ task PrepInputs {
     
     output {
         File SubsetBed = "~{PhenotypeID}.bed.bgz"
-        File SubsetBedIndex = "~{PhenotypeID}.bed.bgz.tbi" 
+        #File SubsetBedIndex = "~{PhenotypeID}.bed.bgz.tbi" 
         File SubsetPermutationPvals = "~{PhenotypeID}.tensorqtl.txt"
         File SubsetDosages = "~{PhenotypeID}.dose.tsv.gz"
         File SubsetDosagesIndex = "~{PhenotypeID}.dose.tsv.gz.tbi"
@@ -208,6 +208,6 @@ workflow susieR_workflow {
         File SusielbfParquet = susieR.lbfParquet
         File FullSusieParquet = susieR.FullSusieParquet
         File SubsetBed = PrepInputs.SubsetBed
-        File SubsetBedIndex = PrepInputs.SubsetBedIndex
+        #File SubsetBedIndex = PrepInputs.SubsetBedIndex
     }
 }

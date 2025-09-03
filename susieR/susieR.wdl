@@ -209,5 +209,7 @@ workflow susieR_workflow {
         File FullSusieParquet = susieR.FullSusieParquet
         File SubsetBed = PrepInputs.SubsetBed
         #File SubsetBedIndex = PrepInputs.SubsetBedIndex
+        File SubsetDosages = PrepInputs.SubsetDosages
+        File SubsetDosagesIndex = PrepInputs.SubsetDosagesIndex
     }
 }

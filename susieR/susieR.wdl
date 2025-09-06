@@ -30,6 +30,7 @@ task PrepInputs {
         String PhenotypeID
         File PhenotypeBed
         File TensorQTLPermutations
+        Int NumPrempt
     }
     command <<<
         echo "Extracting headers from files"
@@ -68,6 +69,7 @@ task PrepInputs {
     runtime {
         docker: "quay.io/biocontainers/htslib:1.22.1--h566b1c6_0"
         disks: "local-disk 500 SSD"
+        preemptible: "${NumPrempt}"
         memory: "2GB"
         cpu: "1"
     }
@@ -95,6 +97,7 @@ task susieR {
         String OutputPrefix
         File susie_rscript
         Int memory
+        Int NumPrempt
     }
 
     command <<<
@@ -114,6 +117,7 @@ task susieR {
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
+        preemptible: "${NumPrempt}"
         cpu: "1"
     }
 
@@ -170,6 +174,7 @@ workflow susieR_workflow {
         Int CisDistance
         File susie_rscript
         Int memory
+        Int NumPrempt
         String OutputPrefix
         String PhenotypeID
     }
@@ -180,7 +185,8 @@ workflow susieR_workflow {
             PhenotypeID = PhenotypeID,
             GenotypeDosages = GenotypeDosages,
             GenotypeDosageIndex = GenotypeDosageIndex,
-            PhenotypeBed = PhenotypeBed
+            PhenotypeBed = PhenotypeBed,
+            NumPrempt = NumPrempt
     }
 
     call susieR {
@@ -194,7 +200,9 @@ workflow susieR_workflow {
             CisDistance = CisDistance,
             OutputPrefix = PhenotypeID,
             susie_rscript = susie_rscript,
-            memory = memory
+            memory = memory,
+            NumPrempt = NumPrempt
+
         }
     
     #call MergeSusie {

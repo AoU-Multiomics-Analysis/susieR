@@ -385,7 +385,12 @@ make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_
 }
 
 ######### LOAD DATA #######
-expression_matrix = readr::read_tsv(opt$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
+#expression_matrix = readr::read_tsv(opt$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
+# Check if 'phenotype_id' already exists
+expression_matrix = readr::read_tsv(opt$expression_matrix)
+if (!'phenotype_id' %in% colnames(expression_matrix)) {
+  expression_matrix = expression_matrix %>% dplyr::rename('phenotype_id' = 'gene_id')
+}
 covariates_matrix = importQtlmapCovariates(opt$covariates)
 exclude_cov = apply(covariates_matrix, 2, sd) != 0
 covariates_matrix = covariates_matrix[,exclude_cov]

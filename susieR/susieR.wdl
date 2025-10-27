@@ -98,10 +98,12 @@ task susieR {
         File susie_rscript
         Int memory
         Int NumPrempt
+        Float MAF
     }
 
     command <<<
         Rscript ~{susie_rscript} \
+            --MAF ~{MAF} \ 
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \
@@ -177,6 +179,7 @@ workflow susieR_workflow {
         Int NumPrempt
         String OutputPrefix
         String PhenotypeID
+        Float MAF
     }
 
     call PrepInputs {
@@ -201,7 +204,8 @@ workflow susieR_workflow {
             OutputPrefix = PhenotypeID,
             susie_rscript = susie_rscript,
             memory = memory,
-            NumPrempt = NumPrempt
+            NumPrempt = NumPrempt,
+            MAF = MAF
 
         }
     

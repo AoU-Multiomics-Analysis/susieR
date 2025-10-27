@@ -42,9 +42,7 @@ option_list <- list(
   optparse::make_option(c("--write_full_susie"), type="character", default="true",
                         help="If 'true' then full SuSiE output will not be written to disk. Setting this to 'false' will apply credible set connected components based filtering to SuSiE results. [default \"%default\"]", metavar = "type"),
 optparse::make_option(c("--write_full_susie"), type="character", default="true",
-                        help="If 'true' then full SuSiE output will not be written to disk. Setting this to 'false' will apply credible set connected components based filtering to SuSiE results. [default \"%default\"]", metavar = "type"),
-
-
+                        help="If 'true' then full SuSiE output will not be written to disk. Setting this to 'false' will apply credible set connected components based filtering to SuSiE results. [default \"%default\"]", metavar = "type")
 )
 
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
@@ -151,6 +149,22 @@ empty_in_cs_variant_df = dplyr::tibble(
 )
 
 ######## HELPER FUNCTIONS #########
+filterMAF <- function(genotype_matrix,MAF_threshold = 0) {
+MAF_calculations <- genotype_matrix %>% 
+    t() %>% 
+    data.frame() %>% 
+    summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
+    t() %>% 
+    data.frame() %>% 
+    rownames_to_column('variant') %>% 
+    dplyr::rename('AF' = 2) %>% 
+    mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
+    filter(MAF > MAF_threshold) 
+filtered_genotype_matrix <- genotype_matrix[MAF_calculations$variant,]
+    
+}
+
+
 importQtlmapCovariates <- function(covariates_path){
   pc_matrix = read.table(covariates_path, check.names = F, header = T, stringsAsFactors = F)
   pc_transpose = t(pc_matrix[,-1])
@@ -203,7 +217,8 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
-    dosage_file = genotype_file)
+    dosage_file = genotype_file) %>% 
+    filterMAF(MAF_threshold = MAF) 
 
   #Residualise gene expression and genotype matrix
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
@@ -437,7 +452,7 @@ selected_phenotypes = phenotype_list %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
 results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
-                                                              genotype_file, covariates_matrix, cis_distance))
+                                                              genotype_file, covariates_matrix, cis_distance,MAF = MAF_threshold))
 
 #Only proceed if the there are more than 0 phenotypes
 message("Number of overall unique group_ids: ", length(unique(phenotype_list$group_id)))

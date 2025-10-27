@@ -147,18 +147,18 @@ empty_in_cs_variant_df = dplyr::tibble(
 
 ######## HELPER FUNCTIONS #########
 filterMAF <- function(genotype_matrix,MAF_threshold = 0) {
-MAF_calculations <- genotype_matrix %>% 
-    t() %>% 
-    data.frame() %>% 
-    summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
-    t() %>% 
-    data.frame() %>% 
-    rownames_to_column('variant') %>% 
-    dplyr::rename('AF' = 2) %>% 
-    mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
-    filter(MAF > MAF_threshold) 
-filtered_genotype_matrix <- genotype_matrix[MAF_calculations$variant,]
-    
+    MAF_calculations <- genotype_matrix %>% 
+        t() %>% 
+        data.frame() %>% 
+        summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
+        t() %>% 
+        data.frame() %>% 
+        rownames_to_column('variant') %>% 
+        dplyr::rename('AF' = 2) %>% 
+        mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
+        filter(MAF > MAF_threshold) 
+    filtered_genotype_matrix <- genotype_matrix[MAF_calculations$variant,]
+    return(filtered_genotype_matrix) 
 }
 
 

@@ -153,11 +153,10 @@ filterMAF <- function(genotype_matrix,MAF_threshold = 0) {
         summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
         t() %>% 
         data.frame() %>% 
-        dplyr::rownames_to_column('variant') %>% 
         dplyr::rename('AF' = 2) %>% 
         mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
         filter(MAF > MAF_threshold) 
-    filtered_genotype_matrix <- genotype_matrix[MAF_calculations$variant,]
+    filtered_genotype_matrix <- genotype_matrix[rownames(MAF_calculations),]
     return(filtered_genotype_matrix) 
 }
 

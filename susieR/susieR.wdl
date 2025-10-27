@@ -103,7 +103,7 @@ task susieR {
 
     command <<<
         Rscript ~{susie_rscript} \
-            --MAF ~{MAF} \ 
+            --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \

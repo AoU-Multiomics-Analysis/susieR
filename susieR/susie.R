@@ -14,38 +14,34 @@ suppressPackageStartupMessages(library("Rfast"))
 
 ###### PARSE COMMAND LINE ARGUMENTS ########## 
 option_list <- list(
-  #TODO look around if there is a package recognizing delimiter in dataset
+  # TODO look around if there is a package recognizing delimiter in dataset
   optparse::make_option(c("--MAF"), type="character", default=NULL,
-                        help="Minor allele frequency filter that is applied to the genotype matrix", metavar = "type"),
+    help="Minor allele frequency filter applied to genotype matrix", metavar="type"),
   optparse::make_option(c("--phenotype_meta"), type="character", default=NULL,
-                        help="Phenotype metadata file path of genes used in expression-matrix. Tab separated", metavar = "type"),
+    help="Phenotype metadata file path (tab separated)", metavar="type"),
   optparse::make_option(c("--sample_meta"), type="character", default=NULL,
-                        help="Sample metadata file path of genes used in expression-matrix. Tab separated", metavar = "type"),
+    help="Sample metadata file path (tab separated)", metavar="type"),
   optparse::make_option(c("--expression_matrix"), type="character", default=NULL,
-                        help="Expression matrix file path with gene phenotype-id in rownames and sample-is in columnnames", metavar = "type"),
+    help="Expression matrix file path (genes in rows, samples in columns)", metavar="type"),
   optparse::make_option(c("--phenotype_list"), type="character", default=NULL,
-                        help="Path to the phenotype list file.", metavar = "type"),
+    help="Path to phenotype list file", metavar="type"),
   optparse::make_option(c("--genotype_matrix"), type="character", default=NULL,
-                        help="Genotype dosage matrix extracted from VCF.", metavar = "type"),
+    help="Genotype dosage matrix extracted from VCF", metavar="type"),
   optparse::make_option(c("--covariates"), type="character", default=NULL,
-                        help="Path to covariates file in QTLtools format.", metavar = "type"),
+    help="Path to covariates file in QTLtools format", metavar="type"),
   optparse::make_option(c("--out_prefix"), type="character", default="./finemapping_output",
-                        help="Prefix of the output files.", metavar = "type"),
+    help="Prefix of output files", metavar="type"),
   optparse::make_option(c("--qtl_group"), type="character", default=NULL,
-                        help="Value of the current qtl_group.", metavar = "type"),
-  optparse::make_option(c("--cisdistance"), type="integer", default=1000000, 
-                        help="Cis distance in bases from center of gene. [default \"%default\"]", metavar = "number"),
-  optparse::make_option(c("--chunk"), type="character", default="1 1", 
-                        help="Perform analysis in chunks. Eg value 5 10 would indicate that phenotypes are split into 10 chunks and the 5th one of those will be processed. [default \"%default\"]", metavar = "type"),
+    help="Value of the current qtl_group", metavar="type"),
+  optparse::make_option(c("--cisdistance"), type="integer", default=1000000,
+    help="Cis distance (bp) from center of gene [default \"%default\"]", metavar="number"),
+  optparse::make_option(c("--chunk"), type="character", default="1 1",
+    help="Chunking (e.g. '5 10' = 5th of 10 chunks) [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--eqtlutils"), type="character", default=NULL,
-              help="Optional path to the eQTLUtils R package location. If not specified then eQTLUtils is assumed to be installed in the container. [default \"%default\"]", metavar = "type"),
+    help="Optional path to eQTLUtils package [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--write_full_susie"), type="character", default="true",
-                        help="If 'true' then full SuSiE output will not be written to disk. Setting this to 'false' will apply credible set connected components based filtering to SuSiE results. [default \"%default\"]", metavar = "type"),
-optparse::make_option(c("--write_full_susie"), type="character", default="true",
-                        help="If 'true' then full SuSiE output will not be written to disk. Setting this to 'false' will apply credible set connected components based filtering to SuSiE results. [default \"%default\"]", metavar = "type")
-)
-
-opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
+    help="If 'true' full SuSiE output will not be written. Set 'false' to write all. [default \"%default\"]", metavar="type")
+)opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 MAF_threshold <- opt$MAF
 
 ########### INITIALIZE EMPTY DATAFRAMES #########

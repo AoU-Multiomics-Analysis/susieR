@@ -15,6 +15,8 @@ suppressPackageStartupMessages(library("Rfast"))
 ###### PARSE COMMAND LINE ARGUMENTS ########## 
 option_list <- list(
   #TODO look around if there is a package recognizing delimiter in dataset
+  optparse::make_option(c("--MAF"), type="character", default=NULL,
+                        help="Minor allele frequency filter that is applied to the genotype matrix", metavar = "type"),
   optparse::make_option(c("--phenotype_meta"), type="character", default=NULL,
                         help="Phenotype metadata file path of genes used in expression-matrix. Tab separated", metavar = "type"),
   optparse::make_option(c("--sample_meta"), type="character", default=NULL,
@@ -46,7 +48,7 @@ optparse::make_option(c("--write_full_susie"), type="character", default="true",
 )
 
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
-
+MAF_threshold <- opt$MAF
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
 #Define empty data frames
@@ -184,7 +186,7 @@ splitIntoChunks <- function(chunk_number, n_chunks, n_total){
   return(selected_batch)
 }
 
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,MAF = 0){
   message("Processing phenotype: ", phenotype_id)
   
   #Extract phenotype from SE

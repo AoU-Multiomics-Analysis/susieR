@@ -14,6 +14,7 @@ task PrepInputs {
         headerPermutations=$(zcat ~{TensorQTLPermutations} | head -n 1)
         headerBed=$(zcat "~{PhenotypeBed}" | head -n 1)
         
+ 
         echo "Bed file header:"
         echo $headerBed
 
@@ -28,7 +29,8 @@ task PrepInputs {
             | awk 'BEGIN{OFS="\t"} {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' \
             > feature.bed
         
-        echo $headerBed > temp_header.txt
+        #echo $headerBed > temp_header.txt
+        zcat ~{PhenotypeBed} | head -n 1 > temp_header.txt
         cat temp_header.txt feature.bed | bgzip -c - > ~{PhenotypeID}.bed.bgz
         #tabix ~{PhenotypeID}.bed.bgz
 

@@ -116,7 +116,7 @@ task susieR {
     >>>
 
     runtime {
-        docker: 'quay.io/kfkf33/susier:v24.01.1'
+        docker: 'quay.io/kfkf33/susier:v24.01.2'
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25

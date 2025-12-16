@@ -10,6 +10,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::datatable \
     conda-forge::r-optparse \
     conda-forge::r-arrow \
+    bioconda::htslib \
     r::r-rnomni \
     conda-forge::gsutil
 

@@ -76,6 +76,7 @@ task PrepInputs {
     }
     
     output {
+        File DosageHeader = "dosage_header.txt"
         File SubsetBed = "~{PhenotypeID}.bed.bgz"
         #File SubsetBedIndex = "~{PhenotypeID}.bed.bgz.tbi" 
         File SubsetPermutationPvals = "~{PhenotypeID}.tensorqtl.txt"

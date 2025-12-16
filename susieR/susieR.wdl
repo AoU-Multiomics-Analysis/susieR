@@ -62,9 +62,8 @@ task PrepInputs {
         cat temp_header_perm.txt feature.txt > ~{PhenotypeID}.tensorqtl.txt
 
         echo "Subsetting dose file"
-        #(cat dosage_header.txt; tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
-        tabix   ~{GenotypeDosages} --print-header  -R ~{PhenotypeID}.bed.bgz  | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
-
+        (cat dosage_header.txt; tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
+        #tabix   ~{GenotypeDosages} --print-header  -R ~{PhenotypeID}.bed.bgz  | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
         #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
         tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"   
     >>>

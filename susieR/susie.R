@@ -168,10 +168,10 @@ filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
         t() %>% 
         data.frame() %>% 
         mutate(across(everything(),~case_when(. == -1 ~ NA,TRUE ~ .))) %>% 
-        rownames_to_column('research_id') %>%
+        tibble::rownames_to_column('research_id') %>%
         mutate(research_id = as.numeric(research_id)) %>% 
         left_join(ancestry_df,by = 'research_id') %>%
-        column_to_rownames('research_id') %>% 
+        tibble::column_to_rownames('research_id') %>% 
         filter(ancestry_pred_other != 'oth') %>% 
         group_by(ancestry_pred_other) %>% 
           summarize(

@@ -177,7 +177,7 @@ filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
           summarize(
             across(
               everything(),
-              ~ sum(., na.rm = TRUE) / sum(!is.na(.)) * 2
+              ~ sum(., na.rm = TRUE) / (sum(!is.na(.)) * 2)
             ),
             .groups = "drop"
           )  %>% 

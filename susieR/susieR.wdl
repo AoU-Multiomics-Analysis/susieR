@@ -102,10 +102,12 @@ task susieR {
         Int memory
         Int NumPrempt
         Float MAF
+        File AncestryData
     }
 
     command <<<
         Rscript ~{susie_rscript} \
+            --AncestryMetadata ~{AncestryData} \
             --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
@@ -183,6 +185,7 @@ workflow susieR_workflow {
         String OutputPrefix
         String PhenotypeID
         Float MAF
+        File AncestryData
     }
 
     call PrepInputs {
@@ -208,7 +211,8 @@ workflow susieR_workflow {
             susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
-            MAF = MAF
+            MAF = MAF,
+            AncestryData = AncestryData
 
         }
     

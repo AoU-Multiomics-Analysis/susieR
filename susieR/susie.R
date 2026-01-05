@@ -398,17 +398,20 @@ make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_
 }
 
 ######### LOAD DATA #######
+message('Loading molecular data')
 expression_matrix = readr::read_tsv(opt$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
+
+message('Loading covariates')
 covariates_matrix = importQtlmapCovariates(opt$covariates)
 exclude_cov = apply(covariates_matrix, 2, sd) != 0
 covariates_matrix = covariates_matrix[,exclude_cov]
-
 
 cis_distance <- opt$cisdistance 
 genotype_file <- opt$genotype_matrix 
 
 # convert sample list into sample metadata 
 # required by eQTLUtils 
+message('Loading sample metadata')
 sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
     dplyr::rename('sample_id' =1 ) %>% 
     mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
@@ -424,6 +427,7 @@ phenotype_meta<- expression_matrix %>%
 
 # import permutation p values from tensorQTL. Note that i had 
 # to make slight changes to this function for it to work 
+message('Loading QTL stats')
 phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list)
 
 filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
@@ -447,6 +451,7 @@ selected_phenotypes = phenotype_list %>%
   dplyr::filter(group_id %in% selected_group_ids) %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
+message('Fine-mapping begin')
 results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
                                                               genotype_file, covariates_matrix, cis_distance,MAF = MAF_threshold))
 

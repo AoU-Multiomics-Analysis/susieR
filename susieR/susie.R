@@ -17,6 +17,8 @@ option_list <- list(
   # TODO look around if there is a package recognizing delimiter in dataset
   optparse::make_option(c("--MAF"), type="character", default=NULL,
     help="Minor allele frequency filter applied to genotype matrix", metavar="type"),
+  optparse::make_option(c("--AncestryMetadata"), type="character", default=NULL,
+    help="File that contains ancestry grouping assignments to calculate MAF per population", metavar="type"),
   optparse::make_option(c("--phenotype_meta"), type="character", default=NULL,
     help="Phenotype metadata file path (tab separated)", metavar="type"),
   optparse::make_option(c("--sample_meta"), type="character", default=NULL,
@@ -44,6 +46,7 @@ option_list <- list(
 )
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 MAF_threshold <- opt$MAF
+AncestryPath <- opt$AncestryMetadata
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
 #Define empty data frames
@@ -146,17 +149,44 @@ empty_in_cs_variant_df = dplyr::tibble(
 )
 
 ######## HELPER FUNCTIONS #########
-filterMAF <- function(genotype_matrix,MAF_threshold = 0) {
+#filterMAF <- function(genotype_matrix,MAF_threshold = 0) {
+    #MAF_calculations <- genotype_matrix %>% 
+        #t() %>% 
+        #data.frame() %>% 
+        #summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
+        #t() %>% 
+        #data.frame() %>% 
+        #dplyr::rename('AF' = 1) %>% 
+        #mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
+        #filter(MAF > MAF_threshold) 
+    #filtered_genotype_matrix <- genotype_matrix[rownames(MAF_calculations),]
+    #return(filtered_genotype_matrix) 
+#}
+
+filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
     MAF_calculations <- genotype_matrix %>% 
         t() %>% 
         data.frame() %>% 
-        summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
-        t() %>% 
-        data.frame() %>% 
-        dplyr::rename('AF' = 1) %>% 
-        mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
-        filter(MAF > MAF_threshold) 
-    filtered_genotype_matrix <- genotype_matrix[rownames(MAF_calculations),]
+        mutate(across(everything(),~case_when(. == -1 ~ NA,TRUE ~ .))) %>% 
+        rownames_to_column('research_id') %>%
+        mutate(research_id = as.numeric(research_id)) %>% 
+        left_join(ancestry_df,by = 'research_id') %>%
+        column_to_rownames('research_id') %>% 
+        filter(ancestry_pred_other != 'oth') %>% 
+        group_by(ancestry_pred_other) %>% 
+          summarize(
+            across(
+              everything(),
+              ~ sum(., na.rm = TRUE) / sum(!is.na(.)) * 2
+            ),
+            .groups = "drop"
+          )  %>% 
+        pivot_longer(!ancestry_pred_other)   %>% 
+        mutate(value = case_when(value > .5 ~ 1 - value,TRUE ~ value)) %>% 
+        filter(value > MAF_threshold) %>% 
+        distinct(name) %>% 
+        pull(name)
+    filtered_genotype_matrix <- genotype_matrix[MAF_calculations,]
     return(filtered_genotype_matrix) 
 }
 
@@ -196,7 +226,7 @@ splitIntoChunks <- function(chunk_number, n_chunks, n_total){
   return(selected_batch)
 }
 
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,MAF = 0){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,AncestryData,MAF = 0){
   message("Processing phenotype: ", phenotype_id)
   
   #Extract phenotype from SE
@@ -214,7 +244,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) %>% 
-    filterMAF(MAF_threshold = MAF) 
+    filterMAF(AncestryData,MAF_threshold = MAF) 
 
   #Residualise gene expression and genotype matrix
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
@@ -403,6 +433,10 @@ covariates_matrix = importQtlmapCovariates(opt$covariates)
 exclude_cov = apply(covariates_matrix, 2, sd) != 0
 covariates_matrix = covariates_matrix[,exclude_cov]
 
+AncestryDf <- readr::read_tsv(AncestryPath) %>% 
+    select(research_id,ancestry_pred_other) %>%
+    mutate(research_id = as.numeric(research_id))
+
 
 cis_distance <- opt$cisdistance 
 genotype_file <- opt$genotype_matrix 
@@ -448,7 +482,7 @@ selected_phenotypes = phenotype_list %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
 results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
-                                                              genotype_file, covariates_matrix, cis_distance,MAF = MAF_threshold))
+                                                              genotype_file, covariates_matrix, cis_distance,AncestryDf,MAF = MAF_threshold))
 
 #Only proceed if the there are more than 0 phenotypes
 message("Number of overall unique group_ids: ", length(unique(phenotype_list$group_id)))

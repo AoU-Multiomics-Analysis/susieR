@@ -1,29 +1,6 @@
 version 1.0
 
-#task splitPhenotypeBed {
-#    input {
-#        File TensorQTLPermutations
-#    }
-
-    #String baseName = basename(PhenotypeBed, ".gz")
-
-#    command <<<
-#        zcat ~{TensorQTLPermutations} | awk '$18 < 0.05' | head -n 100  > significant_qtls.txt 
-#        awk 'NR==1 {header=$0; next} {out=$1".txt"; print header > out; print >> out}' significant_qtls.txt 
-#    >>>
-#
-#    output {
-#        Array[File] splitFiles = glob("*.txt")
-#    }
-#    runtime {
-#        docker: "quay.io/biocontainers/htslib:1.22.1--h566b1c6_0"
-#        disks: "local-disk 500 SSD"
-#        memory: "2GB"
-#        cpu: "1"
-#    }
-#}
-
-task susieR {
+task RunSusieR {
     input {
         File GenotypeDosages
         File GenotypeDosageIndex
@@ -37,10 +14,12 @@ task susieR {
         Int memory
         Int NumPrempt
         Float MAF
+        File AncestryData
     }
 
     command <<<
         Rscript ~{susie_rscript} \
+            --AncestryMetadata ~{AncestryData} \
             --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
@@ -69,7 +48,7 @@ task susieR {
 }
 
 
-workflow susieR_workflow {
+workflow susieR {
     input {
         File GenotypeDosages
         File GenotypeDosageIndex
@@ -78,13 +57,14 @@ workflow susieR_workflow {
         File SampleList
         File PhenotypeBed
         Int CisDistance
+        String OutputPrefix
         File susie_rscript
         Int memory
         Int NumPrempt
-        String OutputPrefix
         Float MAF
+        File AncestryData
     }
-    call susieR {
+    call RunSusieR {
         input:
             GenotypeDosages = GenotypeDosages,
             GenotypeDosageIndex = GenotypeDosageIndex,
@@ -97,11 +77,14 @@ workflow susieR_workflow {
             susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
-            MAF = MAF
+            MAF = MAF,
+            AncestryData = AncestryData
         }
-        output {
-        File SusieParquet = susieR.SusieParquet
-        File SusielbfParquet = susieR.lbfParquet
-        File FullSusieParquet = susieR.FullSusieParquet
-        }
+ 
+    output {
+        File SusieParquet = RunSusieR.SusieParquet         
+        File lbfParquet = RunSusieR.lbfParquet         
+        File FullSusieParquet = RunSusieR.FullSusieParquet 
+    }
+
 }

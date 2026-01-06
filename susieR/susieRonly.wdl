@@ -44,6 +44,7 @@ task RunSusieR {
         File SusieParquet = "${OutputPrefix}.parquet"
         File lbfParquet = "${OutputPrefix}.lbf_variable.parquet"
         File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
+        File MAFTsv = "MAF.tsv"
     }
 }
 
@@ -84,7 +85,8 @@ workflow susieR {
     output {
         File SusieParquet = RunSusieR.SusieParquet         
         File lbfParquet = RunSusieR.lbfParquet         
-        File FullSusieParquet = RunSusieR.FullSusieParquet 
+        File FullSusieParquet = RunSusieR.FullSusieParquet
+        File MAFTsv = RunSusieR.MAFTsv
     }
 
 }

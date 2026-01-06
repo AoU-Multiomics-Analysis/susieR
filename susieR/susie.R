@@ -164,7 +164,7 @@ empty_in_cs_variant_df = dplyr::tibble(
 #}
 
 filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
-    MAF_calculations <- genotype_matrix %>% 
+    MAF_calculations_table <- genotype_matrix %>% 
         t() %>% 
         data.frame() %>% 
         mutate(across(everything(),~case_when(. == -1 ~ NA,TRUE ~ .))) %>% 
@@ -180,7 +180,9 @@ filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
               ~ sum(., na.rm = TRUE) / (sum(!is.na(.)) * 2)
             ),
             .groups = "drop"
-          )  %>% 
+          ) 
+    MAF_calculations_table %>% write_tsv('MAF.tsv')
+     MAF_calculations <- MAF_calculations_table  %>% 
         pivot_longer(!ancestry_pred_other)   %>% 
         mutate(value = case_when(value > .5 ~ 1 - value,TRUE ~ value)) %>% 
         filter(value > MAF_threshold) %>% 

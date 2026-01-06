@@ -181,7 +181,7 @@ filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
             ),
             .groups = "drop"
           ) 
-    MAF_calculations_table %>% write_tsv('MAF.tsv')
+    MAF_calculations_table %>% readr::write_tsv('MAF.tsv')
      MAF_calculations <- MAF_calculations_table  %>% 
         pivot_longer(!ancestry_pred_other)   %>% 
         mutate(value = case_when(value > .5 ~ 1 - value,TRUE ~ value)) %>% 

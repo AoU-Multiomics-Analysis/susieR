@@ -45,7 +45,7 @@ option_list <- list(
     help="If 'true' full SuSiE output will not be written. Set 'false' to write all. [default \"%default\"]", metavar="type")
 )
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
-MAF_threshold <- opt$MAF
+MAF_threshold <- as.numeric(opt$MAF)
 AncestryPath <- opt$AncestryMetadata
 
 ########### INITIALIZE EMPTY DATAFRAMES #########

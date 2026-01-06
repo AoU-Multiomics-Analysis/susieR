@@ -1,27 +1,7 @@
 version 1.0
 
-#task splitPhenotypeBed {
-#    input {
-#        File TensorQTLPermutations
-#    }
 
-    #String baseName = basename(PhenotypeBed, ".gz")
-
-#    command <<<
-#        zcat ~{TensorQTLPermutations} | awk '$18 < 0.05' | head -n 100  > significant_qtls.txt 
-#        awk 'NR==1 {header=$0; next} {out=$1".txt"; print header > out; print >> out}' significant_qtls.txt 
-#    >>>
-#
-#    output {
-#        Array[File] splitFiles = glob("*.txt")
-#    }
-#    runtime {
-#        docker: "quay.io/biocontainers/htslib:1.22.1--h566b1c6_0"
-#        disks: "local-disk 500 SSD"
-#        memory: "2GB"
-#        cpu: "1"
-#    }
-#}
+#import "https://raw.githubusercontent.com/AoU-Multiomics-Analysis/susieR/refs/heads/main/susieR/susieRonly.wdl" as RunSusieRWorfklow 
 
 task PrepInputs {
     input {
@@ -136,40 +116,6 @@ task susieR {
 }
 
 
-#task MergeSusie {
-#    input {
-#    Array[File] SusieOutput
-#    Int memory
-#    String OutputPrefix
-    #}
-#    
-#    command <<<
-#    for file in ~{sep='\n' SusieOutput}; do
-#    echo $file >> filelist.txt
-#    done
-#
-#    Rscript merge_susie.R \ 
-#       --FilePaths filelist.txt \
-#       --OutputPrefix ~{OutputPrefix}
-#   >>>
-#
-#runtime {
-#        docker: 'quay.io/kfkf33/susier:v24.01.1'
-#        memory: "${memory}GB"
-#        disks: "local-disk 500 SSD"
-#        bootDiskSizeGb: 25
-#        cpu: "1"
-#    }
-#
-#
-#    output {
-#    File MergedSusieParquet = "${OutputPrefix}_SusieMerged.parquet" 
-#    File MergedSusieTsv = "${OutputPrefix}_SusieMerged.tsv.gz" 
-#
-#    }
-#
-#}
-
 workflow susieR_workflow {
     input {
         File GenotypeDosages
@@ -227,6 +173,7 @@ workflow susieR_workflow {
         File SusielbfParquet = susieR.lbfParquet
         File FullSusieParquet = susieR.FullSusieParquet
         File SubsetBed = PrepInputs.SubsetBed
+        File SubsetPermutationPvals = PrepInputs.SubsetPermutationPvals
         #File SubsetBedIndex = PrepInputs.SubsetBedIndex
         File SubsetDosages = PrepInputs.SubsetDosages
         File SubsetDosagesIndex = PrepInputs.SubsetDosagesIndex

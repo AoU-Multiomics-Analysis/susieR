@@ -315,7 +315,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     dosage_file = genotype_file) %>% 
     filterMAF(AncestryData,MAF_threshold = MAF) 
   } else { 
-  genotype_matirx <- genotype_file
+  genotype_matrix <- genotype_file
     }
 
   #Residualise gene expression and genotype matrix

@@ -630,6 +630,10 @@ for (k in c(1:n_folds)) {
     
     gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
     selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(se, "qtl_group",'train')
+    selected_phenotypes = phenotype_list %>%
+      dplyr::filter(group_id %in% selected_group_ids) %>%
+      dplyr::pull(phenotype_id) %>%
+      setNames(as.list(.), .)
     FullSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
                                                                   genotype_file, covariates_matrix, cis_distance,AncestryDf,MAF = 0))
     OnePercentAFSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 

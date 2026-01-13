@@ -8,7 +8,7 @@ suppressPackageStartupMessages(library("tidyr"))
 suppressPackageStartupMessages(library("dplyr"))
 suppressPackageStartupMessages(library("arrow"))
 
-install.packages('Rfast')
+#install.packages('Rfast')
 suppressPackageStartupMessages(library("Rfast"))
 
 
@@ -572,6 +572,27 @@ selected_phenotypes = phenotype_list %>%
   dplyr::filter(group_id %in% selected_group_ids) %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
+
+sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
+        dplyr::rename('sample_id' =1 ) %>% 
+        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
+        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id)) %>% 
+       mutate(qtl_group = "train") %>%
+        mutate(
+            qtl_group = replace(
+              qtl_group,
+              sample(seq_len(n()), size = floor(percent_hold_out * n())),
+              "holdout"
+            )
+          )
+se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
+                                                                select(-1,-2,-3) , 
+                                                             row_data = phenotype_meta, 
+                                                             col_data = sample_metadata, 
+                                                             quant_method = "gene_counts",
+                                                             reformat = FALSE)
+    
+gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
 
 
 #message('Fine-mapping begin')

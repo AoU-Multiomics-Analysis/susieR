@@ -627,7 +627,7 @@ for (k in c(1:n_folds)) {
                                                              col_data = sample_metadata, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
-    
+    selected_phenotype <- output_prefix
     gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
     selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(se, "qtl_group",'train')
     selected_phenotypes = phenotype_list %>%

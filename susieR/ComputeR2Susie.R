@@ -503,13 +503,13 @@ GetPredictions <- function(SusieRes,
 GenotypeDataFinemappedVariants <- GenotypeMatrix[SusieRes$variant,]
 PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% pull(posterior_mean)) %>% 
     data.frame() %>% 
-    rownames_to_column('sample_id') %>% 
+    tibble::rownames_to_column('sample_id') %>% 
     dplyr::rename('Predicted' = 2)
   
 hat = diag(nrow(Covariates)) - Covariates %*% solve(crossprod(Covariates)) %*% t(Covariates)
 ObservedValues = hat %*% GeneVector$phenotype_value_std %>% 
             data.frame() %>% 
-            rownames_to_column('sample_id') %>% 
+            tibble::rownames_to_column('sample_id') %>% 
             dplyr::rename('Observed' =2)
 MergedData <- PredictedValues %>% 
                 left_join(ObservedValues,by ='sample_id') 

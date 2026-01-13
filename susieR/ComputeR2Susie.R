@@ -46,7 +46,7 @@ option_list <- list(
   optparse::make_option(c("--train_test_split"), type="character", default="true",
     help="float specifying how much of the data to use to train the models and how much to validate", metavar="type"),
   optparse::make_option(c("--n_folds"), type="character", default="true",
-    help="specifies number of folds to use", metavar="type"),
+    help="specifies number of folds to use", metavar="type")
 )
 
 

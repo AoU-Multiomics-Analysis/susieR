@@ -54,7 +54,7 @@ opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 #MAF_threshold <- as.numeric(opt$MAF)
 AncestryPath <- opt$AncestryMetadata
 n_folds <- opt$n_folds 
-percent_hold_out <- opt$train_test_split
+percent_hold_out <- as.numeric(opt$train_test_split)
 outfile <- paste0(opt$output_prefix,'_R2_CV.tsv')
 ########### INITIALIZE EMPTY DATAFRAMES #########
 #Define empty data frames

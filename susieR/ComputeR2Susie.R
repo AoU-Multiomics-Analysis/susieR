@@ -553,7 +553,7 @@ phenotype_meta<- expression_matrix %>%
 # import permutation p values from tensorQTL. Note that i had 
 # to make slight changes to this function for it to work 
 message('Loading QTL stats')
-phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list) >%% 
+phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list) %>% 
     filter(phenotype_id == output_prefix)
 
 filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 

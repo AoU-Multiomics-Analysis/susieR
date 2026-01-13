@@ -575,7 +575,6 @@ selected_phenotypes = phenotype_list %>%
 
 
 #message('Fine-mapping begin')
-gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
 genotype_matrix_dat = eQTLUtils::extractGenotypeCovarsFromDosage(
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
@@ -604,6 +603,8 @@ for (k in c(1:n_folds)) {
                                                              col_data = sample_metadata, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
+    
+    gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
     selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(se, "qtl_group",'train')
     FullSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
                                                                   genotype_file, covariates_matrix, cis_distance,AncestryDf,MAF = 0))

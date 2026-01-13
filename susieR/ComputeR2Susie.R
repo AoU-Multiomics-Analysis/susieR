@@ -592,7 +592,9 @@ se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matri
                                                              col_data = sample_metadata, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
-    
+   
+message('Extradting gene meta')
+message(output_prefix)
 gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == output_prefix)
 
 

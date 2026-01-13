@@ -11,7 +11,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-optparse \
     conda-forge::r-arrow \
     bioconda::htslib \
-    r::r-rnomni \
+    conda-forge::r-rnomni \
     conda-forge::gsutil \
     conda-forge::r-r.utils \
     conda-forge::r-janitor \

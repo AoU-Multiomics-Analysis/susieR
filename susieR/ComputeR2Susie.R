@@ -305,6 +305,8 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   #Rearrange samples in the covariates matrix
   covariates_matrix = cbind(covariates[gene_vector$genotype_id,], 1)
   
+
+  if (is.character(genotype_file)) {
   #Import genotype matrix
   genotype_matrix = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
@@ -312,6 +314,9 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) %>% 
     filterMAF(AncestryData,MAF_threshold = MAF) 
+  } else { 
+  genotype_matirx <- genotype_file
+    }
 
   #Residualise gene expression and genotype matrix
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
@@ -597,13 +602,17 @@ message('Extradting gene meta')
 message(output_prefix)
 gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == output_prefix)
 
+gene_vector = eQTLUtils::extractPhentypeFromSE(output_prefix, se, "counts") %>%
+    dplyr::mutate(phenotype_value_std = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
 
 #message('Fine-mapping begin')
-genotype_matrix_dat = eQTLUtils::extractGenotypeMatrixFromDosage(
+genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) 
+genotype_type_matrix_one_percent <- genotype_matrix_full %>% 
+        filterMAF(AncestryDf,MAF_threshold = 0.01)
 
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
 R2_data <- data.frame()
@@ -635,9 +644,20 @@ for (k in c(1:n_folds)) {
       dplyr::pull(phenotype_id) %>%
       setNames(as.list(.), .)
     FullSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
-                                                                  genotype_file, covariates_matrix, cis_distance,AncestryDf,MAF = 0))
-    OnePercentAFSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
-                                                                  genotype_file, covariates_matrix, cis_distance,AncestryDf,MAF = 0.01))
+                                                                  genotype_matrix_full, 
+                                                                  covariates_matrix, 
+                                                                  cis_distance,
+                                                                  AncestryDf,
+                                                                  MAF = 0
+                                                                  ))
+    OnePercentAFSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., 
+                                                                           selected_qtl_group, 
+                                                                           genotype_type_matrix_one_percent, 
+                                                                           covariates_matrix, 
+                                                                           cis_distance,
+                                                                           AncestryDf,
+                                                                           MAF = 0.01
+                                                                           ))
     OnePercentRes <- purrr::map(OnePercentAFSusie, extractResults) %>%
         purrr::transpose() %>% 
         CleanSusieData(region_df)

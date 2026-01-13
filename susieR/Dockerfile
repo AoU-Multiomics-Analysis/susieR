@@ -12,9 +12,27 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-arrow \
     bioconda::htslib \
     r::r-rnomni \
-    conda-forge::gsutil
+    conda-forge::gsutil \
+    conda-forge::r-r.utils \
+    conda-forge::r-janitor \
+    conda-forge::r-magrittr \
+    conda-forge::r-devtools \
+    conda-forge::r-remotes \
+    conda-forge::r-arrow \
+    bioconda::bioconductor-genomicranges=1.58.0 \
+    bioconda::bioconductor-rsamtools \
+    bioconda::bioconductor-summarizedexperiment \
+    conda-forge::r-susier \
+    conda-forge::r-igraph \
+    conda-forge::r-zoo \
+    conda-forge::r-expm \
+    conda-forge::r-matrixstats \
+    conda-forge::r-assertthat
 
-COPY susieR/merge_susie.R . 
+
+RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
+
+COPY susieR/*  . 
 
 ## Default command to run when the container starts
 CMD ["bash"]

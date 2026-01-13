@@ -1,7 +1,7 @@
 version 1.0
 
 
-task susieR {
+task ComputeR2 {
     input {
         File GenotypeDosages
         File GenotypeDosageIndex
@@ -11,14 +11,15 @@ task susieR {
         File PhenotypeBed
         Int CisDistance
         String OutputPrefix
-        File susie_rscript
         Int memory
         Int NumPrempt
-        Float MAF
+        Int n_folds 
+        Float train_test_split
+        File AncestryMetadata
     }
 
     command <<<
-        Rscript ~{susie_rscript} \
+        Rscript /tmp/ComputeR2Susie.R  \
             --AncestryMetadata ~{AncestryMetadata} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
@@ -33,7 +34,7 @@ task susieR {
     >>>
 
     runtime {
-        docker: 'quay.io/kfkf33/susier:v24.01.2'
+        docker: 'ghcr.io/aou-multiomics-analysis/susier:main'
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
@@ -42,10 +43,8 @@ task susieR {
     }
 
     output {
-        File SusieParquet = "${OutputPrefix}.parquet"
-        File lbfParquet = "${OutputPrefix}.lbf_variable.parquet"
-        File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
-    }
+        File SusieR2 = "${OutputPrefix}_R2_CV.tsv"
+        }
 }
 
 workflow susieR_workflow {
@@ -57,54 +56,33 @@ workflow susieR_workflow {
         File SampleList
         File PhenotypeBed
         Int CisDistance
-        File susie_rscript
         Int memory
+        Int n_folds
+        Float train_test_split
         Int NumPrempt
-        String OutputPrefix
         String PhenotypeID
-        Float MAF
+        File AncestryMetadata 
     }
 
-    call PrepInputs {
+    call ComputeR2 {
         input:
-            TensorQTLPermutations = TensorQTLPermutations,
-            PhenotypeID = PhenotypeID,
+            AncestryMetadata = AncestryMetadata,
             GenotypeDosages = GenotypeDosages,
+            train_test_split = train_test_split,
+            n_folds = n_folds,
             GenotypeDosageIndex = GenotypeDosageIndex,
-            PhenotypeBed = PhenotypeBed,
-            NumPrempt = NumPrempt
-    }
-
-    call susieR {
-        input:
-            GenotypeDosages = PrepInputs.SubsetDosages,
-            GenotypeDosageIndex = PrepInputs.SubsetDosagesIndex,
             QTLCovariates = QTLCovariates,
-            TensorQTLPermutations = PrepInputs.SubsetPermutationPvals,
+            TensorQTLPermutations = TensorQTLPermutations,
             SampleList = SampleList,
             PhenotypeBed = PhenotypeBed ,
             CisDistance = CisDistance,
             OutputPrefix = PhenotypeID,
-            susie_rscript = susie_rscript,
             memory = memory,
-            NumPrempt = NumPrempt,
-            MAF = MAF
+            NumPrempt = NumPrempt
 
         }
     
-    #call MergeSusie {
-    #    input:
-    #        SusieOutput = susieR.SusieParquet,
-    #        OutputPrefix = OutputPrefix 
-    #
-    #} 
     output {
-        File SusieParquet = susieR.SusieParquet
-        File SusielbfParquet = susieR.lbfParquet
-        File FullSusieParquet = susieR.FullSusieParquet
-        File SubsetBed = PrepInputs.SubsetBed
-        #File SubsetBedIndex = PrepInputs.SubsetBedIndex
-        File SubsetDosages = PrepInputs.SubsetDosages
-        File SubsetDosagesIndex = PrepInputs.SubsetDosagesIndex
-    }
+            File R2Susie =  ComputeR2.SusieR2
+            }
 }

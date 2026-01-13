@@ -27,6 +27,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-zoo \
     conda-forge::r-expm \
     conda-forge::r-matrixstats \
+    conda-forge::r-rfast \
     conda-forge::r-assertthat
 
 

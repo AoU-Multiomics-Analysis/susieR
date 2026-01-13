@@ -585,6 +585,7 @@ genotype_matrix_dat = eQTLUtils::extractGenotypeCovarsFromDosage(
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
 R2_data <- data.frame()
 for (k in c(1:n_folds)) {
+    message(paste0('Running on fold:',k))
     sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
         dplyr::rename('sample_id' =1 ) %>% 
         mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 

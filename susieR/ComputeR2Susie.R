@@ -575,7 +575,7 @@ selected_phenotypes = phenotype_list %>%
 
 
 #message('Fine-mapping begin')
-genotype_matrix_dat = eQTLUtils::extractGenotypeCovarsFromDosage(
+genotype_matrix_dat = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 

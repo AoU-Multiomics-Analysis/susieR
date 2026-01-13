@@ -592,7 +592,7 @@ se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matri
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
     
-gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
+gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == output_prefix)
 
 
 #message('Fine-mapping begin')

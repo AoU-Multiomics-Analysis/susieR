@@ -668,9 +668,9 @@ for (k in c(1:n_folds)) {
 
 
     hold_samples <- sample_metadata %>% filter(qtl_group == 'holdout')
-    OnePercentHoldoutData <- GetPredictions(OnePercentRes,genotype_matrix_dat,gene_vector,covariates_matrix) %>% 
+    OnePercentHoldoutData <- GetPredictions(OnePercentRes,genotype_matrix_full,gene_vector,covariates_matrix) %>% 
                 filter(sample_id %in% hold_samples$sample_id)
-    FullSusieHoldoutData <- GetPredictions(FullSusieRes,genotype_matrix_dat,gene_vector,covariates_matrix) %>% 
+    FullSusieHoldoutData <- GetPredictions(FullSusieRes,genotype_matrix_full,gene_vector,covariates_matrix) %>% 
                 filter(sample_id %in% hold_samples$sample_id)
     
     OnePercentSummary <- broom::glance(lm(Observed ~ Predicted,data =OnePercentHoldoutData)) %>% mutate(AF_threshold = 0.01)

@@ -7,6 +7,8 @@ suppressPackageStartupMessages(library("readr"))
 suppressPackageStartupMessages(library("tidyr"))
 suppressPackageStartupMessages(library("dplyr"))
 suppressPackageStartupMessages(library("arrow"))
+suppressPackageStartupMessages(library("caret"))
+
 
 #install.packages('Rfast')
 suppressPackageStartupMessages(library("Rfast"))
@@ -258,8 +260,19 @@ filterMAF <- function(genotype_matrix,ancestry_df,MAF_threshold = 0) {
 }
 
 
+MergeCovars <- function(GeneticPCs,ExpressionPCs) {
+Merged <- GeneticPCs %>% 
+                rownames_to_column('ID') %>% 
+                left_join(ExpressionPCs,by = 'ID') %>% 
+                column_to_rownames('ID') %>% 
+                data.matrix()
+Merged
+    
+}
+
 importQtlmapCovariates <- function(covariates_path){
   pc_matrix = read.table(covariates_path, check.names = F, header = T, stringsAsFactors = F)
+  covar_names <- pc_matrix[,1]
   pc_transpose = t(pc_matrix[,-1])
   colnames(pc_transpose) = pc_matrix$SampleID
   pc_df = dplyr::mutate(as.data.frame(pc_transpose), genotype_id = rownames(pc_transpose)) %>%
@@ -269,6 +282,7 @@ importQtlmapCovariates <- function(covariates_path){
   #Make PCA matrix
   pc_matrix = as.matrix(dplyr::select(pc_df,-genotype_id))
   rownames(pc_matrix) = pc_df$genotype_id
+  colnames(pc_matrix) <- covar_names
   return(pc_matrix)
 }
 importQtlmapPermutedPvalues <- function(perm_path){
@@ -521,6 +535,43 @@ MergedData <- PredictedValues %>%
 MergedData
 }
 
+compute_pcs <- function(expression_df){
+
+subsetted_expression_dat <- expression_df %>% select(-c(1,2,3,4))
+pca_standardized <- PCAtools::pca(subsetted_expression_dat)
+n_pcs <- chooseGavishDonoho( subsetted_expression_dat ,  var.explained = pca_standardized$sdev^2, noise = 1)
+message(paste0('Using' , n_pcs,' PCs'))
+pca_out <- pca_standardized$rotated %>% 
+   data.frame() %>%
+   select(1:n_pcs) %>% 
+   rownames_to_column('ID') %>% 
+   mutate(ID = str_remove(ID,'X'))
+
+pca_out
+}
+
+LoadSampleMetadata <- function(SampleMetadataPath,AncestryDf,nFolds = 5) {
+require(caret)
+SampleMetadata <- readr::read_tsv(opt$sample_meta) %>% 
+        dplyr::rename('sample_id' =1 ) %>% 
+        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
+        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))  %>%
+        left_join(AncestryDf,by = c('sample_id' = 'research_id')) %>% 
+        group_by(ancestry_pred_other) %>%
+        group_modify(~ {
+            .x$fold <- createFolds(seq_len(nrow(.x)), k = nFolds, list = FALSE)
+            .x
+        }) %>%
+        ungroup()
+SampleMetadata
+}
+
+LoadAncestryData <- function(AncestryPath) {
+AncestryDat <- readr::read_tsv(AncestryPath) %>% 
+    select(research_id,ancestry_pred_other) %>%
+    mutate(research_id = as.numeric(research_id))
+AncestryDat
+}
 
 ######### LOAD DATA #######
 message('Loading molecular data')
@@ -532,9 +583,7 @@ exclude_cov = apply(covariates_matrix, 2, sd) != 0
 covariates_matrix = covariates_matrix[,exclude_cov]
 
 message('Loading Ancestry data')
-AncestryDf <- readr::read_tsv(AncestryPath) %>% 
-    select(research_id,ancestry_pred_other) %>%
-    mutate(research_id = as.numeric(research_id))
+AncestryDf <- LoadAncestryData(AncestryPath) 
 
 
 cis_distance <- opt$cisdistance 
@@ -580,18 +629,10 @@ selected_phenotypes = phenotype_list %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
 
-sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
-        dplyr::rename('sample_id' =1 ) %>% 
-        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
-        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id)) %>% 
-       mutate(qtl_group = "train") %>%
-        mutate(
-            qtl_group = replace(
-              qtl_group,
-              sample(seq_len(n()), size = floor(percent_hold_out * n())),
-              "holdout"
-            )
-          )
+
+
+sample_metadata_folds <-  LoadSampleMetadata(opt$sample_meta,AncestryDf,nFolds =n_folds ) 
+
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
@@ -599,7 +640,7 @@ se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matri
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
    
-message('Extradting gene meta')
+message('Extracting gene meta')
 message(output_prefix)
 gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == output_prefix)
 
@@ -619,19 +660,19 @@ genotype_type_matrix_one_percent <- genotype_matrix_full %>%
 R2_data <- data.frame()
 for (k in c(1:n_folds)) {
     message(paste0('Running on fold:',k))
-    sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
-        dplyr::rename('sample_id' =1 ) %>% 
-        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
-        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id)) %>% 
-       mutate(qtl_group = "train") %>%
-        mutate(
-            qtl_group = replace(
-              qtl_group,
-              sample(seq_len(n()), size = floor(percent_hold_out * n())),
-              "holdout"
-            )
-          )
-    se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
+    sample_metadata <-  sample_metadata_folds %>%
+            mutate(qtl_group = case_when(fold == k ~ 'holdout',TRUE ~ 'train'))
+    holdout_samples <- sample_metadata %>% filter(qtl_group == 'holdout')
+    train_sample <- sample_metadata %>% filter(qtl_group == 'train')
+    subset_expression_matrix <- expression_matrix %>% 
+                                select(1,2,3,4,all_of(train_sample$sample_id))
+    PCA_for_fold <- compute_pcs(subset_expression_matrix) 
+
+    covariate_matrix_subset <- covariates_matrix[train_sample$sample_id,] %>% 
+        select(contains('GENETIC')) %>% 
+        MergeCovars(PCA_for_fold)
+    
+    se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = subset_expression_matrix %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
                                                              col_data = sample_metadata, 

@@ -28,7 +28,9 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-expm \
     conda-forge::r-matrixstats \
     conda-forge::r-rfast \
-    conda-forge::r-assertthat
+    conda-forge::r-assertthat \
+    bioconda::bioconductor-pcatools \
+    conda-forge::r-caret
 
 
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"

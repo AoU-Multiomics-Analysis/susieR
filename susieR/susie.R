@@ -11,46 +11,24 @@ suppressPackageStartupMessages(library("arrow"))
 install.packages('Rfast')
 suppressPackageStartupMessages(library("Rfast"))
 
+if (!requireNamespace("Rfast", quietly = TRUE)) {
+  install.packages("Rfast", repos = "https://cloud.r-project.org")
+}
+suppressPackageStartupMessages(library("Rfast"))
+
 source('/opt/r/lib/ImportFunctions.R')
 source('/opt/r/lib/SusieFunctions.R')
+source('/opt/r/lib/InitFunctions.R')
+source('/opt/r/lib/SusieCVFunctions.R')
+source('/opt/r/lib/OptParser.R')
 
+###### PARSE COMMAND LINE ARGUMENTS AND LOAD DATA #######
 
-###### PARSE COMMAND LINE ARGUMENTS ########## 
-option_list <- list(
-  # TODO look around if there is a package recognizing delimiter in dataset
-  optparse::make_option(c("--MAF"), type="character", default=NULL,
-    help="Minor allele frequency filter applied to genotype matrix", metavar="type"),
-  optparse::make_option(c("--phenotype_meta"), type="character", default=NULL,
-    help="Phenotype metadata file path (tab separated)", metavar="type"),
-  optparse::make_option(c("--sample_meta"), type="character", default=NULL,
-    help="Sample metadata file path (tab separated)", metavar="type"),
-  optparse::make_option(c("--expression_matrix"), type="character", default=NULL,
-    help="Expression matrix file path (genes in rows, samples in columns)", metavar="type"),
-  optparse::make_option(c("--phenotype_list"), type="character", default=NULL,
-    help="Path to phenotype list file", metavar="type"),
-  optparse::make_option(c("--genotype_matrix"), type="character", default=NULL,
-    help="Genotype dosage matrix extracted from VCF", metavar="type"),
-  optparse::make_option(c("--covariates"), type="character", default=NULL,
-    help="Path to covariates file in QTLtools format", metavar="type"),
-  optparse::make_option(c("--out_prefix"), type="character", default="./finemapping_output",
-    help="Prefix of output files", metavar="type"),
-  optparse::make_option(c("--qtl_group"), type="character", default=NULL,
-    help="Value of the current qtl_group", metavar="type"),
-  optparse::make_option(c("--cisdistance"), type="integer", default=1000000,
-    help="Cis distance (bp) from center of gene [default \"%default\"]", metavar="number"),
-  optparse::make_option(c("--chunk"), type="character", default="1 1",
-    help="Chunking (e.g. '5 10' = 5th of 10 chunks) [default \"%default\"]", metavar="type"),
-  optparse::make_option(c("--eqtlutils"), type="character", default=NULL,
-    help="Optional path to eQTLUtils package [default \"%default\"]", metavar="type"),
-  optparse::make_option(c("--write_full_susie"), type="character", default="true",
-    help="If 'true' full SuSiE output will not be written. Set 'false' to write all. [default \"%default\"]", metavar="type"),
-  optparse::make_option(c("--VariantList"), type="character", default="true",
-    help="file that contains gnomad common variants, will use this to filter genotype data if present", metavar="type",default = NULL)
-
-)
+option_list <- Optlist()
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
-MAF_threshold <- opt$MAF
-VariantList <- opt$VariantList
+data_list <- LoadData(opt)
+list2env(data_list,envir = environment())
+
 ########### INITIALIZE EMPTY DATAFRAMES #########
 
 empty_variant_df <- InitEmptyVariantDf()
@@ -60,43 +38,6 @@ empty_cs_df <- InitEmptyCS()
 
 
 ######### LOAD DATA #######
-message('Loading molecular data')
-expression_matrix = readr::read_tsv(opt$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
-
-message('Loading covariates')
-covariates_matrix = importQtlmapCovariates(opt$covariates)
-exclude_cov = apply(covariates_matrix, 2, sd) != 0
-covariates_matrix = covariates_matrix[,exclude_cov]
-
-cis_distance <- opt$cisdistance 
-genotype_file <- opt$genotype_matrix 
-
-# convert sample list into sample metadata 
-# required by eQTLUtils 
-message('Loading sample metadata')
-sample_metadata <-  readr::read_tsv(opt$sample_meta) %>% 
-    dplyr::rename('sample_id' =1 ) %>% 
-    mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
-    mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
-
-# convert bed file into phenotype metadata required by eQTLUtils
-phenotype_meta<- expression_matrix %>% 
-    select(1,2,3,4) %>% 
-    dplyr::rename('chromosome' = 1,'phenotype_pos' = 2) %>% 
-    mutate(strand  = 1) %>% 
-    mutate(gene_id = phenotype_id,group_id = phenotype_id) %>% 
-    select(phenotype_id,group_id,gene_id,chromosome,phenotype_pos,strand)
-
-# import permutation p values from tensorQTL. Note that i had 
-# to make slight changes to this function for it to work 
-message('Loading QTL stats')
-phenotype_table = importQtlmapPermutedPvalues(opt$phenotype_list)
-
-filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
-phenotype_list = dplyr::semi_join(data.frame(group_id=phenotype_table$phenotype_id,phenotype_id=phenotype_table$phenotype_id) , filtered_list, by = "group_id")
-message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
-#Keep only those phenotypes that are present in the expression matrix
-phenotype_list = dplyr::filter(phenotype_list, phenotype_id %in% expression_matrix$phenotype_id)
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
                                                             select(-1,-2,-3) , 
                                                          row_data = phenotype_meta, 
@@ -127,15 +68,6 @@ message("Number of overall unique group_ids: ", length(unique(phenotype_list$gro
 message("Number of groups in the batch: ", length(selected_group_ids))
 message("Number of phenotypes in the batch: ", length(selected_phenotypes))
 
-#Define fine-mapped regions
-#region_df = dplyr::transmute(phenotype_list, phenotype_id, region = paste0("chr", chromosome, ":", 
-#                                                                                        phenotype_pos - cis_distance, "-",
-#                                                                                        phenotype_pos + cis_distance))
-region_df <- phenotype_meta %>% 
-                filter(phenotype_id %in% phenotype_list$phenotype_id) %>% 
-                transmute(phenotype_id,region = paste0(chromosome,':',
-                                                       phenotype_pos - cis_distance,'-',
-                                                       phenotype_pos + cis_distance))
 #Extract credible sets from finemapping results
 message(" # Extract credible sets from finemapping results")
 res = purrr::map(results, extractResults) %>%
@@ -187,6 +119,9 @@ if(nrow(cs_df) > 0){
   cs_df = empty_cs_df
 }
 
+
+ 
+
 #Extract information about all variants
 if(nrow(variant_df) > 0){
   variant_df_transmute <- dplyr::transmute(variant_df, molecular_trait_id = phenotype_id, variant = variant_id, 
@@ -218,6 +153,17 @@ in_cs_variant_gene_df <- in_cs_variant_df %>%
 arrow::write_parquet(in_cs_variant_df, paste0(opt$out_prefix, ".parquet"))
 arrow::write_parquet(lbf_df, paste0(opt$out_prefix, ".lbf_variable.parquet"))
 arrow::write_parquet(variant_df, paste0(opt$out_prefix, ".full_susie.parquet"))
+
+
+
+
+
+
+
+
+
+
+
 #} else { 
   ## generate connected components per gene
 #message("Building connected components!")

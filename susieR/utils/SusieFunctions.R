@@ -1,26 +1,50 @@
-filterMAF <- function(genotype_matrix,MAF_threshold = 0,variant_list = NULL) {
-    
-    if (is.null(variant_list)) {
-    # computes MAF across genotype matrix
-    # and filters to those above the MAF threshold
-    MAF_calculations <- genotype_matrix %>% 
+filterMAF <- function(genotype_matrix,
+                      ancestry_df,
+                      MAF_threshold = 0,
+                      variant_list = NULL) {
+    # If no variant list is specified then use 
+    # genotype data to compute MAFs for each variant 
+    # for each ancestry and filter based on this 
+    if (is.null(variant_list) & MAF_threshold > 0) {
+    message('Filtering genotype matrix using MAF from dataset per ancestry')
+    MAF_calculations_table <- genotype_matrix %>% 
         t() %>% 
         data.frame() %>% 
-        summarize(across(everything(),~sum(.)/(dplyr::n()*2))) %>% 
-        t() %>% 
-        data.frame() %>% 
-        dplyr::rename('AF' = 1) %>% 
-        mutate(MAF = case_when(AF > .5 ~ 1 - AF,TRUE ~ AF))  %>%
-        filter(MAF > MAF_threshold)
-    filtered_genotype_matrix <- genotype_matrix[rownames(MAF_calculations),]
-    } else {
+        mutate(across(everything(),~case_when(. == -1 ~ NA,TRUE ~ .))) %>% 
+        tibble::rownames_to_column('research_id') %>%
+        mutate(research_id = as.numeric(research_id)) %>% 
+        left_join(ancestry_df,by = 'research_id') %>%
+        tibble::column_to_rownames('research_id') %>% 
+        filter(ancestry_pred_other != 'oth') %>% 
+        group_by(ancestry_pred_other) %>% 
+          summarize(
+            across(
+              everything(),
+              ~ sum(., na.rm = TRUE) / (sum(!is.na(.)) * 2)
+            ),
+            .groups = "drop"
+          ) 
+     MAF_calculations <- MAF_calculations_table  %>% 
+        pivot_longer(!ancestry_pred_other)   %>% 
+        mutate(value = case_when(value > .5 ~ 1 - value,TRUE ~ value)) %>% 
+        filter(value > MAF_threshold) %>% 
+        distinct(name) %>% 
+        pull(name)
+    filtered_genotype_matrix <- genotype_matrix[MAF_calculations,]
+    }else if (!is.null(variant_list)){
+        message('Filtering genotype matrix by external  variant set')
         # uses variant list to filter genotype matrix 
         variant_df <- ImportVariantList(variant_list)
         valid_variants <- intersect(rownames(genotype_matrix),variant_list)
         filtered_genotype_matrix <- genotype_matrix[valid_variants,]
+    } else {
+        message('No filtering parameters supplied, returning original genotype matrix')
+        filtered_genotype_matrix <- genotype_matrix
     }
+
     return(filtered_genotype_matrix) 
 }
+
 
 
 
@@ -36,13 +60,17 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   #Rearrange samples in the covariates matrix
   covariates_matrix = cbind(covariates[gene_vector$genotype_id,], 1)
   
+  if (is.character(genotype_file)) {
   #Import genotype matrix
   genotype_matrix = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) %>% 
-    filterMAF(MAF_threshold = MAF,variant_list = variant_list) 
+    filterMAF(AncestryData,MAF_threshold = MAF,variant_list = variant_list) 
+   } else { 
+    genotype_matrix <- genotype_file
+    }
 
   #Residualise gene expression and genotype matrix
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)

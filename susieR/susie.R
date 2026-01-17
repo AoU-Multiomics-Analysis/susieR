@@ -69,6 +69,7 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
                                                               genotype_file, 
                                                               covariates_matrix, 
                                                               cis_distance,
+                                                              ancestry_data = AncestryDf, 
                                                               MAF = MAF_threshold,
                                                               variant_list =variant_list 
                                                               ))

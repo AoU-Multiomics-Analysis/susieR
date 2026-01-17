@@ -48,7 +48,7 @@ filterMAF <- function(genotype_matrix,
 
 
 
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,MAF = 0,variant_list = NULL){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL){
   message("Processing phenotype: ", phenotype_id)
   
   #Extract phenotype from SE
@@ -67,7 +67,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) %>% 
-    filterMAF(AncestryData,MAF_threshold = MAF,variant_list = variant_list) 
+    filterMAF(ancestry_data,MAF_threshold = MAF,variant_list = variant_list) 
    } else { 
     genotype_matrix <- genotype_file
     }

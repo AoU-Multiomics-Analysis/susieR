@@ -20,8 +20,8 @@ task susieR {
 
     command <<<
         Rscript /tmp/susie.R \
-            ~{if defined(MAF) then "--MAF {MAF}  " else ""} \
-            ~{if defined(AncestryFile) then "--AncestryMetadata {AncestryFile}  "  else ""} \
+            ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} \
+            ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} \
             ~{if defined(VariantList) then "--VariantList {VariantList}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \

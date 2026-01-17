@@ -5,7 +5,7 @@ filterMAF <- function(genotype_matrix,
     # If no variant list is specified then use 
     # genotype data to compute MAFs for each variant 
     # for each ancestry and filter based on this 
-    if (is.null(variant_list) & MAF_threshold > 0) {
+    if (is.null(variant_list) & MAF_threshold > 0 & !is.null(ancestry_df))  {
     message('Filtering genotype matrix using MAF from dataset per ancestry')
     MAF_calculations_table <- genotype_matrix %>% 
         t() %>% 

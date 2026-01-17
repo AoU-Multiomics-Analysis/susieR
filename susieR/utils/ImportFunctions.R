@@ -42,6 +42,7 @@ SampleMetadata
 }
 
 LoadAncestryData <- function(AncestryPath) {
+message('Loading ancestry data')
 AncestryDat <- readr::read_tsv(AncestryPath) %>% 
     select(research_id,ancestry_pred_other) %>%
     mutate(research_id = as.numeric(research_id))

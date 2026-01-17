@@ -97,7 +97,7 @@ LoadData <- function(opt_list) {
     }
     
     genotype_file <- opt_list$genotype_file
-    cis_distance <- as.numeric(opt_list$cis_distance)
+    cis_distance <- as.numeric(opt_list$cisdistance)
     output_prefix <- opt_list$out_prefix
     n_folds <- opt_list$n_folds
     variant_list <- opt_list$VariantList

@@ -113,6 +113,7 @@ LoadData <- function(opt_list) {
     OutList <- list(
         covariates_matrix = covariates_matrix,
         phenotype_table = phenotype_table,
+        phenotype_meta = phenotype_meta,
         filtered_list = filtered_list,
         phenotype_list = phenotype_list,
         expression_matrix = expression_matrix,

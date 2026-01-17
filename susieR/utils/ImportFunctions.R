@@ -1,6 +1,8 @@
 ImportVariantList <- function(VariantListPath) {
-    VariantListDf <- readr::read_tsv(VariantListPath)
-    VariantListDf
+    VariantList <- readr::read_tsv(VariantListPath) %>% 
+                        dplyr::rename('variants'  = 1) %>% 
+                        pull(variants)
+    VariantList
 }
 
 importQtlmapCovariates <- function(covariates_path){

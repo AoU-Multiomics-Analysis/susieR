@@ -36,6 +36,8 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
 
 COPY susieR/*  . 
+COPY susieR/utils/*  /opt/r/lib/ 
+
 
 ## Default command to run when the container starts
 CMD ["bash"]

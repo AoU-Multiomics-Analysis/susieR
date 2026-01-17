@@ -37,6 +37,7 @@ task susieR {
         Int memory
         Int NumPrempt
         Float MAF
+        File? VariantList
     }
 
     command <<<
@@ -48,7 +49,7 @@ task susieR {
             --expression_matrix ~{PhenotypeBed} \
             --covariates ~{QTLCovariates} \
             --out_prefix ~{OutputPrefix} \
-            --cisdistance ~{CisDistance} \
+            ~{if defined(VariantList) then "--VariantList {VariantList}  "     else ""} --cisdistance ~{CisDistance} 
 
     >>>
 
@@ -83,6 +84,8 @@ workflow susieR_workflow {
         Int NumPrempt
         String OutputPrefix
         Float MAF
+        File? VariantList
+
     }
     call susieR {
         input:
@@ -97,7 +100,8 @@ workflow susieR_workflow {
             susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
-            MAF = MAF
+            MAF = MAF,
+            VariantList = VariantList
         }
         output {
         File SusieParquet = susieR.SusieParquet

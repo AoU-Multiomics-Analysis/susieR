@@ -35,7 +35,7 @@ option_list <- list(
     help="specifies number of folds to use", metavar="type",default = NULL),
   optparse::make_option(c("--VariantList"), type="character",
     help="file that contains gnomad common variants, will use this to filter genotype data if present", metavar="type",default = NULL)
-
+  
 )
 option_list
 }

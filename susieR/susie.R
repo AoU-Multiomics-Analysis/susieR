@@ -7,25 +7,35 @@ suppressPackageStartupMessages(library("readr"))
 suppressPackageStartupMessages(library("tidyr"))
 suppressPackageStartupMessages(library("dplyr"))
 suppressPackageStartupMessages(library("arrow"))
-
-install.packages('Rfast')
-suppressPackageStartupMessages(library("Rfast"))
-
 if (!requireNamespace("Rfast", quietly = TRUE)) {
+  message('Installing Rfast')
   install.packages("Rfast", repos = "https://cloud.r-project.org")
 }
 suppressPackageStartupMessages(library("Rfast"))
 
-source('/opt/r/lib/ImportFunctions.R')
-source('/opt/r/lib/SusieFunctions.R')
-source('/opt/r/lib/InitFunctions.R')
-source('/opt/r/lib/SusieCVFunctions.R')
-source('/opt/r/lib/OptParser.R')
+####### GET PATH TO FUNCTIONS ########
+FunctionsPathOptList <- list(
+    optparse::make_option(
+                          c("--FunctionsPath"),
+                          type='character',
+                          default = "/opt/r/lib"
+    )
+)
+FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
+FunctionPath <- FunctionPathOpt$FunctionsPath
 
-###### PARSE COMMAND LINE ARGUMENTS AND LOAD DATA #######
+####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS############ 
+source(paste0(FunctionPath,'/ImportFunctions.R'))
+source(paste0(FunctionPath,'/InitFunctions.R'))
+source(paste0(FunctionPath,'/SusieCVFunctions.R'))
+source(paste0(FunctionPath,'/OptParser.R'))
+message('Functions Loaded')
+
+
 
 option_list <- Optlist()
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
+
 data_list <- LoadData(opt)
 list2env(data_list,envir = environment())
 

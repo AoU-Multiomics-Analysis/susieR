@@ -25,10 +25,10 @@ suppressPackageStartupMessages(library("Rfast"))
 #FunctionPath <- FunctionPathOpt$FunctionsPath
 
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS############ 
-source(paste0( "/opt/r/lib",'/ImportFunctions.R'))
-source(paste0("/opt/r/lib",'/InitFunctions.R'))
-source(paste0("/opt/r/lib",'/SusieCVFunctions.R'))
-source(paste0("/opt/r/lib",'/OptParser.R'))
+source("/opt/r/lib/ImportFunctions.R")
+source("/opt/r/lib/InitFunctions.R")
+source("/opt/r/lib/SusieFunctions.R")
+source("/opt/r/lib/OptParser.R")
 message('Functions Loaded')
 
 

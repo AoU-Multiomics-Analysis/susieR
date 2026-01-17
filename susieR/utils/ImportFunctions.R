@@ -58,8 +58,6 @@ LoadData <- function(opt_list) {
     exclude_cov = apply(covariates_matrix, 2, sd) != 0
     covariates_matrix = covariates_matrix[,exclude_cov]
 
-    cis_distance <- opt_list$cisdistance 
-    genotype_file <- opt_list$genotype_matrix 
     # convert bed file into phenotype metadata required by eQTLUtils
     phenotype_meta<- expression_matrix %>% 
         select(1,2,3,4) %>% 
@@ -97,13 +95,13 @@ LoadData <- function(opt_list) {
         }else {
         AncestryDf <- NULL
     }
+    
 
-    genotype_file <- opt$genotype_matrix
     cis_distance <- as.numeric(opt_list$cis_distance)
     output_prefix <- opt_list$out_prefix
-    n_folds <- opt$n_folds
+    n_folds <- opt_list$n_folds
     variant_list <- opt_list$VariantList
-    MAF_threshold <- opt$MAF
+    MAF_threshold <- opt_list$MAF
     region_df <- phenotype_meta %>% 
                     filter(phenotype_id %in% phenotype_list$phenotype_id) %>% 
                     transmute(phenotype_id,region = paste0(chromosome,':',

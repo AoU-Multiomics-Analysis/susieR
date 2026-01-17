@@ -14,21 +14,21 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 
 ####### GET PATH TO FUNCTIONS ########
-FunctionsPathOptList <- list(
-    optparse::make_option(
-                          c("--FunctionsPath"),
-                          type='character',
-                          default = "/opt/r/lib"
-    )
-)
-FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
-FunctionPath <- FunctionPathOpt$FunctionsPath
+#FunctionsPathOptList <- list(
+    #optparse::make_option(
+                          #c("--FunctionsPath"),
+                          #type='character',
+                          #default = "/opt/r/lib"
+    #)
+#)
+#FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
+#FunctionPath <- FunctionPathOpt$FunctionsPath
 
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS############ 
-source(paste0(FunctionPath,'/ImportFunctions.R'))
-source(paste0(FunctionPath,'/InitFunctions.R'))
-source(paste0(FunctionPath,'/SusieCVFunctions.R'))
-source(paste0(FunctionPath,'/OptParser.R'))
+source(paste0( "/opt/r/lib",'/ImportFunctions.R'))
+source(paste0("/opt/r/lib",'/InitFunctions.R'))
+source(paste0("/opt/r/lib",'/SusieCVFunctions.R'))
+source(paste0("/opt/r/lib",'/OptParser.R'))
 message('Functions Loaded')
 
 

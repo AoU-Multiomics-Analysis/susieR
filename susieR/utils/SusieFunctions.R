@@ -73,6 +73,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     }
 
   #Residualise gene expression and genotype matrix
+  message('Residualizing gene expression')
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
   expression_vector = hat %*% gene_vector$phenotype_value_std
   names(expression_vector) = gene_vector$genotype_id
@@ -82,12 +83,15 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   gt_matrix = genotype_matrix[,names(expression_vector)]
   
   #Exclude variants with no alternative alleles
+  message('Filtering variants with no alt alleles')
   gt_matrix = gt_matrix[rowSums(round(gt_matrix,0), na.rm = TRUE) != 0,]
-  
+    
+  message('Replacing missing genotypes ')
   #Replace missing values with row means
   gt_matrix = t(gt_matrix) %>% zoo::na.aggregate() %>% t()
 
   #Standardise genotypes
+  message('Standardizing genotypes')
   gt_std = t(gt_matrix - apply(gt_matrix, 1, mean))
   gt_hat = hat %*% gt_std
   

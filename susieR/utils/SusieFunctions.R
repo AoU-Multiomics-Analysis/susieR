@@ -35,7 +35,7 @@ filterMAF <- function(genotype_matrix,
         message('Filtering genotype matrix by external  variant set')
         # uses variant list to filter genotype matrix 
         variant_df <- ImportVariantList(variant_list)
-        valid_variants <- intersect(rownames(genotype_matrix),variant_list)
+        valid_variants <- intersect(rownames(genotype_matrix),variant_df)
         filtered_genotype_matrix <- genotype_matrix[valid_variants,]
     } else {
         message('No filtering parameters supplied, returning original genotype matrix')

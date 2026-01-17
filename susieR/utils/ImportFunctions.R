@@ -53,16 +53,16 @@ AncestryDat
 LoadData <- function(opt_list) {
     message('Loading molecular data')
     
-     (if is.null(opt_list$expression_matrix)) {
+    if (is.null(opt_list$expression_matrix)) {
         stop('molecular data file is missing')
     }
-    (if is.null(opt_list$phenotype_list)) {
+    if (is.null(opt_list$phenotype_list)) {
         stop('tensorQTL file is missing')
     }
-    (if is.null(opt_list$covariates)) {
+    if (is.null(opt_list$covariates)) {
         stop('Covariates file is missing')
     }
-    (if is.null(opt_list$genotype_matrix)) {
+    if (is.null(opt_list$genotype_matrix)) {
         stop('Genotype file is missing')
     }
     

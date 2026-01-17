@@ -52,9 +52,25 @@ AncestryDat
 
 LoadData <- function(opt_list) {
     message('Loading molecular data')
+    
+     (if is.null(opt_list$expression_matrix)) {
+        stop('molecular data file is missing')
+    }
+    (if is.null(opt_list$phenotype_list)) {
+        stop('tensorQTL file is missing')
+    }
+    (if is.null(opt_list$covariates)) {
+        stop('Covariates file is missing')
+    }
+    (if is.null(opt_list$genotype_matrix)) {
+        stop('Genotype file is missing')
+    }
+    
+ 
     expression_matrix = readr::read_tsv(opt_list$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
 
     message('Loading covariates')
+   
     covariates_matrix = importQtlmapCovariates(opt_list$covariates)
     exclude_cov = apply(covariates_matrix, 2, sd) != 0
     covariates_matrix = covariates_matrix[,exclude_cov]
@@ -78,6 +94,8 @@ LoadData <- function(opt_list) {
     # import permutation p values from tensorQTL. Note that i had 
     # to make slight changes to this function for it to work 
     message('Loading QTL stats')
+    
+    
     phenotype_table = importQtlmapPermutedPvalues(opt_list$phenotype_list)
 
     filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
@@ -97,7 +115,7 @@ LoadData <- function(opt_list) {
         n_folds <- NULL
     }
     
-    genotype_file <- opt_list$genotype_file
+    genotype_file <- opt_list$genotype_matrix
     cis_distance <- as.numeric(opt_list$cisdistance)
     output_prefix <- opt_list$out_prefix
     n_folds <- opt_list$n_folds
@@ -108,7 +126,6 @@ LoadData <- function(opt_list) {
                     transmute(phenotype_id,region = paste0(chromosome,':',
                                                            phenotype_pos - cis_distance,'-',
                                                            phenotype_pos + cis_distance))
-
     OutList <- list(
         covariates_matrix = covariates_matrix,
         phenotype_table = phenotype_table,

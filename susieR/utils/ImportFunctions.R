@@ -96,7 +96,7 @@ LoadData <- function(opt_list) {
         AncestryDf <- NULL
     }
     
-
+    genotype_file <- opt_list$genotype_file
     cis_distance <- as.numeric(opt_list$cis_distance)
     output_prefix <- opt_list$out_prefix
     n_folds <- opt_list$n_folds

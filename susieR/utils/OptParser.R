@@ -1,7 +1,7 @@
 Optlist <- function() {
 option_list <- list(
   # TODO look around if there is a package recognizing delimiter in dataset
-  optparse::make_option(c("--MAF"), type="character", default=NULL,
+  optparse::make_option(c("--MAF"), default=NULL,
     help="Minor allele frequency filter applied to genotype matrix", metavar="type",type="numeric"),
   optparse::make_option(c("--AncestryMetadata"), type="character", default=NULL,
     help="File that contains ancestry grouping assignments to calculate MAF per population", metavar="type"),

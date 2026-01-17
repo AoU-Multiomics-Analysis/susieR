@@ -70,7 +70,7 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
                                                               covariates_matrix, 
                                                               cis_distance,
                                                               MAF = MAF_threshold,
-                                                              variant_list = VariantList
+                                                              variant_list =variant_list 
                                                               ))
 
 #Only proceed if the there are more than 0 phenotypes

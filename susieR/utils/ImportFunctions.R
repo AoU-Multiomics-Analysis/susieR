@@ -92,9 +92,9 @@ LoadData <- function(opt_list) {
         AncestryDf <- NULL
     }
     if (!is.null(opt_list$n_folds)) {
-        AncestryDf <- as.numeric(opt_list$train_test_split) 
+        n_folds <- as.numeric(opt_list$train_test_split) 
         }else {
-        AncestryDf <- NULL
+        n_folds <- NULL
     }
     
     genotype_file <- opt_list$genotype_file

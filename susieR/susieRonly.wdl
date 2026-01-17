@@ -1,27 +1,5 @@
 version 1.0
 
-#task splitPhenotypeBed {
-#    input {
-#        File TensorQTLPermutations
-#    }
-
-    #String baseName = basename(PhenotypeBed, ".gz")
-
-#    command <<<
-#        zcat ~{TensorQTLPermutations} | awk '$18 < 0.05' | head -n 100  > significant_qtls.txt 
-#        awk 'NR==1 {header=$0; next} {out=$1".txt"; print header > out; print >> out}' significant_qtls.txt 
-#    >>>
-#
-#    output {
-#        Array[File] splitFiles = glob("*.txt")
-#    }
-#    runtime {
-#        docker: "quay.io/biocontainers/htslib:1.22.1--h566b1c6_0"
-#        disks: "local-disk 500 SSD"
-#        memory: "2GB"
-#        cpu: "1"
-#    }
-#}
 
 task susieR {
     input {
@@ -33,28 +11,30 @@ task susieR {
         File PhenotypeBed
         Int CisDistance
         String OutputPrefix
-        File susie_rscript
         Int memory
         Int NumPrempt
-        Float MAF
+        Float? MAF
         File? VariantList
+        File? AncestryFile
     }
 
     command <<<
-        Rscript ~{susie_rscript} \
-            --MAF ~{MAF} \
+        Rscript /tmp/susie.R \
+            ~{if defined(MAF) then "--MAF {MAF}  " else ""} \
+            ~{if defined(AncestryFile) then "--AncestryMetadata {AncestryFile}  "  else ""} \
+            ~{if defined(VariantList) then "--VariantList {VariantList}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \
             --expression_matrix ~{PhenotypeBed} \
             --covariates ~{QTLCovariates} \
             --out_prefix ~{OutputPrefix} \
-            ~{if defined(VariantList) then "--VariantList {VariantList}  "     else ""} --cisdistance ~{CisDistance} 
+            --cisdistance ~{CisDistance} 
 
     >>>
 
     runtime {
-        docker: 'quay.io/kfkf33/susier:v24.01.2'
+        docker: 'ghcr.io/aou-multiomics-analysis/susier:main'
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
@@ -79,12 +59,12 @@ workflow susieR_workflow {
         File SampleList
         File PhenotypeBed
         Int CisDistance
-        File susie_rscript
         Int memory
         Int NumPrempt
         String OutputPrefix
-        Float MAF
+        Float? MAF
         File? VariantList
+        File? AncestryFile 
 
     }
     call susieR {
@@ -97,15 +77,15 @@ workflow susieR_workflow {
             PhenotypeBed = PhenotypeBed ,
             CisDistance = CisDistance,
             OutputPrefix = OutputPrefix,
-            susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
             MAF = MAF,
-            VariantList = VariantList
+            VariantList = VariantList,
+            AncestryFile = AncestryFile
         }
         output {
-        File SusieParquet = susieR.SusieParquet
-        File SusielbfParquet = susieR.lbfParquet
-        File FullSusieParquet = susieR.FullSusieParquet
+            File SusieParquet = susieR.SusieParquet
+            File SusielbfParquet = susieR.lbfParquet
+            File FullSusieParquet = susieR.FullSusieParquet
         }
 }

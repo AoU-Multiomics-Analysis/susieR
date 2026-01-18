@@ -25,7 +25,7 @@ task susieR {
         awk -F'\t' 'BEGIN{OFS="\t"} { $4="skip"; print }' input_gene.txt > skip.txt
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
 
-        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList {VariantList}  "  else ""} \
+        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \

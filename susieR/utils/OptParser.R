@@ -9,6 +9,8 @@ option_list <- list(
     help="Phenotype metadata file path (tab separated)", metavar="type"),
   optparse::make_option(c("--sample_meta"), type="character", default=NULL,
     help="Sample metadata file path (tab separated)", metavar="type"),
+  optparse::make_option(c("--cv_meta"), type="character", default=NULL,
+    help="Sample metadata file path (tab separated)", metavar="type"),
   optparse::make_option(c("--expression_matrix"), type="character", default=NULL,
     help="Expression matrix file path (genes in rows, samples in columns)", metavar="type"),
   optparse::make_option(c("--phenotype_list"), type="character", default=NULL,

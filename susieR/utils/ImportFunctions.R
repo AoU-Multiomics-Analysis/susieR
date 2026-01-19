@@ -27,12 +27,13 @@ importQtlmapPermutedPvalues <- function(perm_path){
 }
 
 
-LoadSampleMetadataCV <- function(SampleMetadataPath,AncestryDf,nFolds = 5) {
+# Groups samples by ancestry and creates folds for cross validation
+CreateCVFoldsMetadata <- function(SampleMetadataPath,AncestryDf,nFolds = 5) {
 require(caret)
-SampleMetadata <- readr::read_tsv(opt$sample_meta) %>% 
+SampleMetadata <- readr::read_tsv(SampleMetadataPath) %>% 
         dplyr::rename('sample_id' =1 ) %>% 
         mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
-        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))  %>%
+        mutate(sample_id = as.numeric(sample_id),genotype_id = as.character(genotype_id))  %>%
         left_join(AncestryDf,by = c('sample_id' = 'research_id')) %>% 
         group_by(ancestry_pred_other) %>%
         group_modify(~ {

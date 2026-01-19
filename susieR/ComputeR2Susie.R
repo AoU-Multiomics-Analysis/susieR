@@ -33,7 +33,7 @@ if (is.null(cv_meta)) {
 
 # Load Sample metadata from CV PC object
 SampleMetaData <- cv_meta[['Metadata']] %>% 
-            dplyr::rename('sample_id' =1 ) %>% 
+            #dplyr::rename('sample_id' =1 ) %>% 
             mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
             mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
 nFolds <- max(as.numeric(SampleMetadata$fold))

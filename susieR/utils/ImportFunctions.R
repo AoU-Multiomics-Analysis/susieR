@@ -5,8 +5,9 @@ ImportVariantList <- function(VariantListPath) {
     VariantList
 }
 
-importQtlmapCovariates <- function(covariates_path){
+importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE){
   pc_matrix = read.table(covariates_path, check.names = F, header = T, stringsAsFactors = F)
+  col_names <-  pc_matrix %>% pull(ID)
   pc_transpose = t(pc_matrix[,-1])
   colnames(pc_transpose) = pc_matrix$SampleID
   pc_df = dplyr::mutate(as.data.frame(pc_transpose), genotype_id = rownames(pc_transpose)) %>%
@@ -16,6 +17,9 @@ importQtlmapCovariates <- function(covariates_path){
   #Make PCA matrix
   pc_matrix = as.matrix(dplyr::select(pc_df,-genotype_id))
   rownames(pc_matrix) = pc_df$genotype_id
+  if (load_colnames == TRUE) {
+      colnames(pc_matrix) <- col_names
+  }
   return(pc_matrix)
 }
 importQtlmapPermutedPvalues <- function(perm_path){

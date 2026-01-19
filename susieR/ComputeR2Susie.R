@@ -14,15 +14,15 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 
 ####### GET PATH TO FUNCTIONS ########
-FunctionsPathOptList <- list(
-    optparse::make_option(
-                          c("--FunctionsPath"),
-                          type='character',
-                          default = "/opt/r/lib"
-    )
-)
-FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
-FunctionPath <- FunctionPathOpt$FunctionsPath
+#FunctionsPathOptList <- list(
+    #optparse::make_option(
+                          #c("--FunctionsPath"),
+                          #type='character',
+                          #default = "/opt/r/lib"
+    #)
+#)
+#FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
+#FunctionPath <- FunctionPathOpt$FunctionsPath
 
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS########## 
 source(paste0(FunctionPath,'/ImportFunctions.R'))

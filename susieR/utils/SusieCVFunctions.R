@@ -1,8 +1,23 @@
+ResidualizeMolecularData <- function(GeneVector,
+                                     Covariates,
+                                     Coefs) {
+SortedGeneVector <- GeneVector
+rownames(SortedGeneVector) <- SortedGeneVector$sample_id
+SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
+TestResids <- data.frame(Observed = Sorted$phenotype_value - data.matrix(TestCovariateSet) %*% TrainCovarModel) %>% 
+                tibble::rownames_to_column('sample_id') 
+GeneVectorResidualized <- GeneVector %>% 
+                    left_join(TestResids,by = 'sample_id')
+GeneVectorResidualized
+}
+
+
+
+
 GetPredictions <- function(SusieRes,
                         GenotypeMatrix,
-                        BedDf,
+                        GeneVector,
                         TrainCoefs,
-                        GeneID,
                         Covariates) {
     
 GenotypeDataFinemappedVariants <- GenotypeMatrix[SusieRes$variant,]
@@ -10,21 +25,11 @@ PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% 
     data.frame() %>% 
     tibble::rownames_to_column('sample_id') %>% 
     dplyr::rename('Predicted' = 2)
-
-GeneDf <- BedDf %>%
-                dplyr::select(-1,-2,-3) %>% 
-                pivot_longer(!gene_id) %>%
-                filter(gene_id == GeneID) %>%
-                dplyr::rename('std_value' = 'value','sample_id' = 'name')
-GeneDf <- GeneDf[match(rownames(Covariates), GeneDf$sample_id), ]
-GeneVector <- GeneDf %>% pull(std_value)
-
-TestResids <- GeneVector - data.matrix(Covariates) %*% TrainCoefs 
-
-ObservedValues <- GeneDf %>% bind_cols(Resid = TestResids)
+Resids <- GeneVector %>% ResidualizeMolecularData(Covariates,TrainCoefs)
 MergedData <- PredictedValues %>% left_join(ObservedValues,by ='sample_id') 
 MergedData
 }
+
 
 EstimateBetaHat <- function(MolecularVector,CovarMatrix) {
 BetaHat <- solve(crossprod(CovarMatrix), crossprod(CovarMatrix,MolecularVector ))

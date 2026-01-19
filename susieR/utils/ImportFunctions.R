@@ -83,8 +83,12 @@ LoadData <- function(opt_list) {
     expression_matrix = readr::read_tsv(opt_list$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
 
     message('Loading covariates')
-   
-    covariates_matrix = importQtlmapCovariates(opt_list$covariates)
+    
+    if(!is.null(opt_list$cv_meta)) {
+        covariates_matrix = importQtlmapCovariates(opt_list$covariates,load_colnames = TRUE)
+    } else {
+        covariates_matrix = importQtlmapCovariates(opt_list$covariates,load_colnames = FALSE)
+    }
     exclude_cov = apply(covariates_matrix, 2, sd) != 0
     covariates_matrix = covariates_matrix[,exclude_cov]
 
@@ -133,11 +137,11 @@ LoadData <- function(opt_list) {
     }else {
         AncestryDf <- NULL
     }
-    if (!is.null(opt_list$n_folds)) {
-        n_folds <- as.numeric(opt_list$train_test_split) 
-        }else {
-        n_folds <- NULL
-    }
+    #if (!is.null(opt_list$n_folds)) {
+        #n_folds <- as.numeric(opt_list$n_folds) 
+        #}else {
+        #n_folds <- NULL
+    #}
    
     genotype_file <- opt_list$genotype_matrix
     cis_distance <- as.numeric(opt_list$cisdistance)
@@ -160,7 +164,6 @@ LoadData <- function(opt_list) {
         variant_list = variant_list,
         MAF_threshold = MAF_threshold,
         AncestryDf = AncestryDf,
-        n_folds = n_folds,
         output_prefix = output_prefix,
         cis_distance = cis_distance,
         genotype_file = genotype_file,

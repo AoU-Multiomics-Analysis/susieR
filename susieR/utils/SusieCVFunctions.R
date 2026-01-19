@@ -177,6 +177,7 @@ CleanSusieData <- function(res,region_df) {
   } else {
     lbf_df = empty_lbf_df
   }
+}
 
 MergeCovars <- function(GeneticPCs,ExpressionPCs) {
 Merged <- GeneticPCs %>% 

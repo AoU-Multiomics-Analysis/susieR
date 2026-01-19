@@ -19,20 +19,34 @@ MergedData <- PredictedValues %>%
 MergedData
 }
 
-compute_pcs <- function(expression_df){
-
-subsetted_expression_dat <- expression_df %>% select(-c(1,2,3,4))
-pca_standardized <- PCAtools::pca(subsetted_expression_dat)
-n_pcs <- chooseGavishDonoho( subsetted_expression_dat ,  var.explained = pca_standardized$sdev^2, noise = 1)
-message(paste0('Using' , n_pcs,' PCs'))
-pca_out <- pca_standardized$rotated %>% 
-   data.frame() %>%
-   select(1:n_pcs) %>% 
-   rownames_to_column('ID') %>% 
-   mutate(ID = str_remove(ID,'X'))
-
-pca_out
+GetFoldPCData <- function(FoldPCData,
+                       Fold) {
+FoldLabel <- paste0('Fold',Fold)
+FoldData <- FoldPCData[[FoldLabel]]
+FoldData
 }
+
+GetFoldTrainPCs <- function(FoldPCData,
+                            Fold) {
+FoldPCData <- GetFoldPCData(FoldPCData,Fold)
+TrainPCs <- FoldPCData[['TrainPCs']]
+TrainPCs
+}
+
+GetFoldTestPCs <- function(FoldPCData,
+                            Fold) {
+FoldPCData <- GetFoldPCData(FoldPCData,Fold)
+TestPCs <- FoldPCData[['TestPCs']]
+TestPCs
+}
+
+MergeMolecularGeneticPCs <- function(ExpressionPCs,GeneticPCs) {
+GeneticPCsFiltered <- GeneticPCs %>% select(ID,contains('GENETIC'))
+MergedData <- ExpressionPCs %>% 
+                left_join(GeneticPCsFiltered,by = 'ID')
+MergedData
+}
+
 
 extractResults <- function(susie_object){
   credible_sets = susie_object$sets$cs

@@ -53,6 +53,12 @@ AncestryDat
 }
 
 
+LoadCVData <- function(CVobj) {
+require(qs2)
+message('Loading CV PCs and metadata ')
+CVDat <- qs_read(CVobj)
+}
+
 LoadData <- function(opt_list) {
     message('Loading molecular data')
     
@@ -100,10 +106,8 @@ LoadData <- function(opt_list) {
             sample_metadata <- NULL
         }
     if (!is.null(opt_list$cv_meta)) {
-            cv_meta <- readr::read_tsv(opt_list$cv_meta)  %>% 
-                        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
-                        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
-
+            cv_meta <- LoadCVData(opt_list$cv_meta)  
+                        
             }else {
             cv_meta <- NULL
         }

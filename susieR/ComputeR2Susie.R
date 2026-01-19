@@ -14,18 +14,6 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 suppressPackageStartupMessages(library("qs2"))
 
-
-####### GET PATH TO FUNCTIONS ########
-#FunctionsPathOptList <- list(
-    #optparse::make_option(
-                          #c("--FunctionsPath"),
-                          #type='character',
-                          #default = "/opt/r/lib"
-    #)
-#)
-#FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
-#FunctionPath <- FunctionPathOpt$FunctionsPath
-
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS########## 
 source(paste0(FunctionPath,'/ImportFunctions.R'))
 source(paste0(FunctionPath,'/InitFunctions.R'))
@@ -40,12 +28,15 @@ data_list <- LoadData(opt)
 list2env(data_list,envir = environment())
 
 if (is.null(cv_meta)) {
-    stop('Missing CV metadata')
+    stop('Missing CV data missing')
 }
 
-if (is.null(FoldPCData)) {
-    stop('Missing PC data')
-} 
+# Load Sample metadata from CV PC object
+SampleMetaData <- cv_meta[['Metadata']] %>% 
+            dplyr::rename('sample_id' =1 ) %>% 
+            mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
+            mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
+
 
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
@@ -66,14 +57,14 @@ selected_phenotypes = phenotype_list %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
 
-########## BEGIN ############
+########## FORMAT DATA AND LAOD GENOTYPE MATRIX ############
 
 #sample_metadata_folds <- LoadSampleMetadataCV(opt$sample_meta,AncestryDf,nFolds =n_folds ) 
 
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
-                                                             col_data = cv_meta, 
+                                                             col_data = SampleMetaData, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
    
@@ -88,50 +79,53 @@ genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) 
+
 genotype_type_matrix_one_percent <- genotype_matrix_full %>% 
-        filterMAF(AncestryDf,MAF_threshold = 0.01,variant_list = variant_list)
+        filterMAF(AncestryDf,variant_list = variant_list)
 
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
 R2_data <- data.frame()
 for (k in c(1:n_folds)) {
     message(paste0('Running on fold:',k))
-    fold_metadata <-  cv_meta %>%
-            mutate(qtl_group = case_when(fold == k ~ 'holdout',TRUE ~ 'train'))
-    holdout_samples <- fold_metadata %>% filter(qtl_group == 'holdout')
-    train_sample <- fold_metadata %>% filter(qtl_group == 'train')
-    subset_expression_matrix <- expression_matrix %>% 
-                                select(1,2,3,4,all_of(train_sample$sample_id))
-    PCA_for_fold <- compute_pcs(subset_expression_matrix) 
-
-    covariate_matrix_subset <- covariates_matrix[train_sample$sample_id,] %>% 
-        select(contains('GENETIC')) %>% 
-        MergeCovars(PCA_for_fold)
+    FoldMetadata <-  SampleMetaData %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
+    TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test')
+    TrainSamples <- FoldMetadata %>% filter(qtl_group == 'Train')
+    TrainCovariateSet <- GetFoldTrainPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariate_matrix)
+    TestCovariateSet <- GetFoldTestPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariate_matrix)
+    TrainBedDf <- expression_matrix %>% 
+                                select(1,2,3,4,all_of(TrainSamples$sample_id))
+    TestBedDf <- expression_matrix %>% 
+                                select(1,2,3,4,all_of(TestSamples$sample_id))
     
-    se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = subset_expression_matrix %>% 
+#    covariate_matrix_subset <- covariates_matrix[train_sample$sample_id,] %>% 
+        #select(contains('GENETIC')) %>% 
+        #MergeCovars(PCA_for_fold)
+    
+    se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TrainSamples %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
-                                                             col_data = fold_metadata, 
+                                                             col_data = TrainSamples, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
     selected_phenotype <- output_prefix
-    selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(se, "qtl_group",'train')
+    selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(se, "qtl_group",'Train')
     selected_phenotypes = phenotype_list %>%
       dplyr::filter(group_id %in% selected_group_ids) %>%
       dplyr::pull(phenotype_id) %>%
       setNames(as.list(.), .)
     FullSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
                                                                   genotype_matrix_full, 
-                                                                  covariates_matrix, 
+                                                                  TrainCovariateSet, 
                                                                   cis_distance,
                                                                   variant_list = variant_list
                                                                   ))
     OnePercentAFSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., 
                                                                            selected_qtl_group, 
                                                                            genotype_type_matrix_one_percent, 
-                                                                           covariates_matrix, 
+                                                                           TrainCovariateSet, 
                                                                            cis_distance,
+                                                                           AncestryDf,
                                                                            variant_list = variant_list
-
                                                                            ))
     OnePercentRes <- purrr::map(OnePercentAFSusie, extractResults) %>%
         purrr::transpose() %>% 
@@ -142,7 +136,6 @@ for (k in c(1:n_folds)) {
         CleanSusieData(region_df)
 
 
-    hold_samples <- sample_metadata %>% filter(qtl_group == 'holdout')
     OnePercentHoldoutData <- GetPredictions(OnePercentRes,genotype_matrix_full,gene_vector,covariates_matrix) %>% 
                 filter(sample_id %in% hold_samples$sample_id)
     FullSusieHoldoutData <- GetPredictions(FullSusieRes,genotype_matrix_full,gene_vector,covariates_matrix) %>% 

@@ -12,6 +12,8 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
   install.packages("Rfast", repos = "https://cloud.r-project.org")
 }
 suppressPackageStartupMessages(library("Rfast"))
+suppressPackageStartupMessages(library("qs2"))
+
 
 ####### GET PATH TO FUNCTIONS ########
 #FunctionsPathOptList <- list(
@@ -37,6 +39,14 @@ opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 data_list <- LoadData(opt)
 list2env(data_list,envir = environment())
 
+if (is.null(cv_meta)) {
+    stop('Missing CV metadata')
+}
+
+if (is.null(FoldPCData)) {
+    stop('Missing PC data')
+} 
+
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
 
@@ -46,15 +56,9 @@ empty_in_cs_variant_df <- InitEmptyInCSVariantDf()
 empty_cs_df <- InitEmptyCS()
 
 
-
-###### PARSE COMMAND LINE ARGUMENTS ########## 
-data_list <- LoadData(opt)
-list2env(data_list,envir = environment())
-
 ######## CHUNK DATA ##########
 # convert sample list into sample metadata 
 # required by eQTLUtils and assign sampels to train and holdout  
-message('Loading sample metadata')
 selected_chunk_group = splitIntoChunks(1, 1, length(unique(phenotype_list$group_id)))
 selected_group_ids = unique(phenotype_list$group_id)[selected_chunk_group]
 selected_phenotypes = phenotype_list %>%
@@ -64,12 +68,12 @@ selected_phenotypes = phenotype_list %>%
 
 ########## BEGIN ############
 
-sample_metadata_folds <- LoadSampleMetadataCV(opt$sample_meta,AncestryDf,nFolds =n_folds ) 
+#sample_metadata_folds <- LoadSampleMetadataCV(opt$sample_meta,AncestryDf,nFolds =n_folds ) 
 
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
-                                                             col_data = sample_metadata, 
+                                                             col_data = cv_meta, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
    
@@ -91,10 +95,10 @@ genotype_type_matrix_one_percent <- genotype_matrix_full %>%
 R2_data <- data.frame()
 for (k in c(1:n_folds)) {
     message(paste0('Running on fold:',k))
-    sample_metadata <-  sample_metadata_folds %>%
+    fold_metadata <-  cv_meta %>%
             mutate(qtl_group = case_when(fold == k ~ 'holdout',TRUE ~ 'train'))
-    holdout_samples <- sample_metadata %>% filter(qtl_group == 'holdout')
-    train_sample <- sample_metadata %>% filter(qtl_group == 'train')
+    holdout_samples <- fold_metadata %>% filter(qtl_group == 'holdout')
+    train_sample <- fold_metadata %>% filter(qtl_group == 'train')
     subset_expression_matrix <- expression_matrix %>% 
                                 select(1,2,3,4,all_of(train_sample$sample_id))
     PCA_for_fold <- compute_pcs(subset_expression_matrix) 
@@ -106,7 +110,7 @@ for (k in c(1:n_folds)) {
     se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = subset_expression_matrix %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
-                                                             col_data = sample_metadata, 
+                                                             col_data = fold_metadata, 
                                                              quant_method = "gene_counts",
                                                              reformat = FALSE)
     selected_phenotype <- output_prefix
@@ -119,16 +123,15 @@ for (k in c(1:n_folds)) {
                                                                   genotype_matrix_full, 
                                                                   covariates_matrix, 
                                                                   cis_distance,
-                                                                  AncestryDf,
-                                                                  MAF = 0
+                                                                  variant_list = variant_list
                                                                   ))
     OnePercentAFSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., 
                                                                            selected_qtl_group, 
                                                                            genotype_type_matrix_one_percent, 
                                                                            covariates_matrix, 
                                                                            cis_distance,
-                                                                           AncestryDf,
-                                                                           MAF = 0.01
+                                                                           variant_list = variant_list
+
                                                                            ))
     OnePercentRes <- purrr::map(OnePercentAFSusie, extractResults) %>%
         purrr::transpose() %>% 

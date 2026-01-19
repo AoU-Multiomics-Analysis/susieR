@@ -40,6 +40,7 @@ TestPCs
 ComputePCsCV <- function(SampleMetadata,ExpressionDf) {
 nFolds <- max(SampleMetadata$fold)
 FoldLabels <- paste0("Fold",seq_len(nFolds))
+message(FoldLabels)
 FoldData <- c()
 for (k in 1:nFolds) {
 message('Running fold:',k)
@@ -49,10 +50,12 @@ TrainPCs <- ComputeTrainPCs(ExpressionDf,
 TestPCs <- ComputeTestPCs(ExpressionDf,
                                   TrainPCs,
                                   SampleMetadata,
-                                  k)  
-FoldPCs <- list(TrainPCs = TrainPCs,TestPCs =TestPCs,fold = k )  
-FoldData <- c(FoldPCs,FoldData)
+                                  k)   %>% 
+            tibble::rownames_to_column('ID')
+FoldPCs <- list(TrainPCs = TrainPCs$PCA_cleaned,TestPCs =TestPCs,fold = k )  
+FoldData <- c(FoldData,list(FoldPCs))
     }
 names(FoldData) <- FoldLabels
+FoldData$Metadata <- SampleMetadata
 FoldData
 }

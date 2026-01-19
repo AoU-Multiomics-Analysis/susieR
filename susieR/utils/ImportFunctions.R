@@ -100,7 +100,10 @@ LoadData <- function(opt_list) {
             sample_metadata <- NULL
         }
     if (!is.null(opt_list$cv_meta)) {
-            cv_meta <- readr::read_tsv(opt_list$cv_meta) 
+            cv_meta <- readr::read_tsv(opt_list$cv_meta)  %>% 
+                        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
+                        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
+
             }else {
             cv_meta <- NULL
         }

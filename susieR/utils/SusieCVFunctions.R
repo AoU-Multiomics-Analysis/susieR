@@ -1,6 +1,8 @@
 GetPredictions <- function(SusieRes,
                         GenotypeMatrix,
-                        GeneVector,
+                        BedDf,
+                        TrainCoefs,
+                        GeneID,
                         Covariates) {
     
 GenotypeDataFinemappedVariants <- GenotypeMatrix[SusieRes$variant,]
@@ -8,15 +10,25 @@ PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% 
     data.frame() %>% 
     tibble::rownames_to_column('sample_id') %>% 
     dplyr::rename('Predicted' = 2)
-  
-hat = diag(nrow(Covariates)) - Covariates %*% solve(crossprod(Covariates)) %*% t(Covariates)
-ObservedValues = hat %*% GeneVector$phenotype_value_std %>% 
-            data.frame() %>% 
-            tibble::rownames_to_column('sample_id') %>% 
-            dplyr::rename('Observed' =2)
-MergedData <- PredictedValues %>% 
-                left_join(ObservedValues,by ='sample_id') 
+
+GeneDf <- BedDf %>%
+                dplyr::select(-1,-2,-3) %>% 
+                pivot_longer(!gene_id) %>%
+                filter(gene_id == GeneID) %>%
+                dplyr::rename('std_value' = 'value','sample_id' = 'name')
+GeneDf <- GeneDf[match(rownames(Covariates), GeneDf$sample_id), ]
+GeneVector <- GeneDf %>% pull(std_value)
+
+TestResids <- GeneVector - data.matrix(Covariates) %*% TrainCoefs 
+
+ObservedValues <- GeneDf %>% bind_cols(Resid = TestResids)
+MergedData <- PredictedValues %>% left_join(ObservedValues,by ='sample_id') 
 MergedData
+}
+
+EstimateBetaHat <- function(MolecularVector,CovarMatrix) {
+BetaHat <- solve(crossprod(CovarMatrix), crossprod(CovarMatrix,MolecularVector ))
+BetaHat
 }
 
 GetFoldPCData <- function(FoldPCData,
@@ -41,9 +53,14 @@ TestPCs
 }
 
 MergeMolecularGeneticPCs <- function(ExpressionPCs,GeneticPCs) {
-GeneticPCsFiltered <- GeneticPCs %>% select(ID,contains('GENETIC'))
+GeneticPCsFiltered <- GeneticPCs %>%
+        data.frame() %>% 
+        tibble::rownames_to_column('ID') %>% 
+        select(ID,contains('GENETIC'))
 MergedData <- ExpressionPCs %>% 
-                left_join(GeneticPCsFiltered,by = 'ID')
+                left_join(GeneticPCsFiltered,by = 'ID') %>% 
+                tibble::column_to_rownames('ID')  %>% 
+                data.matrix()
 MergedData
 }
 

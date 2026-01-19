@@ -3,9 +3,11 @@ ResidualizeMolecularData <- function(GeneVector,
                                      Coefs) {
 SortedGeneVector <- GeneVector
 rownames(SortedGeneVector) <- SortedGeneVector$sample_id
+print(head(SortedGeneVector))
 SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
-TestResids <- data.frame(Observed = Sorted$phenotype_value - data.matrix(TestCovariateSet) %*% TrainCovarModel) %>% 
+TestResids <- data.frame(Observed = SortedGeneVector$phenotype_value - data.matrix(Covariates) %*% Coefs) %>% 
                 tibble::rownames_to_column('sample_id') 
+
 GeneVectorResidualized <- GeneVector %>% 
                     left_join(TestResids,by = 'sample_id')
 GeneVectorResidualized
@@ -219,9 +221,9 @@ CleanSusieData <- function(res,region_df) {
 
 MergeCovars <- function(GeneticPCs,ExpressionPCs) {
 Merged <- GeneticPCs %>% 
-                rownames_to_column('ID') %>% 
+                tibble::rownames_to_column('ID') %>% 
                 left_join(ExpressionPCs,by = 'ID') %>% 
-                column_to_rownames('ID') %>% 
+                tibble::column_to_rownames('ID') %>% 
                 data.matrix()
 Merged
     

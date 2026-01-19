@@ -91,8 +91,8 @@ for (k in c(1:nFolds)) {
     FoldMetadata <-  SampleMetaData %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
     TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test') %>% mutate(sample_id = as.character(sample_id)) 
     TrainSamples <- FoldMetadata %>% filter(qtl_group == 'Train') %>% mutate(sample_id = as.character(sample_id))
-    TrainCovariateSet <- GetFoldTrainPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariate_matrix)
-    TestCovariateSet <- GetFoldTestPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariate_matrix)
+    TrainCovariateSet <- GetFoldTrainPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariates_matrix)
+    TestCovariateSet <- GetFoldTestPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariates_matrix)
     TrainBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TrainSamples$sample_id))
     TestBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TestSamples$sample_id))
 
@@ -143,12 +143,12 @@ for (k in c(1:nFolds)) {
 
     OnePercentHoldoutData <- GetPredictions(OnePercentRes,
                                             genotype_matrix_full,
-                                            TestBedDf,
+                                            TestGeneVector,
                                             TrainCovarModel,
                                             TestCovariateSet) 
     FullSusieHoldoutData <- GetPredictions(FullSusieRes,
                                            genotype_matrix_full,
-                                           TestBedDf,
+                                           TestGeneVector,
                                            TrainCovarModel,
                                            TestCovariateSet) 
     

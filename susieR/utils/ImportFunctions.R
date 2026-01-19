@@ -88,13 +88,23 @@ LoadData <- function(opt_list) {
     # convert sample list into sample metadata 
     # required by eQTLUtils 
     message('Loading sample metadata')
-    sample_metadata <-  readr::read_tsv(opt_list$sample_meta) %>% 
-        dplyr::rename('sample_id' =1 ) %>% 
-        mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
-        mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
-
-
-    # import permutation p values from tensorQTL. Note that i had 
+    if(is.null(opt_list$cv_meta) && is.null(opt_list$sample_meta)) {
+          stop('Sample metadata missing')
+        }  
+    if (!is.null(opt_list$sample_meta)) {
+            sample_metadata <-  readr::read_tsv(opt_list$sample_meta) %>% 
+                dplyr::rename('sample_id' =1 ) %>% 
+                mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
+                mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
+            }else {
+            sample_metadata <- NULL
+        }
+    if (!is.null(opt_list$cv_meta)) {
+            cv_meta <- readr::read_tsv(opt_list$cv_meta) 
+            }else {
+            cv_meta <- NULL
+        }
+        # import permutation p values from tensorQTL. Note that i had 
     # to make slight changes to this function for it to work 
     message('Loading QTL stats')
     
@@ -117,7 +127,7 @@ LoadData <- function(opt_list) {
         }else {
         n_folds <- NULL
     }
-    
+   
     genotype_file <- opt_list$genotype_matrix
     cis_distance <- as.numeric(opt_list$cisdistance)
     output_prefix <- opt_list$out_prefix
@@ -144,7 +154,8 @@ LoadData <- function(opt_list) {
         cis_distance = cis_distance,
         genotype_file = genotype_file,
         sample_metadata = sample_metadata,
-        region_df = region_df
+        region_df = region_df,
+        cv_meta = cv_meta
         )
     OutList
 }

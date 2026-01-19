@@ -13,14 +13,12 @@ task ComputeR2 {
         String OutputPrefix
         Int memory
         Int NumPrempt
-        Int n_folds 
-        Float train_test_split
-        File AncestryMetadata
+        File VariantList
+        File CVMetadata
     }
 
     command <<<
         Rscript /tmp/ComputeR2Susie.R  \
-            --AncestryMetadata ~{AncestryMetadata} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \
@@ -28,8 +26,8 @@ task ComputeR2 {
             --covariates ~{QTLCovariates} \
             --out_prefix ~{OutputPrefix} \
             --cisdistance ~{CisDistance} \
-            --train_test_split ~{train_test_split} \
-            --n_folds ~{n_folds}
+            --cv_meta ~{CVMetadata} \
+            --variant_list ~{VariantList}
 
     >>>
 
@@ -57,19 +55,17 @@ workflow susieR_workflow {
         File PhenotypeBed
         Int CisDistance
         Int memory
-        Int n_folds
-        Float train_test_split
         Int NumPrempt
         String PhenotypeID
-        File AncestryMetadata 
+        File VariantList 
+        File CVMetadata
     }
 
     call ComputeR2 {
         input:
-            AncestryMetadata = AncestryMetadata,
             GenotypeDosages = GenotypeDosages,
-            train_test_split = train_test_split,
-            n_folds = n_folds,
+            CVMetadata = CVMetadata,
+            VariantList = VariantList,
             GenotypeDosageIndex = GenotypeDosageIndex,
             QTLCovariates = QTLCovariates,
             TensorQTLPermutations = TensorQTLPermutations,

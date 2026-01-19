@@ -18,6 +18,7 @@ suppressPackageStartupMessages(library("qs2"))
 source(paste0(FunctionPath,'/ImportFunctions.R'))
 source(paste0(FunctionPath,'/InitFunctions.R'))
 source(paste0(FunctionPath,'/SusieCVFunctions.R'))
+source(paste0(FunctionPath,'/SusieFunctions.R'))
 source(paste0(FunctionPath,'/OptParser.R'))
 message('Functions Loaded')
 

@@ -112,7 +112,7 @@ for (k in c(1:nFolds)) {
 
     TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(output_prefix, TrainSe, "counts")
     TestGeneVector <- eQTLUtils::extractPhentypeFromSE(output_prefix, TestSe, "counts")
-    TrainCovarModel <- EstimateBetaHat(gene_vector$phenotype_value,TrainCovariateSet)     
+    TrainCovarModel <- EstimateBetaHat(TrainGeneVector$phenotype_value,TrainCovariateSet)     
     
     selected_phenotype <- output_prefix
     selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(TrainSe, "qtl_group",'Train')

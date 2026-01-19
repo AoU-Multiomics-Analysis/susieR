@@ -66,13 +66,15 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   
   if (is.character(genotype_file)) {
   #Import genotype matrix
+  message('Loading Genotype Matrix')
   genotype_matrix = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) %>% 
     filterMAF(ancestry_data,MAF_threshold = MAF,variant_list = variant_list) 
-   } else { 
+   } else {
+    message('Using pre-loaded genotype matrix')
     genotype_matrix <- genotype_file
     }
 

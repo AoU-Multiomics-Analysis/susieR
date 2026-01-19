@@ -187,6 +187,34 @@ CleanSusieData <- function(res,region_df) {
   } else {
     lbf_df = empty_lbf_df
   }
+    cs_df <- purrr::map_df(res$cs_df, identity, .id = "phenotype_id")
+    if(nrow(cs_df) > 0){
+      cs_df = dplyr::left_join(cs_df, region_df, by = "phenotype_id") %>%
+        dplyr::mutate(cs_index = cs_id) %>%
+        dplyr::mutate(cs_id = paste(phenotype_id, cs_index, sep = "_")) %>%
+        dplyr::transmute(molecular_trait_id = phenotype_id, cs_id, cs_index, region, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity)
+      
+      #Extract information about variants that belong to a credible set
+      in_cs_variant_df <- dplyr::filter(variant_df, !is.na(cs_index) & !low_purity) %>%
+        dplyr::transmute(molecular_trait_id = phenotype_id, variant = variant_id, chromosome = chr, position = pos, 
+                         ref, alt, cs_id, cs_index, region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean, posterior_sd, cs_log10bf)
+    } else{
+      #Initialize empty tibbles with correct column names
+      in_cs_variant_df = empty_in_cs_variant_df
+      cs_df = empty_cs_df
+    }
+
+
+     
+
+    #Extract information about all variants
+    if(nrow(variant_df) > 0){
+      variant_df_transmute <- dplyr::transmute(variant_df, molecular_trait_id = phenotype_id, variant = variant_id, 
+              chromosome = chr, position = pos, ref, alt, cs_id, cs_index, low_purity, region, pip, z, posterior_mean, posterior_sd, X_column_scale_factors)  
+      variant_df <- dplyr::bind_cols(variant_df_transmute, dplyr::select(variant_df,alpha1:mu2_10))
+    } else{
+      variant_df = empty_variant_df
+    variant_df
 }
 
 MergeCovars <- function(GeneticPCs,ExpressionPCs) {

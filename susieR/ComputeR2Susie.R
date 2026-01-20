@@ -14,6 +14,7 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 #suppressPackageStartupMessages(library("qs2"))
 
+FunctionPath <- '/opt/r/lib'
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS########## 
 source(paste0(FunctionPath,'/ImportFunctions.R'))
 source(paste0(FunctionPath,'/InitFunctions.R'))

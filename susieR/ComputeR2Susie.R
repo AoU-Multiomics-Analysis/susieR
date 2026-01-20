@@ -12,7 +12,7 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
   install.packages("Rfast", repos = "https://cloud.r-project.org")
 }
 suppressPackageStartupMessages(library("Rfast"))
-suppressPackageStartupMessages(library("qs2"))
+#suppressPackageStartupMessages(library("qs2"))
 
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS########## 
 source(paste0(FunctionPath,'/ImportFunctions.R'))

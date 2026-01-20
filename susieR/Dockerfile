@@ -31,6 +31,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-assertthat \
     bioconda::bioconductor-pcatools \
     conda-forge::r-caret \
+    conda-forge::r-stringfish \
     conda-forge::r-qs2
 
 

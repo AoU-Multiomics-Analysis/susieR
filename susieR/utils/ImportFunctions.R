@@ -58,9 +58,9 @@ AncestryDat
 
 
 LoadCVData <- function(CVobj) {
-require(qs2)
+#require(qs2)
 message('Loading CV PCs and metadata ')
-CVDat <- qs_read(CVobj)
+CVDat <- readRDS(CVobj)
 }
 
 LoadData <- function(opt_list) {

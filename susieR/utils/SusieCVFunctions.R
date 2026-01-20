@@ -21,12 +21,12 @@ GetPredictions <- function(SusieRes,
                         TrainCoefs,
                         Covariates) {
 
-
+Samples <- GeneVector %>% pull(sample_id)
 VarNames <- data.frame(variant=rownames(GenotypeMatrix)) %>% 
             mutate(variant = str_replace(variant,'chrchr','chr')) %>%
             pull(variant)
 rownames(GenotypeMatrix) <- VarNames
-GenotypeDataFinemappedVariants <- GenotypeMatrix[SusieRes$variant,]
+GenotypeDataFinemappedVariants <- GenotypeMatrix[SusieRes$variant,Samples]
 PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% pull(posterior_mean)) %>% 
     data.frame() %>% 
     tibble::rownames_to_column('sample_id') %>% 

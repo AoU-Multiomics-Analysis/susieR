@@ -31,7 +31,7 @@ PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% 
     data.frame() %>% 
     tibble::rownames_to_column('sample_id') %>% 
     dplyr::rename('Predicted' = 2)
-Resids <- GeneVector %>% ResidualizeMolecularData(Covariates,TrainCoefs)
+ObservedValues <- GeneVector %>% ResidualizeMolecularData(Covariates,TrainCoefs)
 MergedData <- PredictedValues %>% left_join(ObservedValues,by ='sample_id') 
 MergedData
 }

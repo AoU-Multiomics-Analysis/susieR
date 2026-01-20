@@ -219,8 +219,8 @@ CleanSusieData <- function(res,region_df) {
     } else{
       variant_df = empty_variant_df
     variant_df
+    }
 }
-
 MergeCovars <- function(GeneticPCs,ExpressionPCs) {
 Merged <- GeneticPCs %>% 
                 tibble::rownames_to_column('ID') %>% 

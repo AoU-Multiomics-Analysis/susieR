@@ -39,6 +39,7 @@ SampleMetaData <- cv_meta[['Metadata']] %>%
             mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
 nFolds <- max(as.numeric(SampleMetaData$fold))
 
+OutputFile <- paste0(output_prefix,'_SusieR2.tsv')
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
 
@@ -158,4 +159,4 @@ for (k in c(1:nFolds)) {
     R2_data <- bind_rows(Out,R2_data) 
 }
 
-R2_data %>% write_tsv(outfile)
+R2_data %>% write_tsv(OutputFile)

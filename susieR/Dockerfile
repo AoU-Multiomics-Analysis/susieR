@@ -39,6 +39,8 @@ RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
 
 COPY susieR/*  . 
 COPY susieR/utils/*  /opt/r/lib/ 
+COPY susieR/scripts/*  /opt/r/lib/ 
+
 
 
 ## Default command to run when the container starts

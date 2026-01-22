@@ -91,7 +91,7 @@ Predictions <- data.frame()
 message('Running CV on all variants')
 for (k in c(1:nFolds)) {
     message(paste0('Running on fold:',k))
-    FoldPredicitons <- RunFoldCV(SampleMetaData,
+    local({FoldPredicitons <- RunFoldCV(SampleMetaData,
                                         covariates_matrix,
                                         cv_meta,
                                         expression_matrix,
@@ -103,7 +103,10 @@ for (k in c(1:nFolds)) {
                                         k
                                         ) %>%
                                         mutate(AF_threshold = 0,Fold = k)
-    Predictions <- bind_rows(FoldPredicitons,Predictions)    
+    Predictions <- bind_rows(FoldPredicitons,Predictions)   
+    rm(list = ls()) 
+    gc()
+    })
 }
 
 message('Filtering Genotype matrix')

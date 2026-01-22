@@ -8,7 +8,7 @@ RunFoldCV <- function(Metadata,
                       CisDistance,
                       RegionDf,
                       Fold,
-                      VariantList = NULL,
+                      VariantList = NULL
                       ) {
     FoldMetadata <-  Metadata %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
     TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test') %>% mutate(sample_id = as.character(sample_id)) 

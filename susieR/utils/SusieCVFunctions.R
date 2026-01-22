@@ -1,3 +1,69 @@
+RunFoldCV <- function(Metadata,
+                      CovariatesMatrix,
+                      CVObj,
+                      ExpressionMatrix,
+                      GenotypeMatrix,
+                      GeneID,
+                      PhenotypeMeta,
+                      CisDistance,
+                      RegionDf,
+                      Fold,
+                      VariantList = NULL,
+                      ) {
+    FoldMetadata <-  Metadata %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
+    TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test') %>% mutate(sample_id = as.character(sample_id)) 
+    TrainSamples <- FoldMetadata %>% filter(qtl_group == 'Train') %>% mutate(sample_id = as.character(sample_id))
+    TrainCovariateSet <- GetFoldTrainPCs(CVObj,k) %>% MergeMolecularGeneticPCs(CovariatesMatrix)
+    TestCovariateSet <- GetFoldTestPCs(CVObj,k) %>% MergeMolecularGeneticPCs(CovariatesMatrix)
+    TrainBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TrainSamples$sample_id))
+    TestBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TestSamples$sample_id))
+
+    TrainSe <- eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TrainBedDf %>% 
+                                                                        select(-1,-2,-3) , 
+                                                                    row_data = PhenotypeMeta, 
+                                                                    col_data = TrainSamples, 
+                                                                    quant_method = "gene_counts",
+                                                                    reformat = FALSE)
+    TestSe <- eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TestBedDf %>% 
+                                                                        select(-1,-2,-3) , 
+                                                                    row_data = PhenotypeMeta, 
+                                                                    col_data = TestSamples, 
+                                                                    quant_method = "gene_counts",
+                                                                    reformat = FALSE)
+
+    TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TrainSe, "counts")
+    TestGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TestSe, "counts")
+    TrainCovarModel <- EstimateBetaHat(TrainGeneVector$phenotype_value,TrainCovariateSet)     
+    
+    selected_phenotype <- GeneID 
+    selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(TrainSe, "qtl_group",'Train')
+    selected_phenotypes = phenotype_list %>%
+      dplyr::filter(group_id %in% selected_group_ids) %>%
+      dplyr::pull(phenotype_id) %>%
+      setNames(as.list(.), .)
+
+    SusieOut <- purrr::map(selected_phenotypes, ~finemapPhenotype(., 
+                                                                           selected_qtl_group, 
+                                                                           GenotypeMatrix, 
+                                                                           TrainCovariateSet, 
+                                                                           CisDistance,
+                                                                           variant_list = VariantList, 
+                                                                           ))
+    SusieRes <- purrr::map(SusieOut, extractResults) %>%
+        purrr::transpose() %>% 
+        CleanSusieData(RegionDf)
+    HoldOutPredictions <- GetPredictions(SusieRes,
+                                            GenotypeMatrix,
+                                            TestGeneVector,
+                                            TrainCovarModel,
+                                            TestCovariateSet) 
+    HoldOutPredictions
+}
+
+
+
+
+
 ResidualizeMolecularData <- function(GeneVector,
                                      Covariates,
                                      Coefs) {

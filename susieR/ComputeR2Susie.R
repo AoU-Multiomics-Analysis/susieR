@@ -40,7 +40,7 @@ SampleMetaData <- cv_meta[['Metadata']] %>%
             mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
 nFolds <- max(as.numeric(SampleMetaData$fold))
 
-OutputFile <- paste0(output_prefix,'_SusieR2.tsv')
+OutputFile <- paste0(output_prefix,'_SusiePredictions.tsv')
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
 
@@ -83,81 +83,58 @@ genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) 
 
-genotype_type_matrix_one_percent <- genotype_matrix_full %>% 
-        filterMAF(AncestryDf,variant_list = variant_list)
-
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
-R2_data <- data.frame()
+
+Predictions <- data.frame()
+message('Running CV on all variants')
 for (k in c(1:nFolds)) {
     message(paste0('Running on fold:',k))
-    FoldMetadata <-  SampleMetaData %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
-    TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test') %>% mutate(sample_id = as.character(sample_id)) 
-    TrainSamples <- FoldMetadata %>% filter(qtl_group == 'Train') %>% mutate(sample_id = as.character(sample_id))
-    TrainCovariateSet <- GetFoldTrainPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariates_matrix)
-    TestCovariateSet <- GetFoldTestPCs(cv_meta,k) %>% MergeMolecularGeneticPCs(covariates_matrix)
-    TrainBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TrainSamples$sample_id))
-    TestBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TestSamples$sample_id))
-
-    TrainSe <- eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TrainBedDf %>% 
-                                                                        select(-1,-2,-3) , 
-                                                                    row_data = phenotype_meta, 
-                                                                    col_data = TrainSamples, 
-                                                                    quant_method = "gene_counts",
-                                                                    reformat = FALSE)
-    TestSe <- eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TestBedDf %>% 
-                                                                        select(-1,-2,-3) , 
-                                                                    row_data = phenotype_meta, 
-                                                                    col_data = TestSamples, 
-                                                                    quant_method = "gene_counts",
-                                                                    reformat = FALSE)
-
-
-    TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(output_prefix, TrainSe, "counts")
-    TestGeneVector <- eQTLUtils::extractPhentypeFromSE(output_prefix, TestSe, "counts")
-    TrainCovarModel <- EstimateBetaHat(TrainGeneVector$phenotype_value,TrainCovariateSet)     
-    
-    selected_phenotype <- output_prefix
-    selected_qtl_group <- eQTLUtils::subsetSEByColumnValue(TrainSe, "qtl_group",'Train')
-    selected_phenotypes = phenotype_list %>%
-      dplyr::filter(group_id %in% selected_group_ids) %>%
-      dplyr::pull(phenotype_id) %>%
-      setNames(as.list(.), .)
-    FullSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_group, 
-                                                                  genotype_matrix_full, 
-                                                                  TrainCovariateSet, 
-                                                                  cis_distancoutput_prefixe
-                                                                  ))
-    OnePercentAFSusie <- purrr::map(selected_phenotypes, ~finemapPhenotype(., 
-                                                                           selected_qtl_group, 
-                                                                           genotype_type_matrix_one_percent, 
-                                                                           TrainCovariateSet, 
-                                                                           cis_distance,
-                                                                           variant_list = variant_list
-                                                                           ))
-    OnePercentRes <- purrr::map(OnePercentAFSusie, extractResults) %>%
-        purrr::transpose() %>% 
-        CleanSusieData(region_df)
-
-    FullSusieRes <- purrr::map(FullSusie, extractResults) %>%
-        purrr::transpose() %>% 
-        CleanSusieData(region_df)
-
-
-    OnePercentHoldoutData <- GetPredictions(OnePercentRes,
-                                            genotype_matrix_full,
-                                            TestGeneVector,
-                                            TrainCovarModel,
-                                            TestCovariateSet) 
-    FullSusieHoldoutData <- GetPredictions(FullSusieRes,
-                                           genotype_matrix_full,
-                                           TestGeneVector,
-                                           TrainCovarModel,
-                                           TestCovariateSet) 
-    
-    OnePercentSummary <- broom::glance(lm(Observed ~ Predicted,data =OnePercentHoldoutData)) %>% mutate(AF_threshold = 0.01)
-    FullDataSummary <- broom::glance(lm(Observed ~ Predicted,data =FullSusieHoldoutData))%>% mutate(AF_threshold = 0)
-    Out <- bind_rows(FullDataSummary,OnePercentSummary) %>% mutate(Fold = k,gene = output_prefix)
-    R2_data <- bind_rows(Out,R2_data) 
+    FoldPredicitons <- RunFoldCV(SampleMetaData,
+                                        covariates_matrix,
+                                        cv_meta,
+                                        expression_matrix,
+                                        genotype_matrix_full,
+                                        output_prefix
+                                        phenotype_meta,
+                                        cis_distance,
+                                        region_df,
+                                        k
+                                        ) %>%
+                                        mutate(AF_threshold = 0,Fold = k)
+    Predictions <- bind_rows(FoldPredicitons,Predictions)    
 }
 
-R2_data %>% write_tsv(OutputFile)
+message('Filtering Genotype matrix')
+genotype_type_matrix_one_percent <- genotype_matrix_full %>% 
+        filterMAF(AncestryDf,variant_list = variant_list)
+rm(genotype_matrix_full)
+
+
+message('Running CV on 1% variants')
+for (k in c(1:nFolds)) {
+    message(paste0('Running on fold:',k))
+    FoldPredicitons <- RunFoldCV(SampleMetaData,
+                                        covariates_matrix,
+                                        cv_meta,
+                                        expression_matrix,
+                                        genotype_matrix_full,
+                                        output_prefix
+                                        phenotype_meta,
+                                        variant_list,
+                                        cis_distance,
+                                        region_df,
+                                        k
+                                        ) %>%
+                                        mutate(AF_threshold = 0.01,Fold = k)
+    Predictions <- bind_rows(FoldPredicitons,Predictions)    
+}
+
+
+Predictions %>% mutate(Gene = output_prefix) %>% write_tsv(OutputFile)
+
+#OnePercentSummary <- broom::glance(lm(Observed ~ Predicted,data =OnePercentHoldoutData)) %>% mutate(AF_threshold = 0.01)
+#FullDataSummary <- broom::glance(lm(Observed ~ Predicted,data =FullSusieHoldoutData))%>% mutate(AF_threshold = 0)
+#Out <- bind_rows(FullDataSummary,OnePercentSummary) %>% mutate(Fold = k,gene = output_prefix)
+#R2_data <- bind_rows(Out,R2_data) 
+
+

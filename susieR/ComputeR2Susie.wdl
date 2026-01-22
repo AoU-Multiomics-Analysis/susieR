@@ -47,7 +47,7 @@ task ComputeR2 {
     }
 
     output {
-        File SusieR2 = "${OutputPrefix}_SusieR2.tsv"
+        File SusieR2 = "${OutputPrefix}_SusiePredictions.tsv"
         }
 }
 

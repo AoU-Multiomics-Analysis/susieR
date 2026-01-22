@@ -138,7 +138,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   # Apply hat: hat %*% gt_std (hat dims: n x n, gt_std: variants x n -> need to transpose carefully)
   # Note: hat * gt_std must produce a matrix with same orientation as before
   # If susie expects variants x samples, we need to compute gt_hat = t(hat %*% t(gt_std))
-  gt_hat <- t(hat %*% t(gt_std))  # result: variants x samples
+  gt_hat <- hat %*% t(gt_std)  # result: variants x samples
   rm(gt_std)
 
   # Fit finemapping model

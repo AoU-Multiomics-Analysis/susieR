@@ -117,7 +117,7 @@ for (k in c(1:nFolds)) {
                                         covariates_matrix,
                                         cv_meta,
                                         expression_matrix,
-                                        genotype_matrix_full,
+                                        genotype_type_matrix_one_percent,
                                         output_prefix
                                         phenotype_meta,
                                         variant_list,

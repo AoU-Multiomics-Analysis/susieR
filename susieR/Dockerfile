@@ -39,7 +39,7 @@ RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
 
 COPY susieR/*  . 
 COPY susieR/utils/*  /opt/r/lib/ 
-COPY scripts/*  /opt/r/lib/ 
+COPY scripts/*  . 
 
 
 

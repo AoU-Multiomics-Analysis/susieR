@@ -41,7 +41,8 @@ RunFoldCV <- function(Metadata,
       dplyr::filter(group_id %in% selected_group_ids) %>%
       dplyr::pull(phenotype_id) %>%
       setNames(as.list(.), .)
-
+    
+    message('Fine-mappinng fold')
     SusieOut <- purrr::map(selected_phenotypes, ~finemapPhenotype(., 
                                                                            selected_qtl_group, 
                                                                            GenotypeMatrix, 
@@ -49,9 +50,11 @@ RunFoldCV <- function(Metadata,
                                                                            CisDistance,
                                                                            variant_list = VariantList, 
                                                                            ))
+    message('Extracting susie results')
     SusieRes <- purrr::map(SusieOut, extractResults) %>%
         purrr::transpose() %>% 
         CleanSusieData(RegionDf)
+    message('Running prediction models')
     HoldOutPredictions <- GetPredictions(SusieRes,
                                             GenotypeMatrix,
                                             TestGeneVector,
@@ -67,6 +70,7 @@ RunFoldCV <- function(Metadata,
 ResidualizeMolecularData <- function(GeneVector,
                                      Covariates,
                                      Coefs) {
+message('Residualizing data')
 SortedGeneVector <- GeneVector
 rownames(SortedGeneVector) <- SortedGeneVector$sample_id
 print(head(SortedGeneVector))
@@ -87,21 +91,28 @@ GetPredictions <- function(SusieRes,
                         TrainCoefs,
                         Covariates) {
 
+message('Start GetPredictions')
 Samples <- GeneVector %>% pull(sample_id)
 VarNames <- data.frame(variant=rownames(GenotypeMatrix)) %>% 
             mutate(variant = str_replace(variant,'chrchr','chr')) %>%
             pull(variant)
 rownames(GenotypeMatrix) <- VarNames
+
 CleanedSusie <- SusieRes %>% 
         mutate(variant = str_replace(variant,'chrchr','chr')) 
 
+message('Subsettting to fine-mapped variants')
 GenotypeDataFinemappedVariants <- GenotypeMatrix[CleanedSusie$variant,Samples]
+
+message('Computing predictions')
 PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% pull(posterior_mean)) %>% 
     data.frame() %>% 
     tibble::rownames_to_column('sample_id') %>% 
     dplyr::rename('Predicted' = 2)
 ObservedValues <- GeneVector %>% ResidualizeMolecularData(Covariates,TrainCoefs)
 MergedData <- PredictedValues %>% left_join(ObservedValues,by ='sample_id') 
+
+message('Finish predictions')
 MergedData
 }
 

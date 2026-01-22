@@ -130,7 +130,11 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   nonzero_idx <- which(rowSums(round(gt_matrix,0), na.rm = TRUE) != 0)
   if (length(nonzero_idx) == 0) stop("No variant with alt alleles")
   gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
-
+    message("DEBUG: before imputation (local objects and sizes):")
+    debug_list_locals(environment(), top_n = 100)
+    debug_print_specific(environment(), var_names = c("gt_matrix", "covariates_matrix"))
+    message("GC before imputation:")
+    print(gc())
   # Impute missing values using row means (efficient)
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
   variant_names <- rownames(gt_matrix)
@@ -143,6 +147,18 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   # Apply hat: hat %*% gt_std (hat dims: n x n, gt_std: variants x n -> need to transpose carefully)
   # Note: hat * gt_std must produce a matrix with same orientation as before
   # If susie expects variants x samples, we need to compute gt_hat = t(hat %*% t(gt_std))
+  message("DEBUG: before computing gt_hat (local objects and sizes):")
+  debug_list_locals(environment(), top_n = 100)
+  debug_print_specific(environment(), var_names = c("gt_std", "covariates_matrix", "hat"))
+  # Estimate memory needed for gt_hat if gt_std exists
+  if (exists("gt_std", envir = environment()) && !is.null(dim(get("gt_std", envir = environment())))) {
+      p <- dim(get("gt_std", envir = environment()))[1]   # variants
+      n <- dim(get("gt_std", envir = environment()))[2]   # samples
+      est_bytes <- as.numeric(n) * as.numeric(p) * 8
+      message(sprintf("Estimated gt_hat memory: %s bytes (%.2f MB)", format(est_bytes, big.mark = ","), est_bytes / 1024^2))
+    }
+  message("GC before gt_hat:")
+  print(gc())
   message('Computing gt_hat')
   gt_hat <- hat %*% t(gt_std)  # result: variants x samples
   rm(gt_std)

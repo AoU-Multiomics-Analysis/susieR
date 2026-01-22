@@ -21,6 +21,8 @@ source(paste0(FunctionPath,'/InitFunctions.R'))
 source(paste0(FunctionPath,'/SusieCVFunctions.R'))
 source(paste0(FunctionPath,'/SusieFunctions.R'))
 source(paste0(FunctionPath,'/OptParser.R'))
+source(paste0(FunctionPath,'/MemoryHelpers.R'))
+
 message('Functions Loaded')
 
 option_list <- Optlist()
@@ -113,7 +115,7 @@ rm(genotype_matrix_full)
 message('Running CV on 1% variants')
 for (k in c(1:nFolds)) {
     message(paste0('Running on fold:',k))
-    FoldPredicitons <- RunFoldCV(SampleMetaData,
+    local({FoldPredicitons <- RunFoldCV(SampleMetaData,
                                         covariates_matrix,
                                         cv_meta,
                                         expression_matrix,
@@ -126,7 +128,10 @@ for (k in c(1:nFolds)) {
                                         k
                                         ) %>%
                                         mutate(AF_threshold = 0.01,Fold = k)
-    Predictions <- bind_rows(FoldPredicitons,Predictions)    
+    Predictions <<- bind_rows(FoldPredicitons,Predictions)  
+    rm(list = ls()) 
+    gc()
+    })
 }
 
 

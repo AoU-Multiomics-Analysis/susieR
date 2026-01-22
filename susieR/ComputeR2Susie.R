@@ -94,7 +94,7 @@ for (k in c(1:nFolds)) {
                                         cv_meta,
                                         expression_matrix,
                                         genotype_matrix_full,
-                                        output_prefix
+                                        output_prefix,
                                         phenotype_meta,
                                         cis_distance,
                                         region_df,

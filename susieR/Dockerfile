@@ -32,8 +32,8 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     bioconda::bioconductor-pcatools \
     conda-forge::r-caret \
     conda-forge::r-stringfish \
-    conda-forge::r-qs2
-
+    conda-forge::r-qs2 \
+    conda-forge::r-lobstr
 
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
 

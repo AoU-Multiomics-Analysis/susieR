@@ -50,7 +50,30 @@ filterMAF <- function(genotype_matrix,
 }
 
 
+# Impute missing values (sentinel -1 or NA) with row means, in a memory-efficient way
+impute_matrix_rowmean <- function(mat, missing_value = -1) {
+  # mat: numeric matrix (variants x samples)
+  # Replace sentinel with NA
+  mat[mat == missing_value] <- NA_real_
+  rmv <- rowMeans(mat, na.rm = TRUE)
+  # If a row is all NA, set to 0
+  rmv[is.na(rmv)] <- 0
+  # Fill NAs by broadcasting row means
+  inds_na <- which(is.na(mat), arr.ind = TRUE)
+  if (nrow(inds_na) > 0) {
+    mat[inds_na] <- rmv[inds_na[,1]]
+  }
+  mat
+}
 
+# Standardize rows (zero mean) using rowMeans and sweep (no big temporary transposes)
+standardize_rows <- function(mat) {
+  rm <- rowMeans(mat)
+  # subtract row means (in-place-like by using sweep)
+  mat <- mat - rm
+  # return (variants x samples) standardized matrix
+  mat
+}
 
 finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL){
   message("Processing phenotype: ", phenotype_id)
@@ -88,19 +111,36 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   # expression vector
   gt_matrix = genotype_matrix[,names(expression_vector)]
   
-  #Exclude variants with no alternative alleles
-  message('Filtering variants with no alt alleles')
-  gt_matrix = gt_matrix[rowSums(round(gt_matrix,0), na.rm = TRUE) != 0,]
+ # #Exclude variants with no alternative alleles
+  #message('Filtering variants with no alt alleles')
+  #gt_matrix = gt_matrix[rowSums(round(gt_matrix,0), na.rm = TRUE) != 0,]
     
-  message('Replacing missing genotypes ')
-  #Replace missing values with row means
-  gt_matrix = t(gt_matrix) %>% zoo::na.aggregate() %>% t()
+  #message('Replacing missing genotypes ')
+  ##Replace missing values with row means
+  #gt_matrix = t(gt_matrix) %>% zoo::na.aggregate() %>% t()
 
-  #Standardise genotypes
-  message('Standardizing genotypes')
-  gt_std = t(gt_matrix - apply(gt_matrix, 1, mean))
-  gt_hat = hat %*% gt_std
-  
+  ##Standardise genotypes
+  #message('Standardizing genotypes')
+  #gt_std = t(gt_matrix - apply(gt_matrix, 1, mean))
+  #gt_hat = hat %*% gt_std
+ # subset genotype matrix to individuals that are in expression_vector
+  # Exclude variants with no alt alleles
+  nonzero_idx <- which(rowSums(round(gt_matrix,0), na.rm = TRUE) != 0)
+  if (length(nonzero_idx) == 0) stop("No variant with alt alleles")
+  gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
+
+  # Impute missing values using row means (efficient)
+  gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
+  variant_names <- rownames(gt_matrix)
+  # Standardize genotypes (subtract row means)
+  gt_std <- standardize_rows(gt_matrix)   # still variants x samples
+  rm(gt_matrix)
+  # Apply hat: hat %*% gt_std (hat dims: n x n, gt_std: variants x n -> need to transpose carefully)
+  # Note: hat * gt_std must produce a matrix with same orientation as before
+  # If susie expects variants x samples, we need to compute gt_hat = t(hat %*% t(gt_std))
+  gt_hat <- t(hat %*% t(gt_std))  # result: variants x samples
+  rm(gt_std)
+
   # Fit finemapping model
   fitted <- susieR::susie(gt_hat, expression_vector,
                           L = 10,
@@ -110,7 +150,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
                           verbose = TRUE,
                           compute_univariate_zscore = TRUE,
                           min_abs_corr = 0.5)
-  fitted$variant_id = rownames(gt_matrix)
+  fitted$variant_id = variant_names
   return(fitted)
 }
 

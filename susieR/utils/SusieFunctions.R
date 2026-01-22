@@ -109,8 +109,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   
   # subset genotype matrix to individuals that are in 
   # expression vector
+  message('Subsetting genotype matrix to individuals in the molecular data')
   gt_matrix = genotype_matrix[,names(expression_vector)]
-  
+  rm(genotype_matrix)
+  gc()
  # #Exclude variants with no alternative alleles
   #message('Filtering variants with no alt alleles')
   #gt_matrix = gt_matrix[rowSums(round(gt_matrix,0), na.rm = TRUE) != 0,]
@@ -133,14 +135,18 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
   variant_names <- rownames(gt_matrix)
   # Standardize genotypes (subtract row means)
+
+  message('Standardizing genotypes')
   gt_std <- standardize_rows(gt_matrix)   # still variants x samples
   rm(gt_matrix)
+  gc()
   # Apply hat: hat %*% gt_std (hat dims: n x n, gt_std: variants x n -> need to transpose carefully)
   # Note: hat * gt_std must produce a matrix with same orientation as before
   # If susie expects variants x samples, we need to compute gt_hat = t(hat %*% t(gt_std))
+  message('Computing gt_hat')
   gt_hat <- hat %*% t(gt_std)  # result: variants x samples
   rm(gt_std)
-
+  gc()
   # Fit finemapping model
   fitted <- susieR::susie(gt_hat, expression_vector,
                           L = 10,

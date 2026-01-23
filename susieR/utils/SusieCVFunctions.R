@@ -31,8 +31,13 @@ RunFoldCV <- function(Metadata,
                                                                     quant_method = "gene_counts",
                                                                     reformat = FALSE)
 
-    TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TrainSe, "counts")
-    TestGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TestSe, "counts")
+    TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TrainSe, "counts") %>% 
+                dplyr::mutate(phenotype_value = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
+
+    TestGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TestSe, "counts") %>% 
+                dplyr::mutate(phenotype_value = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
+
+
     TrainCovarModel <- EstimateBetaHat(TrainGeneVector$phenotype_value,TrainCovariateSet)     
     
     selected_phenotype <- GeneID 

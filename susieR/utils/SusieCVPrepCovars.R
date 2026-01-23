@@ -1,6 +1,14 @@
 ComputePCs <- function(expression_df){
 
-subsetted_expression_dat <- expression_df %>% select(-c(1,2,3,4)) %>% mutate(across(everything(~RNOmni::RankNorm(.))))
+# subset to just molecular data values and then 
+# perform normalization 
+subsetted_expression_dat <- expression_df %>% 
+    select(-c(1,2,3,4)) %>% 
+    t() %>% 
+    data.frame() %>% 
+    mutate(across(everything(),~RNOmni::RankNorm(.)))  %>% 
+    t() %>% 
+    data.frame()
 pca_standardized <- PCAtools::pca(subsetted_expression_dat)
 n_pcs <- PCAtools::chooseGavishDonoho( subsetted_expression_dat ,  var.explained = pca_standardized$sdev^2, noise = 1)
 message(paste0('Using' , n_pcs,' PCs'))
@@ -31,8 +39,16 @@ message('Computing Test data PCs fold:',Fold)
 nPCsTrain <- TrainPCs$n_pcs
 TestMetaData <- SampleMetadataCV %>% filter(fold == Fold)
 TestSamples <- TestMetaData %>% mutate(sample_id=as.character(sample_id)) %>% pull(sample_id)
+
+# subset to just molecular values and then perform normalization
 TestBedData <- BedData %>% 
-                    select(all_of(as.character(TestSamples)))
+                    select(all_of(as.character(TestSamples))) %>% 
+                    t() %>% 
+                    data.frame() %>% 
+                    mutate(across(everything(),~RNOmni::RankNorm(.)))  %>% 
+                    t() %>% 
+                    data.frame()
+
 TestPCs <- t(data.matrix(TestBedData)) %*% data.matrix(TrainPCs$loadings) %>% data.frame() %>%select(1:nPCsTrain)
 TestPCs
 }

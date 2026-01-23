@@ -1,3 +1,11 @@
+# Notes:
+# Input to this script should be a CPM normalized bed file, 
+# Rank normalizaiton is performed within each fold seperately 
+# to try and avoid feature leakage. Similarily the PCs should be 
+# calculated on the within fold rank normalzied values. To generate 
+# the CV Meta file, run the PrepSusieCVPCs.R script. Again, importantly, 
+# the input for that script should not be rank normalized values 
+
 suppressPackageStartupMessages(library("devtools"))
 suppressPackageStartupMessages(library("susieR"))
 suppressPackageStartupMessages(library("stringr"))

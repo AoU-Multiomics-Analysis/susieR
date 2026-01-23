@@ -1,3 +1,9 @@
+# Wrapper function to run cross validation within a single fold
+# Metadata - Metadata component of CVObj
+# CovariatesMatrix - full covarriate matrix for all samples
+# ExpressionMatrix - Full CPM expression matrix (or similar non rank normalized matrix) for all samples
+# GenotypeMatrix 
+# GeneID - name of gene to run on 
 RunFoldCV <- function(Metadata,
                       CovariatesMatrix,
                       CVObj,
@@ -10,6 +16,8 @@ RunFoldCV <- function(Metadata,
                       Fold,
                       VariantList = NULL
                       ) {
+
+    # Parse test and train data from metadata file containing fold information
     FoldMetadata <-  Metadata %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
     TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test') %>% mutate(sample_id = as.character(sample_id)) 
     TrainSamples <- FoldMetadata %>% filter(qtl_group == 'Train') %>% mutate(sample_id = as.character(sample_id))
@@ -73,14 +81,16 @@ RunFoldCV <- function(Metadata,
 
 
 
-
+# helper function to perform residualization of test set expression using training data coefs
+# GeneVector - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this)
+# Covariates - Covar matrix for test data set
+#Train Coefs - Output from  EstimateBetaHat
 ResidualizeMolecularData <- function(GeneVector,
                                      Covariates,
                                      Coefs) {
 message('Residualizing data')
 SortedGeneVector <- GeneVector
 rownames(SortedGeneVector) <- SortedGeneVector$sample_id
-print(head(SortedGeneVector))
 SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
 TestResids <- data.frame(Observed = SortedGeneVector$phenotype_value - data.matrix(Covariates) %*% Coefs) %>% 
                 tibble::rownames_to_column('sample_id') 
@@ -91,7 +101,13 @@ GeneVectorResidualized
 
 
 
-
+# Take Susie results and use them to predict gene expression 
+# from the genotype matrix on the test data set. 
+# SusieRes - Output from CleanSusieData 
+# GenotypeMatrix - Output from eQTLUtils load genotype matrix (can be filtered as well)
+# GeneVector - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this)
+# Train Coefs - Output from  EstimateBetaHat
+# Covariates - Covar matrix for test data set
 GetPredictions <- function(SusieRes,
                         GenotypeMatrix,
                         GeneVector,
@@ -123,12 +139,15 @@ message('Finish predictions')
 MergedData
 }
 
-
+# Helper function to estimate regression coefficeints from train data 
+# MoelcularVector  - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this and should be for the trian data)
+# CovarMatrix - Covar set for Train data  
 EstimateBetaHat <- function(MolecularVector,CovarMatrix) {
 BetaHat <- solve(crossprod(CovarMatrix), crossprod(CovarMatrix,MolecularVector ))
 BetaHat
 }
 
+# helper function to extract PC data from CVMeta object
 GetFoldPCData <- function(FoldPCData,
                        Fold) {
 FoldLabel <- paste0('Fold',Fold)
@@ -136,6 +155,7 @@ FoldData <- FoldPCData[[FoldLabel]]
 FoldData
 }
 
+# Helper function to extract Training PCs from CVMeta object
 GetFoldTrainPCs <- function(FoldPCData,
                             Fold) {
 FoldPCData <- GetFoldPCData(FoldPCData,Fold)
@@ -143,6 +163,7 @@ TrainPCs <- FoldPCData[['TrainPCs']]
 TrainPCs
 }
 
+# Helper function to extract Test PCs from CVMeta object
 GetFoldTestPCs <- function(FoldPCData,
                             Fold) {
 FoldPCData <- GetFoldPCData(FoldPCData,Fold)
@@ -150,6 +171,7 @@ TestPCs <- FoldPCData[['TestPCs']]
 TestPCs
 }
 
+# Helper function to merge within fold molecular  PCs and genetic PCs
 MergeMolecularGeneticPCs <- function(ExpressionPCs,GeneticPCs) {
 GeneticPCsFiltered <- GeneticPCs %>%
         data.frame() %>% 
@@ -163,6 +185,7 @@ MergedData
 }
 
 
+# helper function to clean up susie object
 extractResults <- function(susie_object){
   credible_sets = susie_object$sets$cs
   cs_list = list()
@@ -305,15 +328,15 @@ CleanSusieData <- function(res,region_df) {
     variant_df
     }
 }
-MergeCovars <- function(GeneticPCs,ExpressionPCs) {
-Merged <- GeneticPCs %>% 
-                tibble::rownames_to_column('ID') %>% 
-                left_join(ExpressionPCs,by = 'ID') %>% 
-                tibble::column_to_rownames('ID') %>% 
-                data.matrix()
-Merged
+#MergeCovars <- function(GeneticPCs,ExpressionPCs) {
+#Merged <- GeneticPCs %>% 
+                #tibble::rownames_to_column('ID') %>% 
+                #left_join(ExpressionPCs,by = 'ID') %>% 
+                #tibble::column_to_rownames('ID') %>% 
+                #data.matrix()
+#Merged
     
-}
+#}
 
 
 

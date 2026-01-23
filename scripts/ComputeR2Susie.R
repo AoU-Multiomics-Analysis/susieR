@@ -111,7 +111,7 @@ for (k in c(1:nFolds)) {
                                         k
                                         ) %>%
                                         mutate(AF_threshold = 0,Fold = k)
-    FullPredictions <- bind_rows(FoldPredicitons,FullPredictions)   
+    FullPredictions <<- bind_rows(FoldPredicitons,FullPredictions)   
     rm(list = ls()) 
     gc()
     })

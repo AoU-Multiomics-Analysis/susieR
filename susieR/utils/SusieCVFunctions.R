@@ -85,6 +85,22 @@ RunFoldCV <- function(Metadata,
 # GeneVector - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this)
 # Covariates - Covar matrix for test data set
 #Train Coefs - Output from  EstimateBetaHat
+#ResidualizeMolecularData <- function(GeneVector,
+                                     #Covariates,
+                                     #Coefs) {
+#message('Residualizing data')
+#SortedGeneVector <- GeneVector
+#rownames(SortedGeneVector) <- SortedGeneVector$sample_id
+#SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
+#TestResids <- data.frame(Observed = SortedGeneVector$phenotype_value - data.matrix(Covariates) %*% Coefs) %>% 
+                #tibble::rownames_to_column('sample_id')  %>% 
+                #mutate(sample_id = str_remove(sample_id,'^X')) 
+#GeneVectorResidualized <- GeneVector %>%
+                    #mutate(sample_id = as.character(sample_id)) %>% 
+                    #left_join(TestResids,by = 'sample_id')
+#GeneVectorResidualized
+#}
+
 ResidualizeMolecularData <- function(GeneVector,
                                      Covariates,
                                      Coefs) {
@@ -92,10 +108,11 @@ message('Residualizing data')
 SortedGeneVector <- GeneVector
 rownames(SortedGeneVector) <- SortedGeneVector$sample_id
 SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
+
 TestResids <- data.frame(Observed = SortedGeneVector$phenotype_value - data.matrix(Covariates) %*% Coefs) %>% 
-                tibble::rownames_to_column('sample_id')  %>% 
-                mutate(sample_id = str_remove(sample_id,'^X')) 
-GeneVectorResidualized <- GeneVector %>%
+                tibble::rownames_to_column('sample_id') %>%
+                mutate(sample_id = str_remove(sample_id,'^X'))
+GeneVectorResidualized <- GeneVector %>% 
                     mutate(sample_id = as.character(sample_id)) %>% 
                     left_join(TestResids,by = 'sample_id')
 GeneVectorResidualized
@@ -175,18 +192,19 @@ TestPCs
 }
 
 # Helper function to merge within fold molecular  PCs and genetic PCs
-MergeMolecularGeneticPCs <- function(ExpressionPCs,GeneticPCs) {
-GeneticPCsFiltered <- GeneticPCs %>%
+MergeMolecularGeneticPCs <- function (ExpressionPCs, GeneticPCs) {
+    GeneticPCsFiltered <- GeneticPCs %>% 
         data.frame() %>% 
-        tibble::rownames_to_column('ID') %>% 
-        select(ID,contains('GENETIC'))
-MergedData <- ExpressionPCs %>% 
-                left_join(GeneticPCsFiltered,by = 'ID') %>% 
-                tibble::column_to_rownames('ID')  %>% 
+        tibble::rownames_to_column("ID") %>% 
+        mutate(ID = str_remove(ID,"^X")) %>% 
+        select(ID, contains("GENETIC"))
+    MergedData <- ExpressionPCs %>% 
+                mutate(ID = str_remove(ID,"^X")) %>% 
+                left_join(GeneticPCsFiltered, by = "ID") %>% 
+                tibble::column_to_rownames("ID") %>% 
                 data.matrix()
-MergedData
+    MergedData
 }
-
 
 # helper function to clean up susie object
 extractResults <- function(susie_object){

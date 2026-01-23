@@ -79,11 +79,11 @@ gene_vector = eQTLUtils::extractPhentypeFromSE(output_prefix, se, "counts") %>%
     dplyr::mutate(phenotype_value_std = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
 
 #message('Fine-mapping begin')
-genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
-    chr = gene_meta$chromosome, 
-    start = gene_meta$phenotype_pos - cis_distance, 
-    end = gene_meta$phenotype_pos + cis_distance, 
-    dosage_file = genotype_file) 
+#genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
+    #chr = gene_meta$chromosome, 
+    #start = gene_meta$phenotype_pos - cis_distance, 
+    #end = gene_meta$phenotype_pos + cis_distance, 
+    #dosage_file = genotype_file) 
 
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
 
@@ -95,7 +95,7 @@ for (k in c(1:nFolds)) {
                                         covariates_matrix,
                                         cv_meta,
                                         expression_matrix,
-                                        genotype_matrix_full,
+                                        genotype_file,
                                         output_prefix,
                                         phenotype_meta,
                                         cis_distance,
@@ -112,7 +112,7 @@ for (k in c(1:nFolds)) {
 message('Filtering Genotype matrix')
 genotype_type_matrix_one_percent <- genotype_matrix_full %>% 
         filterMAF(AncestryDf,variant_list = variant_list)
-rm(genotype_matrix_full)
+#rm(genotype_matrix_full)
 
 
 message('Running CV on 1% variants')

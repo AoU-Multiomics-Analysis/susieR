@@ -125,10 +125,10 @@ for (k in c(1:nFolds)) {
                                         genotype_type_matrix_one_percent,
                                         output_prefix,
                                         phenotype_meta,
-                                        variant_list,
                                         cis_distance,
                                         region_df,
-                                        k
+                                        k,
+                                        VariantList = variant_list
                                         ) %>%
                                         mutate(AF_threshold = 0.01,Fold = k)
     Predictions <<- bind_rows(FoldPredicitons,Predictions)  

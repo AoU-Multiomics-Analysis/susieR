@@ -64,6 +64,7 @@ CVDat <- readRDS(CVobj)
 }
 
 LoadData <- function(opt_list) {
+    require(data.table)
     message('Loading molecular data')
     
     if (is.null(opt_list$expression_matrix)) {
@@ -80,7 +81,7 @@ LoadData <- function(opt_list) {
     }
     
  
-    expression_matrix = readr::read_tsv(opt_list$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
+    expression_matrix = fread(opt_list$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
 
     message('Loading covariates')
     

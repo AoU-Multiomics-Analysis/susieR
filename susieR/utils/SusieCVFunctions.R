@@ -93,7 +93,8 @@ SortedGeneVector <- GeneVector
 rownames(SortedGeneVector) <- SortedGeneVector$sample_id
 SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
 TestResids <- data.frame(Observed = SortedGeneVector$phenotype_value - data.matrix(Covariates) %*% Coefs) %>% 
-                tibble::rownames_to_column('sample_id') 
+                tibble::rownames_to_column('sample_id')  %>% 
+                mutate(sample_id = str_remove(sample_id,'^X'))
 GeneVectorResidualized <- GeneVector %>% 
                     left_join(TestResids,by = 'sample_id')
 GeneVectorResidualized

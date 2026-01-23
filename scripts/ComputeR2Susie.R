@@ -95,7 +95,7 @@ genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
 
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
 
-Predictions <- data.frame()
+FullPredictions <- data.frame()
 message('Running CV on all variants')
 for (k in c(1:nFolds)) {
     message(paste0('Running on fold:',k))
@@ -111,7 +111,7 @@ for (k in c(1:nFolds)) {
                                         k
                                         ) %>%
                                         mutate(AF_threshold = 0,Fold = k)
-    Predictions <- bind_rows(FoldPredicitons,Predictions)   
+    FullPredictions <- bind_rows(FoldPredicitons,FullPredictions)   
     rm(list = ls()) 
     gc()
     })
@@ -122,7 +122,7 @@ genotype_type_matrix_one_percent <- genotype_matrix_full %>%
         filterMAF(AncestryDf,variant_list = variant_list)
 rm(genotype_matrix_full)
 
-
+ThresholdPredictions <- data.frame()
 message('Running CV on 1% variants')
 for (k in c(1:nFolds)) {
     message(paste0('Running on fold:',k))
@@ -139,13 +139,13 @@ for (k in c(1:nFolds)) {
                                         VariantList = variant_list
                                         ) %>%
                                         mutate(AF_threshold = 0.01,Fold = k)
-    Predictions <<- bind_rows(FoldPredicitons,Predictions)  
+    ThresholdPredictions <<- bind_rows(FoldPredicitons,ThresholdPredictions)  
     rm(list = ls()) 
     gc()
     })
 }
 
-
+Predictions <- bind_rows(ThresholdPredictions,FullPredictions)
 Predictions %>% mutate(Gene = output_prefix) %>% write_tsv(OutputFile)
 
 #OnePercentSummary <- broom::glance(lm(Observed ~ Predicted,data =OnePercentHoldoutData)) %>% mutate(AF_threshold = 0.01)

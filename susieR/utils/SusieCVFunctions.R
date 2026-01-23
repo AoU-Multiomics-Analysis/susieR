@@ -17,7 +17,10 @@ RunFoldCV <- function(Metadata,
     TestCovariateSet <- GetFoldTestPCs(CVObj,k) %>% MergeMolecularGeneticPCs(CovariatesMatrix)
     TrainBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TrainSamples$sample_id))
     TestBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TestSamples$sample_id))
-
+    
+    # create summarized experiment objects for the test and train data set. The genes are normalzied 
+    # below and while the unnormalized SE object goes into fine-map phenotype, rank normalization 
+    # is performed within that function as well
     TrainSe <- eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TrainBedDf %>% 
                                                                         select(-1,-2,-3) , 
                                                                     row_data = PhenotypeMeta, 
@@ -30,14 +33,13 @@ RunFoldCV <- function(Metadata,
                                                                     col_data = TestSamples, 
                                                                     quant_method = "gene_counts",
                                                                     reformat = FALSE)
-
+    # normalize Test and Train gene vectors seperately form each other 
     TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TrainSe, "counts") %>% 
                 dplyr::mutate(phenotype_value = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
-
     TestGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TestSe, "counts") %>% 
                 dplyr::mutate(phenotype_value = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
 
-
+    # estiamte Beta values for covariate adjustment from the training data 
     TrainCovarModel <- EstimateBetaHat(TrainGeneVector$phenotype_value,TrainCovariateSet)     
     
     selected_phenotype <- GeneID 

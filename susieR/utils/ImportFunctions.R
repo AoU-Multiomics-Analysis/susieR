@@ -81,7 +81,7 @@ LoadData <- function(opt_list) {
     }
     
  
-    expression_matrix = fread(opt_list$expression_matrix) %>% dplyr::rename('phenotype_id' = 'gene_id')
+    expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 'gene_id')
 
     message('Loading covariates')
     

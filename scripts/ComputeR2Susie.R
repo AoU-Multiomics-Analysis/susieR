@@ -123,7 +123,7 @@ for (k in c(1:nFolds)) {
                                         cv_meta,
                                         expression_matrix,
                                         genotype_type_matrix_one_percent,
-                                        output_prefix
+                                        output_prefix,
                                         phenotype_meta,
                                         variant_list,
                                         cis_distance,

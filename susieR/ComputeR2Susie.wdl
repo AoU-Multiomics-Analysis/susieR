@@ -40,7 +40,7 @@ task ComputeR2 {
     runtime {
         docker: 'ghcr.io/aou-multiomics-analysis/susier:main'
         memory: "${memory}GB"
-        disks: "local-disk 500 SSD"
+        disks: "local-disk 50 SSD"
         bootDiskSizeGb: 25
         preemptible: "${NumPrempt}"
         cpu: "1"

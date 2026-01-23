@@ -94,8 +94,9 @@ rownames(SortedGeneVector) <- SortedGeneVector$sample_id
 SortedGeneVector <- SortedGeneVector[rownames(Covariates),] 
 TestResids <- data.frame(Observed = SortedGeneVector$phenotype_value - data.matrix(Covariates) %*% Coefs) %>% 
                 tibble::rownames_to_column('sample_id')  %>% 
-                mutate(sample_id = str_remove(sample_id,'^X'))
-GeneVectorResidualized <- GeneVector %>% 
+                mutate(sample_id = str_remove(sample_id,'^X')) 
+GeneVectorResidualized <- GeneVector %>%
+                    mutate(sample_id = as.character(sample_id)) %>% 
                     left_join(TestResids,by = 'sample_id')
 GeneVectorResidualized
 }
@@ -131,7 +132,8 @@ GenotypeDataFinemappedVariants <- GenotypeMatrix[CleanedSusie$variant,Samples]
 message('Computing predictions')
 PredictedValues <- t(GenotypeDataFinemappedVariants) %*% as.vector(SusieRes %>% pull(posterior_mean)) %>% 
     data.frame() %>% 
-    tibble::rownames_to_column('sample_id') %>% 
+    tibble::rownames_to_column('sample_id') %>%
+    mutate(sample_id = as.character(sample_id)) %>%
     dplyr::rename('Predicted' = 2)
 ObservedValues <- GeneVector %>% ResidualizeMolecularData(Covariates,TrainCoefs)
 MergedData <- PredictedValues %>% left_join(ObservedValues,by ='sample_id') 

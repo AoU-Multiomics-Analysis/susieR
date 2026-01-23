@@ -1,6 +1,6 @@
 ComputePCs <- function(expression_df){
 
-subsetted_expression_dat <- expression_df %>% select(-c(1,2,3,4))
+subsetted_expression_dat <- expression_df %>% select(-c(1,2,3,4)) %>% mutate(across(everything(~RNOmni::RankNorm(.))))
 pca_standardized <- PCAtools::pca(subsetted_expression_dat)
 n_pcs <- PCAtools::chooseGavishDonoho( subsetted_expression_dat ,  var.explained = pca_standardized$sdev^2, noise = 1)
 message(paste0('Using' , n_pcs,' PCs'))

@@ -162,12 +162,12 @@ LoadData <- function(opt_list) {
                     transmute(phenotype_id,region = paste0(chromosome,':',
                                                            phenotype_pos - cis_distance,'-',
                                                            phenotype_pos + cis_distance))
-    if (!is.null(AdditionalGenotypesBed)) {
+    if (!is.null(opt_list$AdditionalGenotypesBed)) {
         message('Loading additional genotypes')
-        additional_genotypes <- ImportAdditionalGenotypes(AdditionalGenotypesBed)  %>% 
+        additional_genotypes <- ImportAdditionalGenotypes(opt_list$AdditionalGenotypesBed)  %>% 
             filter(phenotype_id %in% phenotype_list$phenotype_id) %>% 
             dplyr::select(-2,-3) %>% 
-            column_to_rownames('variant_id') %>% 
+            tibble::column_to_rownames('variant_id') %>% 
             data.matrix()
     } 
 

@@ -29,6 +29,8 @@ source("/opt/r/lib/ImportFunctions.R")
 source("/opt/r/lib/InitFunctions.R")
 source("/opt/r/lib/SusieFunctions.R")
 source("/opt/r/lib/OptParser.R")
+source("/opt/r/lib/MemoryHelpers.R")
+
 message('Functions Loaded')
 
 

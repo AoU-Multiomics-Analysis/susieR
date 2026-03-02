@@ -128,12 +128,19 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   names(expression_vector) = gene_vector$genotype_id
 
   if (!is.null(additional_genotypes)) {
-    message('Merging with provided additional genotypes')
-    genotype_matrix <- MergeAdditionalGenotypes(genotype_matrix,additional_genotypes)
+   message('Merging with provided additional genotypes')
+   genotype_matrix <- MergeAdditionalGenotypes(genotype_matrix,additional_genotypes)
+   message('Subsetting to samples in the additional genotype file')
+   merged_samples <- colnames(genotype_matrix)
+   intersecting_samples <- intersect(merged_samples,as.character(names(expression_vector)))
 
-    message('Subsetting to samples in the additional genotype file')
-    merged_samples <- colnames(genotype_matrix)
-    expression_vector <-  expression_vector[intersect(merged_samples, names(expression_vector)), , drop = FALSE]
+   expression_vector <-  expression_vector[intersecting_samples, , drop = FALSE]
+   names(expression_vector) <- rownames(expression_vector)
+   covariates_matrix = covariates_matrix[names(expression_vector),]
+   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
+   subset_gene_vector <- gene_vector %>% filter(genotype_id %in% intersecting_samples)
+   expression_vector <- hat %*% subset_gene_vector$phenotype_value_std
+   names(expression_vector) <- subset_gene_vector$genotype_id  
   }
 
 

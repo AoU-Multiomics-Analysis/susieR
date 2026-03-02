@@ -75,7 +75,28 @@ standardize_rows <- function(mat) {
   mat
 }
 
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL){
+MergeAdditionalGenotypes <- function(GenotypeMatrix,AdditionalGenotypes) {
+
+GenotypeMatrixSampleList <- as.character(colnames(GenotypeMatrix))
+AdditionalGenotypesSampleList <- as.character(colnames(AdditionalGenotypes))
+
+GenotypeMatrixSubset <- GenotypeMatrix %>% 
+                            data.frame() %>%
+                            dplyr::rename_with(~str_remove(.,'^X')) %>% 
+                            select(any_of(AdditionalGenotypesSampleList))
+AdditionalGenotypesSubset <- AdditionalGenotypes %>% 
+                            data.frame() %>% 
+                            dplyr::rename_with(~str_remove(.,'^X')) %>% 
+                            select(any_of(GenotypeMatrixSampleList))
+
+MergedGenotypes <- bind_rows(GenotypeMatrixSubset,
+                             AdditionalGenotypesSubset
+                            ) %>% 
+                    data.matrix()
+MergedGenotypes
+}
+
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL){
   message("Processing phenotype: ", phenotype_id)
   
   #Extract phenotype from SE
@@ -100,13 +121,22 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     message('Using pre-loaded genotype matrix')
     genotype_matrix <- genotype_file
     }
-
   #Residualise gene expression and genotype matrix
   message('Residualizing gene expression')
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
   expression_vector = hat %*% gene_vector$phenotype_value_std
   names(expression_vector) = gene_vector$genotype_id
-  
+
+  if (!is.null(additional_genotypes)) {
+    message('Merging with provided additional genotypes')
+    genotype_matrix <- MergeAdditionalGenotypes(genotype_matrix,additional_genotypes)
+
+    message('Subsetting to samples in the additional genotype file')
+    merged_samples <- colnames(genotype_matrix)
+    expression_vector <-  expression_vector[intersect(merged_samples, names(expression_vector)), , drop = FALSE]
+  }
+
+
   # subset genotype matrix to individuals that are in 
   # expression vector
   message('Subsetting genotype matrix to individuals in the molecular data')
@@ -163,6 +193,8 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   gt_hat <- hat %*% t(gt_std)  # result: variants x samples
   rm(gt_std)
   gc()
+
+
   # Fit finemapping model
   fitted <- susieR::susie(gt_hat, expression_vector,
                           L = 10,

@@ -36,8 +36,9 @@ option_list <- list(
   optparse::make_option(c("--n_folds"), type="numeric",
     help="specifies number of folds to use", metavar="type",default = NULL),
   optparse::make_option(c("--VariantList"), type="character",
-    help="file that contains gnomad common variants, will use this to filter genotype data if present", metavar="type",default = NULL)
-  
+    help="file that contains gnomad common variants, will use this to filter genotype data if present", metavar="type",default = NULL),
+  optparse::make_option(c("--AdditionalGenotypesBed"), type="character",
+    help="file that contains additional genotypes such as SVs for MEIs for fine-mapping", metavar="type",default = NULL)
 )
 option_list
 }

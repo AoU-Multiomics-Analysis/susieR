@@ -16,6 +16,7 @@ task susieR {
         Float? MAF
         File? VariantList
         File? AncestryFile
+        File? AdditionalGenotypesBed
     }
 
     command <<<
@@ -25,7 +26,7 @@ task susieR {
         awk -F'\t' 'BEGIN{OFS="\t"} { $4="skip"; print }' input_gene.txt > skip.txt
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
 
-        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""} \
+        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \
@@ -67,8 +68,8 @@ workflow susieR_workflow {
         String OutputPrefix
         Float? MAF
         File? VariantList
-        File? AncestryFile 
-
+        File? AncestryFile
+        File? AdditionalGenotypesBed
     }
     call susieR {
         input:
@@ -84,7 +85,8 @@ workflow susieR_workflow {
             NumPrempt = NumPrempt,
             MAF = MAF,
             VariantList = VariantList,
-            AncestryFile = AncestryFile
+            AncestryFile = AncestryFile,
+            AdditionalGenotypesBed = AdditionalGenotypesBed
         }
         output {
             File SusieParquet = susieR.SusieParquet

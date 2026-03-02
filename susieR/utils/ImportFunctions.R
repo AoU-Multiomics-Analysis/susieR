@@ -63,6 +63,13 @@ message('Loading CV PCs and metadata ')
 CVDat <- readRDS(CVobj)
 }
 
+ImportAdditionalGenotypes <- function(AdditionalGenotypesBed) {
+AdditionalGenotypes <- fread(AdditionalGenotypesBed,header = TRUE) %>% 
+    dplyr::rename('variant_id' = 1,'phenotype_id' = 2,'feature_type' = 3)
+AdditionalGenotypes
+}
+
+
 LoadData <- function(opt_list) {
     require(data.table)
     message('Loading molecular data')
@@ -79,8 +86,7 @@ LoadData <- function(opt_list) {
     if (is.null(opt_list$genotype_matrix)) {
         stop('Genotype file is missing')
     }
-    
- 
+     
     expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 'gene_id')
     subset_matrix <- expression_matrix %>% select(1,2,3,4)
     print(colnames(subset_matrix))
@@ -156,6 +162,15 @@ LoadData <- function(opt_list) {
                     transmute(phenotype_id,region = paste0(chromosome,':',
                                                            phenotype_pos - cis_distance,'-',
                                                            phenotype_pos + cis_distance))
+    if (!is.null(AdditionalGenotypesBed)) {
+        message('Loading additional genotypes')
+        additional_genotypes <- ImportAdditionalGenotypes(AdditionalGenotypesBed)  %>% 
+            filter(phenotype_id %in% phenotype_list$phenotype_id) %>% 
+            dplyr::select(-2,-3) %>% 
+            column_to_rownames('variant_id') %>% 
+            data.matrix()
+    } 
+
     OutList <- list(
         covariates_matrix = covariates_matrix,
         phenotype_table = phenotype_table,
@@ -171,7 +186,8 @@ LoadData <- function(opt_list) {
         genotype_file = genotype_file,
         sample_metadata = sample_metadata,
         region_df = region_df,
-        cv_meta = cv_meta
+        cv_meta = cv_meta,
+        additional_genotypes = additional_genotypes
         )
     OutList
 }

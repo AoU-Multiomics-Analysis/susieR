@@ -87,7 +87,7 @@ LoadData <- function(opt_list) {
         stop('Genotype file is missing')
     }
      
-    expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 'gene_id')
+    expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 4)
     subset_matrix <- expression_matrix %>% select(1,2,3,4)
     print(colnames(subset_matrix))
     message('Loading covariates')

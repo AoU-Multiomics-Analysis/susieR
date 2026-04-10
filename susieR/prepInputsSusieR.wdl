@@ -72,11 +72,8 @@ workflow susieR_workflow {
     input {
         File GenotypeDosages
         File GenotypeDosageIndex
-        File QTLCovariates
         File TensorQTLPermutations
-        File SampleList
         File PhenotypeBed
-        Int CisDistance
         Int NumPrempt
         String PhenotypeID
     }

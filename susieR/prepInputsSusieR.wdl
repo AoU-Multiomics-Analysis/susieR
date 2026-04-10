@@ -98,6 +98,7 @@ workflow susieR_workflow {
         File SubsetBed = PrepInputs.SubsetBed
         #File SubsetBedIndex = PrepInputs.SubsetBedIndex
         File SubsetDosages = PrepInputs.SubsetDosages
+        File SubsetPermutationPvals = PrepInputs.SubsetPermutationPvals
         File SubsetDosagesIndex = PrepInputs.SubsetDosagesIndex
     }
 }

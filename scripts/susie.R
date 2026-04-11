@@ -42,7 +42,7 @@ data_list <- LoadData(opt)
 list2env(data_list,envir = environment())
 
 ########### INITIALIZE EMPTY DATAFRAMES #########
-
+message('Init empty dataframes')
 empty_variant_df <- InitEmptyVariantDf()
 empty_lbf_df <- InitEmptyLbfDf()
 empty_in_cs_variant_df <- InitEmptyInCSVariantDf()
@@ -50,6 +50,7 @@ empty_cs_df <- InitEmptyCS()
 
 
 ######### LOAD DATA #######
+message('summarizing  phenotype data')
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
                                                             select(-1,-2,-3) , 
                                                          row_data = phenotype_meta, 

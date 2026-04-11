@@ -75,26 +75,64 @@ standardize_rows <- function(mat) {
   mat
 }
 
-MergeAdditionalGenotypes <- function(GenotypeMatrix,AdditionalGenotypes) {
+#MergeAdditionalGenotypes <- function(GenotypeMatrix,AdditionalGenotypes) {
 
-GenotypeMatrixSampleList <- as.character(colnames(GenotypeMatrix))
-AdditionalGenotypesSampleList <- as.character(colnames(AdditionalGenotypes))
+#GenotypeMatrixSampleList <- as.character(colnames(GenotypeMatrix))
+#AdditionalGenotypesSampleList <- as.character(colnames(AdditionalGenotypes))
 
-GenotypeMatrixSubset <- GenotypeMatrix %>% 
-                            data.frame() %>%
-                            dplyr::rename_with(~str_remove(.,'^X')) %>% 
-                            select(any_of(AdditionalGenotypesSampleList))
-AdditionalGenotypesSubset <- AdditionalGenotypes %>% 
-                            data.frame() %>% 
-                            dplyr::rename_with(~str_remove(.,'^X')) %>% 
-                            select(any_of(GenotypeMatrixSampleList))
+#GenotypeMatrixSubset <- GenotypeMatrix %>% 
+                            #data.frame() %>%
+                            #dplyr::rename_with(~str_remove(.,'^X')) %>% 
+                            #select(any_of(AdditionalGenotypesSampleList))
+#AdditionalGenotypesSubset <- AdditionalGenotypes %>% 
+                            #data.frame() %>% 
+                            #dplyr::rename_with(~str_remove(.,'^X')) %>% 
+                            #select(any_of(GenotypeMatrixSampleList))
 
-MergedGenotypes <- bind_rows(GenotypeMatrixSubset,
-                             AdditionalGenotypesSubset
-                            ) %>% 
-                    data.matrix()
-MergedGenotypes
+#MergedGenotypes <- bind_rows(GenotypeMatrixSubset,
+                             #AdditionalGenotypesSubset
+                            #) %>% 
+                    #data.matrix()
+#MergedGenotypes
+#}
+
+# safer version of merge additional genotypes
+MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
+  common_samples <- intersect(
+    str_remove(colnames(GenotypeMatrix), "^X"),
+    str_remove(colnames(AdditionalGenotypes), "^X")
+  )
+
+  if (length(common_samples) == 0) {
+    stop("No overlapping samples between GenotypeMatrix and AdditionalGenotypes")
+  }
+
+  gt_var_ids  <- rownames(GenotypeMatrix)
+  add_var_ids <- rownames(AdditionalGenotypes)
+
+  GenotypeMatrixSubset <- GenotypeMatrix %>%
+    data.frame(check.names = FALSE) %>%
+    dplyr::rename_with(~str_remove(., "^X")) %>%
+    dplyr::select(all_of(common_samples))
+
+  AdditionalGenotypesSubset <- AdditionalGenotypes %>%
+    data.frame(check.names = FALSE) %>%
+    dplyr::rename_with(~str_remove(., "^X")) %>%
+    dplyr::select(all_of(common_samples))
+
+  rownames(GenotypeMatrixSubset) <- gt_var_ids
+  rownames(AdditionalGenotypesSubset) <- add_var_ids
+
+  MergedGenotypes <- dplyr::bind_rows(
+    GenotypeMatrixSubset,
+    AdditionalGenotypesSubset
+  ) %>%
+    data.matrix()
+
+  return(MergedGenotypes)
 }
+
+
 
 finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL){
   message("Processing phenotype: ", phenotype_id)

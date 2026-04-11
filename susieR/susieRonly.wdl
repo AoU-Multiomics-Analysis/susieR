@@ -23,7 +23,7 @@ task susieR {
 
         zcat ~{PhenotypeBed} | head -n 1 > header.txt
         zcat ~{PhenotypeBed} | grep ~{OutputPrefix} > input_gene.txt
-        awk -F'\t' 'BEGIN{OFS="\t"} { $4="skip"; print }' input_gene.txt > skip.txt
+        head -n 1 input_gene.txt | awk -F'\t' 'BEGIN{OFS="\t"} {$4="skip"; print}' > skip.txt        
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
 
         Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \

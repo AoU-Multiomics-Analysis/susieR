@@ -8,7 +8,7 @@ task AggregateSusie{
         Int Memory
         String OutputPrefix
         Int NumThreads 
-        String AggregateMode # should be either lbf or pip
+        #String AggregateMode # should be either lbf or pip
     }
 
     command <<<
@@ -22,7 +22,7 @@ task AggregateSusie{
 
     # Write the new local file paths into filelist.txt
     ls -1 "$(pwd)/localized/"* > filelist.txt
-    Rscript /tmp/MergeSusie.R --FilePaths file_paths.txt  --OutputPrefix ~{OutputPrefix} --SusieType ~{AggregateMode}
+    Rscript /tmp/MergeSusie.R --FilePaths file_paths.txt  --OutputPrefix ~{OutputPrefix} 
     >>>
 
     runtime {

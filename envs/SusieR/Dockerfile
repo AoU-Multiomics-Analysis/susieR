@@ -1,16 +1,14 @@
 ## Use micromamba as the base image
-#FROM mambaorg/micromamba:1.5.3
-FROM ghcr.io/prefix-dev/pixi:latest
+FROM mambaorg/micromamba:1.5.3
+#FROM ghcr.io/prefix-dev/pixi:latest
 
 ## Set up environment
-#ENV MAMBA_DOCKERFILE_ACTIVATE=1
-#ENV PATH=/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-RUN pixi global install -c conda-forge -c bioconda r-base=4.4 tabix google-cloud-sdk
-RUN pixi global install --environment google-cloud-sdk python=3.11 
+ENV MAMBA_DOCKERFILE_ACTIVATE=1
+ENV PATH=/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 
 ## Create a new environment and install packages
-#RUN micromamba install -y -n base -c conda-forge -c bioconda \
-RUN pixi global install --environment r-base \ 
+RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-tidyverse \
     conda-forge::r-data.table \
     conda-forge::r-optparse \
@@ -41,8 +39,6 @@ RUN pixi global install --environment r-base \
     conda-forge::r-lobstr
 
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
-RUN find ${HOME}/.pixi/envs/r-base/bin -name '*bioconductor-*-post-link.sh' | \
-   xargs -I % bash -c "PREFIX=${HOME}/.pixi/envs/r-base PATH=${HOME}/.pixi/envs/r-base/bin:${PATH} % || true"
 COPY susieR/*  . 
 COPY susieR/utils/*  /opt/r/lib/ 
 COPY scripts/*  . 

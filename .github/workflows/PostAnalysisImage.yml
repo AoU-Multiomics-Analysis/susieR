@@ -34,7 +34,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: susieR/PostAnalysis/Dockerfile
+          file: susieR/envs/PostAnalysis/Dockerfile
           push: true
           tags: |
             ${{ steps.meta.outputs.tags }}

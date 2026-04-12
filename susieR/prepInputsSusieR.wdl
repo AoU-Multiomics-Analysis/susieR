@@ -41,12 +41,14 @@ task PrepInputs {
 
         echo "Subsetting dose file"
         #(cat dosage_header.txt; tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
-        tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz -h > dose.tmp.tsv
+        tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz  > dose.tmp.tsv
 
-        (head -n 1 dose.tmp.tsv && tail -n +2 dose.tmp.tsv | sort -k1,1V -k2,2n) \
-        | bgzip -c > ~{PhenotypeID}.dose.tsv.gz        
+        #(head -n 1 dose.tmp.tsv && tail -n +2 dose.tmp.tsv | sort -k1,1V -k2,2n) \
+        #| bgzip -c > ~{PhenotypeID}.dose.tsv.gz    
+        (cat dosage_header.txt && sort -k1,1V -k2,2n dose.tmp.tsv) \
+            | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
         #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
-        tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"   
+        tabix -s1 -b2 -e2 -S1 ~{PhenotypeID}.dose.tsv.gz  
     >>>
     
     runtime {

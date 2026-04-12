@@ -12,4 +12,7 @@ workflows:
   - subclass: WDL 
     primaryDescriptorPath: /susieR/ComputeR2Susie.wdl
     name: "ComputeR2Susie"
+  - subclass: WDL 
+    primaryDescriptorPath: /susieR/AggregateSusie.wdl
+    name: "AggregateSusie"
 

@@ -82,7 +82,6 @@ workflow AggregateSusieWorkflow {
         File SusieParquetsFOFN
         Int Memory 
         String OutputPrefix
-        String AggregateMode
         Int NumThreads
         File GencodeGTF 
         File PlinkAfreq
@@ -98,8 +97,7 @@ workflow AggregateSusieWorkflow {
             SusieParquetsFOFN = SusieParquetsFOFN,
             OutputPrefix = OutputPrefix,
             Memory = Memory,
-            NumThreads = NumThreads,
-            AggregateMode = AggregateMode
+            NumThreads = NumThreads
     }
 
     call AnnotateSusie {

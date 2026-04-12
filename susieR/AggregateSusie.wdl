@@ -4,7 +4,6 @@ version 1.0
 
 task AggregateSusie{
     input{
-        #Array[File] SusieParquets
         File SusieParquetsFOFN
         Int Memory
         String OutputPrefix
@@ -43,7 +42,6 @@ task AnnotateSusie {
     input {
         File SusieTSV 
         File GencodeGTF
-        File PlinkAfreq
         String OutputPrefix
         Int Memory
         File AnnotationENCODE 
@@ -56,13 +54,12 @@ task AnnotateSusie {
     Rscript /tmp/AnnotateSusie.R \
         --OutputPrefix ~{OutputPrefix} \
         --GencodeGTF ~{GencodeGTF} \
-        --PlinkAfreq ~{PlinkAfreq} \
         --SusieTSV ~{SusieTSV} \
         --phyloPBigWig ~{AnnotationPhyloP} \
         --FANTOM5 ~{AnnotationFANTOM5} \
         --gnomadConstraint ~{AnnotationGnomad} \
         --ENCODEcCRES ~{AnnotationENCODE} \
-        --VEPAnnotationsTable ~{AnnotationVEP}
+        --VAT ~{VATData}
     >>>
    runtime {
         docker: "ghcr.io/aou-multiomics-analysis/susier/postanalysis:main"
@@ -82,22 +79,18 @@ task AnnotateSusie {
 
 workflow AggregateSusieWorkflow {
     input {
-        #Array[File] SusieParquets
         File SusieParquetsFOFN
         Int Memory 
         String OutputPrefix
         String AggregateMode
         Int NumThreads
-
         File GencodeGTF 
         File PlinkAfreq
         File AnnotationPhyloP 
         File AnnotationENCODE 
         File AnnotationFANTOM5 
-        File AnnotationVEP 
         File AnnotationGnomad
-        File AnnotationVEPIndex 
-    
+        File VATData  
     }
     
     call AggregateSusie {
@@ -113,15 +106,13 @@ workflow AggregateSusieWorkflow {
         input:
             SusieTSV = AggregateSusie.MergedSusieTsv,
             GencodeGTF = GencodeGTF,
-            PlinkAfreq = PlinkAfreq,
             OutputPrefix = OutputPrefix,
             Memory = Memory,
             AnnotationPhyloP = AnnotationPhyloP,
             AnnotationENCODE = AnnotationENCODE,
             AnnotationFANTOM5 = AnnotationFANTOM5,
-            AnnotationVEP = AnnotationVEP,
-            AnnotationVEPIndex = AnnotationVEPIndex,
-            AnnotationGnomad = AnnotationGnomad
+            AnnotationGnomad = AnnotationGnomad,
+            VATData = VATData
     } 
 
     output {

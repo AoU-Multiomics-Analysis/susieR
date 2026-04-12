@@ -171,7 +171,7 @@ option_list <- list(
   optparse::make_option(c("--SusieTSV"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--GencodeGTF"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--OutputPrefix"), type="character", default=NULL, metavar = "type"),
-  optparse::make_option(c("--PlinkAfreq"), type="character", default=NULL, metavar = "type"),
+  #optparse::make_option(c("--PlinkAfreq"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--ENCODEcCRES"), type="character", default=NULL, metavar = "type"),
   #optparse::make_option(c("--VEPAnnotationsTable"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--gnomadConstraint"), type="character", default=NULL, metavar = "type"),
@@ -206,7 +206,7 @@ FANTOM5_granges <- load_FANTOM5_data(PathFANTOM5)
 ENCODE_data <- load_ENCODE_data(PathENCODE)
 gnomad_data <- load_constraint_data(PathGnomad) 
 VATData <- load_gvs_VAT_data(PathVAT)
-allele_frequencies <- load_afreq_data(opt$PlinkAfreq)
+#allele_frequencies <- load_afreq_data(opt$PlinkAfreq)
 
 #susie_res <- load_finemapping_data(opt$SusieParquet)
 
@@ -229,20 +229,20 @@ annotated_fm_res <-  fread(PathSusie) %>%
   mutate(group = OutputPrefix) %>%
   mutate(variant = str_remove_all(variant,'chr')) %>% 
   mutate(variant = paste0('chr',variant)) %>% 
-  left_join(allele_frequencies,by = 'variant' ) %>% 
-  mutate(
+  #left_join(allele_frequencies,by = 'variant' ) %>% 
+  #mutate(
 	    #MAF = case_when(ALT_FREQS > .5 ~ 1 -ALT_FREQS,TRUE ~ ALT_FREQS),
   		#posterior_mean = case_when(ALT_FREQS > .5 ~ -posterior_mean,TRUE ~ posterior_mean),
  		#ref = case_when(ALT_FREQS > .5 ~ alt ,TRUE ~ ref),
 		#alt = case_when(ALT_FREQS > .5 ~ ref ,TRUE ~ alt)
-		) %>% 
-  mutate(
-        AF_bin = case_when(
-          MAF  < 0.01 ~ "rare (0.1–1%)",
-          MAF >= 0.01 & MAF < 0.05  ~ "low-freq (1–5%)",
-          MAF >= 0.05 ~ "common (≥5%)"
-        )
-      ) %>% 
+		#) %>% 
+  #mutate(
+  #      AF_bin = case_when(
+  #        MAF  < 0.01 ~ "rare (0.1–1%)",
+  #        MAF >= 0.01 & MAF < 0.05  ~ "low-freq (1–5%)",
+  #        MAF >= 0.05 ~ "common (≥5%)"
+  #      )
+  #    ) %>% 
     mutate(gene_id = str_remove(molecular_trait_id,'.*_'))  %>% 
     left_join(tss_data %>% data.frame() %>% select(-seqnames,-start,-end,-width,-strand) ,by = 'gene_id')  %>% 
     mutate(distTSS = as.numeric(position) - as.numeric(tss),
@@ -263,14 +263,14 @@ full_annotated_data <- annotated_fm_res %>%
 
 message('Cleaning annotated data')
 cleaned_full_annotated_data <- full_annotated_data %>% 
-    mutate(
-     synonymous_variant = ifelse(
+    #mutate(
+    # synonymous_variant = ifelse(
       # check if ANY logical column other than keep is TRUE
-      if_any(where(is.logical) & !matches("^synonymous_variant$"), ~ .x),
-      FALSE,
-      synonymous_variant
-        )
-    ) %>% 
+     # if_any(where(is.logical) & !matches("^synonymous_variant$"), ~ .x),
+     # FALSE,
+     # synonymous_variant
+     #   )
+    #) %>% 
   mutate(Annotation = case_when(dELS == TRUE ~ 'Enhancer', pELS == TRUE ~ 'Enhancer',PLS == TRUE ~ 'Promoter',FANTOM5 == TRUE ~ 'Promoter')) 
 
 

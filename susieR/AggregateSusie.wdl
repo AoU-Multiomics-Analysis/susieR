@@ -84,7 +84,6 @@ workflow AggregateSusieWorkflow {
         String OutputPrefix
         Int NumThreads
         File GencodeGTF 
-        File PlinkAfreq
         File AnnotationPhyloP 
         File AnnotationENCODE 
         File AnnotationFANTOM5 

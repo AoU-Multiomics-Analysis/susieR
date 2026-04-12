@@ -32,6 +32,6 @@ RUN find ${HOME}/.pixi/envs/r-base/bin -name '*bioconductor-*-post-link.sh' | \
     #conda-forge::r-bedr \
     #bioconda::tabix
 
-COPY scripts/*.
+COPY scripts/* .
 
 CMD ["bash"]

@@ -22,7 +22,7 @@ task AggregateSusie{
 
     # Write the new local file paths into filelist.txt
     ls -1 "$(pwd)/localized/"* > filelist.txt
-    Rscript /tmp/MergeSusie.R --FilePaths file_paths.txt  --OutputPrefix ~{OutputPrefix} 
+    Rscript /MergeSusie.R --FilePaths file_paths.txt  --OutputPrefix ~{OutputPrefix} 
     >>>
 
     runtime {
@@ -51,7 +51,7 @@ task AnnotateSusie {
         File VATData
     }
     command <<<
-    Rscript /tmp/AnnotateSusie.R \
+    Rscript /AnnotateSusie.R \
         --OutputPrefix ~{OutputPrefix} \
         --GencodeGTF ~{GencodeGTF} \
         --SusieTSV ~{SusieTSV} \

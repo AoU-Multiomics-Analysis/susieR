@@ -8,6 +8,7 @@ task PrepInputs {
         File PhenotypeBed
         File TensorQTLPermutations
         Int NumPrempt
+        Int WindowSize = 1000000
     }
     command <<<
         echo "Extracting headers from files"
@@ -26,7 +27,7 @@ task PrepInputs {
 
         echo "Subsetting bed file"
         zcat ~{PhenotypeBed} | grep "~{PhenotypeID}" \
-            | awk 'BEGIN{OFS="\t"} {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' \
+            | awk 'BEGIN{OFS="\t"} {$2=$2-~{WindowSize}; $3=$3+~{WindowSize}; if($2<1) $2=1; print}' \
             > feature.bed
         
         #echo $headerBed > temp_header.txt
@@ -79,6 +80,8 @@ workflow susieR_workflow {
         File PhenotypeBed
         Int NumPrempt
         String PhenotypeID
+        Int WindowSize = 1000000
+
     }
 
     call PrepInputs {
@@ -88,7 +91,8 @@ workflow susieR_workflow {
             GenotypeDosages = GenotypeDosages,
             GenotypeDosageIndex = GenotypeDosageIndex,
             PhenotypeBed = PhenotypeBed,
-            NumPrempt = NumPrempt
+            NumPrempt = NumPrempt,
+            WindowSize = WindowSize
     }
    
     #call MergeSusie {

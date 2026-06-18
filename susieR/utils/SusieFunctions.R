@@ -1,3 +1,4 @@
+# build trigger
 filterMAF <- function(genotype_matrix,
                       ancestry_df,
                       MAF_threshold = 0,

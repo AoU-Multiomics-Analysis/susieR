@@ -29,7 +29,7 @@ task AggregateSusie{
     find localized -maxdepth 1 -type f | wc -l
 
     find "$(pwd)/localized" -maxdepth 1 -type f | sort > filelist.txt    
-    Rscript /tmp/MergeSusie.R --FilePaths filelist.txt  --OutputPrefix ~{OutputPrefix} 
+    Rscript /MergeSusie.R --FilePaths filelist.txt  --OutputPrefix ~{OutputPrefix} 
     >>>
 
     runtime {

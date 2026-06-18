@@ -50,6 +50,7 @@ task susieR {
         File SusieParquet = "${OutputPrefix}.parquet"
         File lbfParquet = "${OutputPrefix}.lbf_variable.parquet"
         File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
+        File SusieObject = "${OutputPrefix}_susie.rds"
     }
 }
 
@@ -92,5 +93,6 @@ workflow susieR_workflow {
             File SusieParquet = susieR.SusieParquet
             File SusielbfParquet = susieR.lbfParquet
             File FullSusieParquet = susieR.FullSusieParquet
+            File SusieObject = susieR.SusieObject
         }
 }

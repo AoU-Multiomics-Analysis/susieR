@@ -77,6 +77,7 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
                                                               variant_list =variant_list,
                                                               additional_genotypes = additional_genotypes
                                                               ))
+saveRDS(results,file = paste0(opt$out_prefix,'_susie.rds') )
 
 #Only proceed if the there are more than 0 phenotypes
 message("Number of overall unique group_ids: ", length(unique(phenotype_list$group_id)))

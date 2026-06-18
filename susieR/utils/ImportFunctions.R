@@ -169,6 +169,8 @@ LoadData <- function(opt_list) {
             dplyr::select(-2,-3) %>% 
             tibble::column_to_rownames('variant_id') %>% 
             data.matrix()
+    } else {
+        additional_genotypes <- NULL
     } 
 
     OutList <- list(

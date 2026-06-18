@@ -38,7 +38,7 @@ load_gvs_VAT_data <- function(PathVAT) {
 message('Loading VAT data')
 message(paste0('Using file: ',basename(PathVAT)))
 VariantAnnotations <- fread(PathVAT) %>% 
-       mutate(ID = paste(CHROM,POS,REF,ALT,sep = '_'))
+       mutate(ID = paste(chrom,pos,ref,alt,sep = '_'))
 VariantAnnotations
 }
 

@@ -25,7 +25,8 @@ importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE){
 importQtlmapPermutedPvalues <- function(perm_path){
   tbl = read.table(perm_path, check.names = F, header = T, stringsAsFactors = F) %>%
     dplyr::as_tibble() %>%
-    dplyr::mutate(p_fdr = p.adjust(pval_beta, method = "fdr")) %>%
+    dplyr::mutate(p_fdr = qval) %>% 
+    #dplyr::mutate(p_fdr = p.adjust(pval_beta, method = "fdr")) %>%
     dplyr::mutate(group_id = phenotype_id)
   return(tbl)
 }
@@ -137,6 +138,9 @@ LoadData <- function(opt_list) {
     filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
     phenotype_list = dplyr::semi_join(data.frame(group_id=phenotype_table$phenotype_id,phenotype_id=phenotype_table$phenotype_id) , filtered_list, by = "group_id")
     message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
+    if (nrow(phenotype_list) == 0) {
+        stop('No phenotypes found matching between phenotype table and  ')
+    }
     #Keep only those phenotypes that are present in the expression matrix
     phenotype_list = dplyr::filter(phenotype_list, phenotype_id %in% expression_matrix$phenotype_id)
 

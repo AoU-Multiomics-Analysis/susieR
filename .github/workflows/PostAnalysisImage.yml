@@ -43,7 +43,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}/postanalysis
 
       - name: Build and push docker containers
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: containers/PostAnalysis/Dockerfile

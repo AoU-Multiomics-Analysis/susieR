@@ -14,22 +14,14 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 
 ####### GET PATH TO FUNCTIONS ########
-#FunctionsPathOptList <- list(
-    #optparse::make_option(
-                          #c("--FunctionsPath"),
-                          #type='character',
-                          #default = "/opt/r/lib"
-    #)
-#)
-#FunctionPathOpt <- optparse::parse_args(optparse::OptionParser(option_list=FunctionsPathOptList))
-#FunctionPath <- FunctionPathOpt$FunctionsPath
+FunctionPath <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
 
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS############ 
-source("/opt/r/lib/ImportFunctions.R")
-source("/opt/r/lib/InitFunctions.R")
-source("/opt/r/lib/SusieFunctions.R")
-source("/opt/r/lib/OptParser.R")
-source("/opt/r/lib/MemoryHelpers.R")
+source(file.path(FunctionPath, "ImportFunctions.R"))
+source(file.path(FunctionPath, "InitFunctions.R"))
+source(file.path(FunctionPath, "SusieFunctions.R"))
+source(file.path(FunctionPath, "OptParser.R"))
+source(file.path(FunctionPath, "MemoryHelpers.R"))
 
 message('Functions Loaded')
 
@@ -199,5 +191,4 @@ arrow::write_parquet(variant_df, paste0(opt$out_prefix, ".full_susie.parquet"))
 #arrow::write_parquet(in_cs_variant_df_filt, paste0(opt$out_prefix, ".parquet"))
 #arrow::write_parquet(lbf_df_filt, paste0(opt$out_prefix, ".lbf_variable.parquet"))
 #arrow::write_parquet(variant_df_filt, paste0(opt$out_prefix, ".full_susie.parquet"))
-
 

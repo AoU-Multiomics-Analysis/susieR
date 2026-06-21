@@ -14,8 +14,9 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 
 
-source('/opt/r/lib/SusieCVPrepCovars.R')
-source('/opt/r/lib/ImportFunctions.R')
+FunctionPath <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
+source(file.path(FunctionPath, "SusieCVPrepCovars.R"))
+source(file.path(FunctionPath, "ImportFunctions.R"))
 
 
 ######### LOAD DATA ################

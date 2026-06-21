@@ -22,14 +22,14 @@ if (!requireNamespace("Rfast", quietly = TRUE)) {
 suppressPackageStartupMessages(library("Rfast"))
 #suppressPackageStartupMessages(library("qs2"))
 
-FunctionPath <- '/opt/r/lib'
+FunctionPath <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS########## 
-source(paste0(FunctionPath,'/ImportFunctions.R'))
-source(paste0(FunctionPath,'/InitFunctions.R'))
-source(paste0(FunctionPath,'/SusieCVFunctions.R'))
-source(paste0(FunctionPath,'/SusieFunctions.R'))
-source(paste0(FunctionPath,'/OptParser.R'))
-source(paste0(FunctionPath,'/MemoryHelpers.R'))
+source(file.path(FunctionPath, "ImportFunctions.R"))
+source(file.path(FunctionPath, "InitFunctions.R"))
+source(file.path(FunctionPath, "SusieCVFunctions.R"))
+source(file.path(FunctionPath, "SusieFunctions.R"))
+source(file.path(FunctionPath, "OptParser.R"))
+source(file.path(FunctionPath, "MemoryHelpers.R"))
 
 message('Functions Loaded')
 
@@ -152,5 +152,4 @@ Predictions %>% mutate(Gene = output_prefix) %>% write_tsv(OutputFile)
 #FullDataSummary <- broom::glance(lm(Observed ~ Predicted,data =FullSusieHoldoutData))%>% mutate(AF_threshold = 0)
 #Out <- bind_rows(FullDataSummary,OnePercentSummary) %>% mutate(Fold = k,gene = output_prefix)
 #R2_data <- bind_rows(Out,R2_data) 
-
 

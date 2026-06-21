@@ -6,7 +6,7 @@ filterMAF <- function(genotype_matrix,
     # If no variant list is specified then use 
     # genotype data to compute MAFs for each variant 
     # for each ancestry and filter based on this 
-    if (is.null(variant_list) & MAF_threshold > 0 & !is.null(ancestry_df))  {
+    if (is.null(variant_list) && MAF_threshold > 0 && !is.null(ancestry_df))  {
     message('Filtering genotype matrix using MAF from dataset per ancestry')
     MAF_calculations_table <- genotype_matrix %>% 
         t() %>% 
@@ -305,16 +305,16 @@ extractResults <- function(susie_object){
   
   #Extract matrices
   alpha_mat = t(susie_object$alpha)
-  colnames(alpha_mat) = paste0("alpha", seq(ncol(alpha_mat)))
+  colnames(alpha_mat) = paste0("alpha", seq_len(ncol(alpha_mat)))
   
   mu_mat = t(susie_object$mu)
-  colnames(mu_mat) = paste0("mu_", seq(ncol(mu_mat)))
+  colnames(mu_mat) = paste0("mu_", seq_len(ncol(mu_mat)))
   
   mu2_mat = t(susie_object$mu2)
-  colnames(mu2_mat) = paste0("mu2_", seq(ncol(mu2_mat)))
+  colnames(mu2_mat) = paste0("mu2_", seq_len(ncol(mu2_mat)))
   
   lbf_variable_mat = t(susie_object$lbf_variable)
-  colnames(lbf_variable_mat) = paste0("lbf_variable", seq(ncol(lbf_variable_mat)))
+  colnames(lbf_variable_mat) = paste0("lbf_variable", seq_len(ncol(lbf_variable_mat)))
   posterior_df = dplyr::tibble(variant_id = rownames(alpha_mat), 
                                #pip = susie_object$pip,
                                z = susie_object$z[,1],
@@ -325,7 +325,7 @@ extractResults <- function(susie_object){
   lbf_df = dplyr::tibble(variant_id = rownames(lbf_variable_mat)) %>%
     dplyr::bind_cols(dplyr::as_tibble(lbf_variable_mat))
 
-  if(nrow(df) > 0 & nrow(purity_df) > 0 & ncol(lbf_df) > 10){ #ncol(lbf_df) <= 10 only if the number of variants in the region is < 10
+  if(nrow(df) > 0 && nrow(purity_df) > 0 && ncol(lbf_df) > 10){ #ncol(lbf_df) <= 10 only if the number of variants in the region is < 10
     cs_df = purity_df
     variant_df = dplyr::left_join(posterior_df, df, by = "variant_id") %>%
       dplyr::left_join(cs_df, by = "cs_id")
@@ -385,7 +385,7 @@ make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_
     edge_list <- olaps %>% dplyr::select(cs_mol_1, cs_mol_2) %>% BiocGenerics::unique() %>% base::as.matrix()
     
     # make the graph of connected components
-    g <- igraph::graph_from_edgelist(edge_list, directed = F)
+    g <- igraph::graph_from_edgelist(edge_list, directed = FALSE)
     g_cc <- igraph::components(g)
     
     # turn connected components graph into data frame

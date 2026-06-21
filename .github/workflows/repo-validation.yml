@@ -1,0 +1,43 @@
+name: Repo validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/repo-validation.yml"
+      - ".github/workflows/*.yml"
+      - ".dockstore.yml"
+      - "tools/validate_repo.sh"
+      - "workflows/**/*.wdl"
+      - "R/scripts/**"
+      - "R/utils/**"
+      - "examples/inputs/*.json"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/repo-validation.yml"
+      - ".github/workflows/*.yml"
+      - ".dockstore.yml"
+      - "tools/validate_repo.sh"
+      - "workflows/**/*.wdl"
+      - "R/scripts/**"
+      - "R/utils/**"
+      - "examples/inputs/*.json"
+
+jobs:
+  validate-repo:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install miniwdl
+        run: pipx install miniwdl
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Run repo validation
+        run: tools/validate_repo.sh

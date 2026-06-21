@@ -1,6 +1,8 @@
 # susieR WDL
 
 [![WDL validation](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/wdl-validation.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/wdl-validation.yml)
+[![Repo validation](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/repo-validation.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/repo-validation.yml)
+[![R lint](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/r-lint.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/r-lint.yml)
 [![Docker Image CI](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/docker-image.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/docker-image.yml)
 [![Post-analysis Docker Image CI](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/PostAnalysisImage.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/PostAnalysisImage.yml)
 

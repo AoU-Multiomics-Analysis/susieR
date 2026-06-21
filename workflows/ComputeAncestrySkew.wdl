@@ -124,9 +124,23 @@ task GetAncestrySkew {
     }
     String shard_base = basename(AnnotationData, ".tsv")
 
-    command <<< 
+    command <<<
+    set -euo pipefail
 
-    Rscript /ComputeAncestrySkew.R \
+    SCRIPT_PATH=""
+    for candidate in /opt/r/scripts/ComputeAncestrySkew.R /tmp/ComputeAncestrySkew.R /ComputeAncestrySkew.R; do
+        if [ -f "$candidate" ]; then
+            SCRIPT_PATH="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$SCRIPT_PATH" ]; then
+        echo "Could not find ComputeAncestrySkew.R in /opt/r/scripts, /tmp, or /" >&2
+        exit 1
+    fi
+
+    Rscript "$SCRIPT_PATH" \
        --AnnotationData ~{AnnotationData} \
        --OutputPrefix ~{shard_base} \
        --PipThreshold ~{PipThreshold} \

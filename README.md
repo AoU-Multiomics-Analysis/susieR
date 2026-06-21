@@ -8,12 +8,13 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 
 ```
 .
-├── scripts/                    # Standalone R scripts
-│   ├── susie.R                 # Main fine-mapping script
-│   ├── ComputeR2Susie.R        # Cross-validation R² computation
-│   ├── PrepSusieCVPCs.R        # Prepare cross-validation PCs/covariates
-│   └── merge_susie.R           # Merge sharded susie output files
 ├── R/
+│   ├── scripts/                # R workflow entrypoint scripts copied into Docker images
+│   │   ├── susie.R             # Main fine-mapping script
+│   │   ├── ComputeR2Susie.R    # Cross-validation R² computation
+│   │   ├── PrepSusieCVPCs.R    # Prepare cross-validation PCs/covariates
+│   │   ├── MergeSusie.R        # Merge sharded susie output files
+│   │   └── AnnotateSusie.R     # Annotate merged Susie results
 │   └── utils/                  # R utility functions used by the scripts
 ├── workflows/                  # WDL workflows
 │   ├── susieR.wdl              # Full pipeline: input prep + fine-mapping
@@ -23,9 +24,12 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 │   ├── AggregateSusie.wdl      # Aggregate + annotate + ancestry skew workflow
 │   ├── AggregateSusieTask.wdl  # Aggregate Susie outputs only
 │   └── AnnotateSusie.wdl       # Annotate merged Susie results only
-├── envs/                       # Docker image definitions
+├── containers/                 # Docker image definitions
 │   ├── SusieR/Dockerfile       # Fine-mapping image
 │   └── PostAnalysis/Dockerfile # Post-analysis image
+├── examples/inputs/            # Template WDL input JSONs
+├── docs/                       # Additional workflow and Docker documentation
+├── tools/                      # Repository maintenance helpers
 └── .github/workflows/
     └── docker-image.yml        # CI/CD: build and push Docker image
 ```
@@ -44,7 +48,7 @@ Ancestry skew changes should be made in the [AncestrySkew](https://github.com/Ao
 
 ## Scripts
 
-### `scripts/susie.R`
+### `R/scripts/susie.R`
 
 The main fine-mapping script. It loads genotype dosages, expression/phenotype data, covariates, and a list of phenotypes to fine-map, then runs SusieR on each phenotype in the provided cis window. Results are written to three Parquet files:
 
@@ -69,7 +73,7 @@ The main fine-mapping script. It loads genotype dosages, expression/phenotype da
 
 ---
 
-### `scripts/ComputeR2Susie.R`
+### `R/scripts/ComputeR2Susie.R`
 
 Runs cross-validation (CV) to evaluate fine-mapping predictive performance (R²). For a given gene/phenotype, it runs SusieR on each CV fold, generates predicted vs. observed expression values, and outputs a TSV of predictions. Two runs are performed per fold: one using all variants and one restricted to variants passing a hardcoded 1% allele-frequency filter applied via `filterMAF()` (optionally further restricted by `VariantList`).
 
@@ -79,7 +83,7 @@ Runs cross-validation (CV) to evaluate fine-mapping predictive performance (R²)
 
 ---
 
-### `scripts/PrepSusieCVPCs.R`
+### `R/scripts/PrepSusieCVPCs.R`
 
 Prepares the cross-validation metadata and principal components needed by `ComputeR2Susie.R`. It:
 
@@ -91,7 +95,7 @@ Prepares the cross-validation metadata and principal components needed by `Compu
 
 ---
 
-### `scripts/merge_susie.R`
+### `R/scripts/MergeSusie.R`
 
 Merges multiple sharded SusieR output Parquet files (e.g., from scatter-gather workflows) into a single combined file. Accepts a text file listing paths to all shards and outputs a merged Parquet and a gzipped TSV.
 
@@ -129,7 +133,6 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `susie_rscript` | File | Path to the `susie.R` script |
 | `memory` | Int | Memory (GB) for the fine-mapping task |
 | `NumPrempt` | Int | Number of preemptible retries |
-| `OutputPrefix` | String | Prefix for merged output files |
 | `MAF` | Float | Minor allele frequency cutoff (required by the WDL; pass `0` to include all variants) |
 
 **Outputs:**
@@ -197,6 +200,10 @@ The post-fine-mapping workflows are split into standalone WDLs so each step can 
 
 | WDL | Workflow | Purpose |
 |---|---|---|
+| `workflows/susieR.wdl` | `SusieRWorkflow` | Prepares inputs and runs fine-mapping. |
+| `workflows/susieRonly.wdl` | `SusieROnlyWorkflow` | Runs fine-mapping on already-prepared inputs. |
+| `workflows/prepInputsSusieR.wdl` | `PrepSusieRWorkflow` | Subsets inputs around a phenotype. |
+| `workflows/ComputeR2Susie.wdl` | `ComputeR2SusieWorkflow` | Runs cross-validation R² evaluation. |
 | `workflows/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Localizes sharded Susie Parquet outputs from a FOFN and merges them into one Parquet plus one gzipped TSV. |
 | `workflows/AnnotateSusie.wdl` | `AnnotateSusieWorkflow` | Annotates an existing merged Susie TSV with GENCODE, ENCODE, FANTOM5, gnomAD constraint, phyloP, and VAT data. |
 | `workflows/AggregateSusie.wdl` | `AggregateSusieWorkflow` | Runs aggregate, annotate, and ancestry-skew analysis together by importing the two standalone Susie WDLs plus the AncestrySkew workflow. |
@@ -245,10 +252,12 @@ Automatically builds and pushes Docker images to the GitHub Container Registry (
 
 | Workflow | Dockerfile | Image | Rebuilds when |
 |---|---|---|---|
-| `.github/workflows/docker-image.yml` | `envs/SusieR/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier` | fine-mapping image dependencies, `scripts/**`, or `R/utils/**` change |
-| `.github/workflows/PostAnalysisImage.yml` | `envs/PostAnalysis/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier/postanalysis` | post-analysis image dependencies, `scripts/AnnotateSusie.R`, or `scripts/MergeSusie.R` change |
+| `.github/workflows/docker-image.yml` | `containers/SusieR/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier` | fine-mapping image dependencies, `R/scripts/**`, or `R/utils/**` change |
+| `.github/workflows/PostAnalysisImage.yml` | `containers/PostAnalysis/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier/postanalysis` | post-analysis image dependencies, `R/scripts/AnnotateSusie.R`, or `R/scripts/MergeSusie.R` change |
 
 The fine-mapping image copies the shared helper code from `R/utils/` into `/opt/r/lib`. The post-analysis image only copies `AnnotateSusie.R` and `MergeSusie.R`, which are the scripts called by the aggregate and annotate WDL tasks.
+
+See `docs/workflows.md` for workflow entry points and `docs/docker.md` for Docker image details. Template inputs are available in `examples/inputs/`.
 
 ---
 

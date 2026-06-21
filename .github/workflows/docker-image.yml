@@ -6,15 +6,15 @@ on:
     branches: [ "main" ]
     paths:
       - ".github/workflows/docker-image.yml"
-      - "envs/SusieR/Dockerfile"
-      - "scripts/**"
+      - "containers/SusieR/Dockerfile"
+      - "R/scripts/**"
       - "R/utils/**"
   pull_request:
     branches: [ "main" ]
     paths:
       - ".github/workflows/docker-image.yml"
-      - "envs/SusieR/Dockerfile"
-      - "scripts/**"
+      - "containers/SusieR/Dockerfile"
+      - "R/scripts/**"
       - "R/utils/**"
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: envs/SusieR/Dockerfile
+          file: containers/SusieR/Dockerfile
           push: true
           tags: |
             ${{ steps.meta.outputs.tags }}

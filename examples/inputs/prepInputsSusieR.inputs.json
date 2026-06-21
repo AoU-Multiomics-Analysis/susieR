@@ -1,0 +1,9 @@
+{
+  "PrepSusieRWorkflow.GenotypeDosages": "gs://bucket/path/genotypes.dose.tsv.gz",
+  "PrepSusieRWorkflow.GenotypeDosageIndex": "gs://bucket/path/genotypes.dose.tsv.gz.tbi",
+  "PrepSusieRWorkflow.TensorQTLPermutations": "gs://bucket/path/tensorqtl.permutations.txt.gz",
+  "PrepSusieRWorkflow.PhenotypeBed": "gs://bucket/path/phenotypes.bed.gz",
+  "PrepSusieRWorkflow.NumPrempt": 2,
+  "PrepSusieRWorkflow.PhenotypeID": "phenotype_id",
+  "PrepSusieRWorkflow.WindowSize": 1000000
+}

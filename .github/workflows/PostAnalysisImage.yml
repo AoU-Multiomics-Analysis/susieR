@@ -5,16 +5,16 @@ on:
     branches: [ "main" ]
     paths:
       - ".github/workflows/PostAnalysisImage.yml"
-      - "envs/PostAnalysis/Dockerfile"
-      - "scripts/AnnotateSusie.R"
-      - "scripts/MergeSusie.R"
+      - "containers/PostAnalysis/Dockerfile"
+      - "R/scripts/AnnotateSusie.R"
+      - "R/scripts/MergeSusie.R"
   pull_request:
     branches: [ "main" ]
     paths:
       - ".github/workflows/PostAnalysisImage.yml"
-      - "envs/PostAnalysis/Dockerfile"
-      - "scripts/AnnotateSusie.R"
-      - "scripts/MergeSusie.R"
+      - "containers/PostAnalysis/Dockerfile"
+      - "R/scripts/AnnotateSusie.R"
+      - "R/scripts/MergeSusie.R"
 
 jobs:
   build_and_push:
@@ -44,7 +44,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: envs/PostAnalysis/Dockerfile
+          file: containers/PostAnalysis/Dockerfile
           push: true
           tags: |
             ${{ steps.meta.outputs.tags }}

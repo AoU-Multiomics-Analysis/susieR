@@ -1,0 +1,15 @@
+{
+  "AggregateSusieWorkflow.SusieParquetsFOFN": "gs://bucket/path/susie_parquets.fofn",
+  "AggregateSusieWorkflow.Memory": 16,
+  "AggregateSusieWorkflow.OutputPrefix": "output_prefix",
+  "AggregateSusieWorkflow.NumThreads": 4,
+  "AggregateSusieWorkflow.GencodeGTF": "gs://bucket/path/gencode.gtf.gz",
+  "AggregateSusieWorkflow.AnnotationPhyloP": "gs://bucket/path/phylop.bw",
+  "AggregateSusieWorkflow.AnnotationENCODE": "gs://bucket/path/encode_ccres.bed.gz",
+  "AggregateSusieWorkflow.AnnotationFANTOM5": "gs://bucket/path/fantom5.bed.gz",
+  "AggregateSusieWorkflow.AnnotationGnomad": "gs://bucket/path/gnomad_constraint.tsv",
+  "AggregateSusieWorkflow.VATData": "gs://bucket/path/vat.tsv.gz",
+  "AggregateSusieWorkflow.AncestrySkewVariantsPerShard": 10000,
+  "AggregateSusieWorkflow.AncestrySkewPipThreshold": 0.9,
+  "AggregateSusieWorkflow.AncestrySkewAdmixedSubpops": "oth"
+}

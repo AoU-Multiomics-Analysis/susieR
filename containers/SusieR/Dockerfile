@@ -41,7 +41,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
 ENV SUSIER_FUNCTIONS_PATH=/opt/r/lib
 COPY R/utils/*  /opt/r/lib/
-COPY scripts/*  . 
+COPY R/scripts/*  .
 
 
 

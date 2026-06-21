@@ -51,7 +51,7 @@ task ComputeR2 {
         }
 }
 
-workflow susieR_workflow {
+workflow ComputeR2SusieWorkflow {
     input {
         File GenotypeDosages
         File GenotypeDosageIndex

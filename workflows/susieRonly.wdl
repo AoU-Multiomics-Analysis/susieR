@@ -55,7 +55,7 @@ task susieR {
 }
 
 
-workflow susieR_workflow {
+workflow SusieROnlyWorkflow {
     input {
         File GenotypeDosages
         File GenotypeDosageIndex

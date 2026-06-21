@@ -1,0 +1,11 @@
+{
+  "AnnotateSusieWorkflow.SusieTSV": "gs://bucket/path/output_prefix_SusieMerged.tsv.gz",
+  "AnnotateSusieWorkflow.GencodeGTF": "gs://bucket/path/gencode.gtf.gz",
+  "AnnotateSusieWorkflow.OutputPrefix": "output_prefix",
+  "AnnotateSusieWorkflow.Memory": 16,
+  "AnnotateSusieWorkflow.AnnotationENCODE": "gs://bucket/path/encode_ccres.bed.gz",
+  "AnnotateSusieWorkflow.AnnotationFANTOM5": "gs://bucket/path/fantom5.bed.gz",
+  "AnnotateSusieWorkflow.AnnotationGnomad": "gs://bucket/path/gnomad_constraint.tsv",
+  "AnnotateSusieWorkflow.AnnotationPhyloP": "gs://bucket/path/phylop.bw",
+  "AnnotateSusieWorkflow.VATData": "gs://bucket/path/vat.tsv.gz"
+}

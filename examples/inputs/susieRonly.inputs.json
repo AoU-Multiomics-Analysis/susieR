@@ -1,0 +1,16 @@
+{
+  "SusieROnlyWorkflow.GenotypeDosages": "gs://bucket/path/genotypes.dose.tsv.gz",
+  "SusieROnlyWorkflow.GenotypeDosageIndex": "gs://bucket/path/genotypes.dose.tsv.gz.tbi",
+  "SusieROnlyWorkflow.QTLCovariates": "gs://bucket/path/covariates.tsv",
+  "SusieROnlyWorkflow.TensorQTLPermutations": "gs://bucket/path/tensorqtl.permutations.txt",
+  "SusieROnlyWorkflow.SampleList": "gs://bucket/path/sample_list.tsv",
+  "SusieROnlyWorkflow.PhenotypeBed": "gs://bucket/path/phenotypes.bed.gz",
+  "SusieROnlyWorkflow.CisDistance": 1000000,
+  "SusieROnlyWorkflow.memory": 16,
+  "SusieROnlyWorkflow.NumPrempt": 2,
+  "SusieROnlyWorkflow.OutputPrefix": "phenotype_id",
+  "SusieROnlyWorkflow.MAF": 0.01,
+  "SusieROnlyWorkflow.VariantList": "gs://bucket/path/variants.txt",
+  "SusieROnlyWorkflow.AncestryFile": "gs://bucket/path/ancestry.tsv",
+  "SusieROnlyWorkflow.AdditionalGenotypesBed": "gs://bucket/path/additional_genotypes.bed"
+}

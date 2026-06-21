@@ -1,0 +1,6 @@
+{
+  "AggregateSusieTaskWorkflow.SusieParquetsFOFN": "gs://bucket/path/susie_parquets.fofn",
+  "AggregateSusieTaskWorkflow.Memory": 16,
+  "AggregateSusieTaskWorkflow.OutputPrefix": "output_prefix",
+  "AggregateSusieTaskWorkflow.NumThreads": 4
+}

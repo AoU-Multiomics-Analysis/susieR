@@ -1,0 +1,34 @@
+name: WDL validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/wdl-validation.yml"
+      - "susieR/**/*.wdl"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/wdl-validation.yml"
+      - "susieR/**/*.wdl"
+
+jobs:
+  miniwdl-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install miniwdl
+        run: pipx install miniwdl
+
+      - name: Check WDLs
+        working-directory: susieR
+        run: |
+          miniwdl check AggregateSusie.wdl
+          miniwdl check ComputeR2Susie.wdl
+          miniwdl check prepInputsSusieR.wdl
+          miniwdl check susieR.wdl
+          miniwdl check susieRonly.wdl

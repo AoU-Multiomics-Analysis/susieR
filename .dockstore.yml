@@ -15,4 +15,9 @@ workflows:
   - subclass: WDL 
     primaryDescriptorPath: /susieR/AggregateSusie.wdl
     name: "AggregateSusie"
-
+  - subclass: WDL
+    primaryDescriptorPath: /susieR/AggregateSusieTask.wdl
+    name: "AggregateSusieTask"
+  - subclass: WDL
+    primaryDescriptorPath: /susieR/AnnotateSusie.wdl
+    name: "AnnotateSusie"

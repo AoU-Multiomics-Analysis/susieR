@@ -42,6 +42,60 @@ VariantAnnotations <- fread(PathVAT) %>%
 VariantAnnotations
 }
 
+convert_gvs_af_to_maf <- function(VariantAnnotations) {
+message('Converting GVS allele frequencies to MAF')
+
+gvs_subpops <- c('afr','amr','eas','eur','mid','sas','oth')
+gvs_af_cols <- c('gvs_all_af',paste0('gvs_',gvs_subpops,'_af'),'gvs_max_af')
+gvs_count_cols <- c(
+    'gvs_all_ac','gvs_all_an','gvs_max_ac','gvs_max_an',
+    paste0('gvs_',gvs_subpops,'_ac'),
+    paste0('gvs_',gvs_subpops,'_an')
+)
+
+VariantAnnotations <- VariantAnnotations %>%
+    mutate(across(any_of(c(gvs_af_cols,gvs_count_cols)), as.numeric)) %>%
+    mutate(across(any_of(gvs_af_cols), ~case_when(
+        is.na(.x) ~ NA_real_,
+        .x > 0.5 ~ 1 - .x,
+        TRUE ~ .x
+    )))
+
+subpop_af_cols <- paste0('gvs_',gvs_subpops,'_af')
+present_subpop_af_cols <- subpop_af_cols[subpop_af_cols %in% names(VariantAnnotations)]
+
+if (length(present_subpop_af_cols) == 0) {
+    return(VariantAnnotations)
+}
+
+subpop_af_matrix <- as.matrix(VariantAnnotations[present_subpop_af_cols])
+all_missing_af <- rowSums(!is.na(subpop_af_matrix)) == 0
+subpop_af_matrix[is.na(subpop_af_matrix)] <- -Inf
+max_af_index <- max.col(subpop_af_matrix,ties.method = 'first')
+row_index <- seq_len(nrow(VariantAnnotations))
+max_subpop <- str_remove_all(present_subpop_af_cols[max_af_index],'^gvs_|_af$')
+
+VariantAnnotations$gvs_max_subpop <- ifelse(all_missing_af,NA_character_,max_subpop)
+VariantAnnotations$gvs_max_af <- ifelse(all_missing_af,NA_real_,subpop_af_matrix[cbind(row_index,max_af_index)])
+VariantAnnotations$gvs_max_ac <- NA_real_
+VariantAnnotations$gvs_max_an <- NA_real_
+
+for (subpop in unique(max_subpop[!all_missing_af])) {
+    subpop_rows <- !all_missing_af & max_subpop == subpop
+    ac_col <- paste0('gvs_',subpop,'_ac')
+    an_col <- paste0('gvs_',subpop,'_an')
+
+    if (ac_col %in% names(VariantAnnotations)) {
+        VariantAnnotations$gvs_max_ac[subpop_rows] <- VariantAnnotations[[ac_col]][subpop_rows]
+    }
+    if (an_col %in% names(VariantAnnotations)) {
+        VariantAnnotations$gvs_max_an[subpop_rows] <- VariantAnnotations[[an_col]][subpop_rows]
+    }
+}
+
+VariantAnnotations
+}
+
 
 # load plink allele frequency data
 load_afreq_data <- function(afreq_path){
@@ -262,6 +316,7 @@ full_annotated_data <- annotated_fm_res %>%
             query_bigwig(PathPhyloP) %>% 
             left_join(gnomad_data,by = 'gene_id') %>% 
             left_join(VATData,by = c('variant' = 'ID')) %>% 
+            convert_gvs_af_to_maf() %>%
             dplyr::select(-drop_columns) %>% 
             dplyr::rename('ref' = 'ref.x','alt' = 'alt.x','ENCODE_ID_1' = 'V4','ENCODE_ID_2' = 'V5') 
 

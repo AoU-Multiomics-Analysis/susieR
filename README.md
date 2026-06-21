@@ -18,6 +18,9 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 │   ├── susieRonly.wdl          # Fine-mapping only (no input prep)
 │   ├── prepInputsSusieR.wdl    # Input preparation only
 │   ├── ComputeR2Susie.wdl      # Cross-validation R² workflow
+│   ├── AggregateSusie.wdl      # Aggregate + annotate + ancestry skew workflow
+│   ├── AggregateSusieTask.wdl  # Aggregate Susie outputs only
+│   ├── AnnotateSusie.wdl       # Annotate merged Susie results only
 │   ├── Dockerfile              # Docker image definition
 │   └── utils/                  # R utility functions used by the scripts
 └── .github/workflows/
@@ -182,6 +185,52 @@ Runs the `ComputeR2Susie.R` script in a WDL workflow to evaluate fine-mapping pr
 | `VariantList` | File | Variants to include in the 1% AF threshold analysis |
 
 **Output:** `<PhenotypeID>_SusiePredictions.tsv` — per-fold predicted and observed expression values.
+
+---
+
+### Aggregate and Annotation Workflows
+
+The post-fine-mapping workflows are split into standalone WDLs so each step can be launched independently or as one combined workflow through Dockstore/Terra.
+
+| WDL | Workflow | Purpose |
+|---|---|---|
+| `susieR/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Localizes sharded Susie Parquet outputs from a FOFN and merges them into one Parquet plus one gzipped TSV. |
+| `susieR/AnnotateSusie.wdl` | `AnnotateSusieWorkflow` | Annotates an existing merged Susie TSV with GENCODE, ENCODE, FANTOM5, gnomAD constraint, phyloP, and VAT data. |
+| `susieR/AggregateSusie.wdl` | `AggregateSusieWorkflow` | Runs aggregate, annotate, and ancestry-skew analysis together by importing the two standalone Susie WDLs plus the AncestrySkew workflow. |
+
+**Aggregate-only inputs (`AggregateSusieTask.wdl`):**
+
+| Input | Type | Description |
+|---|---|---|
+| `SusieParquetsFOFN` | File | Text file listing Susie Parquet shard paths to merge |
+| `OutputPrefix` | String | Prefix for merged output files |
+| `Memory` | Int | Memory (GB) for the aggregate task |
+| `NumThreads` | Int | CPU threads for the aggregate task |
+
+**Aggregate-only outputs:**
+
+| Output | Description |
+|---|---|
+| `MergedSusieParquet` | `<OutputPrefix>_SusieMerged.parquet` |
+| `MergedSusieTsv` | `<OutputPrefix>_SusieMerged.tsv.gz` |
+
+**Annotate-only inputs (`AnnotateSusie.wdl`):**
+
+| Input | Type | Description |
+|---|---|---|
+| `SusieTSV` | File | Merged Susie TSV, usually from `AggregateSusieTaskWorkflow.MergedSusieTsv` |
+| `GencodeGTF` | File | GENCODE GTF annotation file |
+| `AnnotationENCODE` | File | ENCODE cCRE annotation file |
+| `AnnotationFANTOM5` | File | FANTOM5 annotation file |
+| `AnnotationGnomad` | File | gnomAD constraint annotation file |
+| `AnnotationPhyloP` | File | phyloP bigWig annotation file |
+| `VATData` | File | VAT annotation data |
+| `OutputPrefix` | String | Prefix for annotated output |
+| `Memory` | Int | Memory (GB) for the annotation task |
+
+**Annotate-only output:** `AnnotatedSusieTsv`, written as `<OutputPrefix>_SusieMerged.annotated.tsv`.
+
+The combined `AggregateSusieWorkflow` keeps the same aggregate and annotation inputs, adds optional ancestry-skew controls (`AncestrySkewVariantsPerShard`, `AncestrySkewPipThreshold`, and `AncestrySkewAdmixedSubpops`), and returns both the ancestry-skew annotated TSV and the annotation-only TSV.
 
 ---
 

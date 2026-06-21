@@ -1,6 +1,6 @@
 version 1.0
 
-import "ComputeAncestrySkew.wdl" as AncestrySkew
+import "../dependencies/AncestrySkew/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
 
 
 

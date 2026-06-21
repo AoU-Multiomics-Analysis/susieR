@@ -1,5 +1,9 @@
 # susieR WDL
 
+[![WDL validation](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/wdl-validation.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/wdl-validation.yml)
+[![Docker Image CI](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/docker-image.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/docker-image.yml)
+[![Post-analysis Docker Image CI](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/PostAnalysisImage.yml/badge.svg)](https://github.com/AoU-Multiomics-Analysis/susieR/actions/workflows/PostAnalysisImage.yml)
+
 ## Overview
 
 This repository provides WDL workflows and R scripts for running [SusieR](https://github.com/stephenslab/susieR) fine-mapping on Terra. The workflows are designed to work with data tables on Terra and perform Bayesian fine-mapping of QTL signals identified by tensorQTL.
@@ -257,7 +261,7 @@ Automatically builds and pushes Docker images to the GitHub Container Registry (
 
 The fine-mapping image copies the shared helper code from `R/utils/` into `/opt/r/lib`. The post-analysis image only copies `AnnotateSusie.R` and `MergeSusie.R`, which are the scripts called by the aggregate and annotate WDL tasks.
 
-See `docs/workflows.md` for workflow entry points and `docs/docker.md` for Docker image details. Template inputs are available in `examples/inputs/`.
+See `docs/README.md` for the documentation index, including workflow entry points and Docker image details. Template inputs are available in `examples/inputs/`.
 
 ---
 

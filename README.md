@@ -19,8 +19,6 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 │   ├── prepInputsSusieR.wdl    # Input preparation only
 │   ├── ComputeR2Susie.wdl      # Cross-validation R² workflow
 │   ├── Dockerfile              # Docker image definition
-│   ├── dependencies/
-│   │   └── AncestrySkew/        # Git submodule with the canonical ancestry skew workflow
 │   └── utils/                  # R utility functions used by the scripts
 └── .github/workflows/
     └── docker-image.yml        # CI/CD: build and push Docker image
@@ -28,19 +26,13 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 
 ### Dependencies
 
-`AggregateSusie.wdl` imports the canonical ancestry skew workflow from the `susieR/dependencies/AncestrySkew` git submodule:
+`AggregateSusie.wdl` imports the canonical ancestry skew workflow directly from the AncestrySkew repository:
 
 ```wdl
-import "dependencies/AncestrySkew/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
+import "https://raw.githubusercontent.com/AoU-Multiomics-Analysis/AncestrySkew/main/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
 ```
 
-Clone this repository with submodules, or initialize them after cloning:
-
-```bash
-git submodule update --init --recursive
-```
-
-Ancestry skew changes should be made in the [AncestrySkew](https://github.com/AoU-Multiomics-Analysis/AncestrySkew) repository. susieR then consumes a pinned AncestrySkew commit via the submodule instead of carrying duplicate copies of `ComputeAncestrySkew.wdl` and `ComputeAncestrySkew.R`.
+Ancestry skew changes should be made in the [AncestrySkew](https://github.com/AoU-Multiomics-Analysis/AncestrySkew) repository. susieR imports that WDL over HTTPS instead of carrying duplicate copies of `ComputeAncestrySkew.wdl` and `ComputeAncestrySkew.R`. This import style works in Terra because Terra resolves WDL imports through `raw.githubusercontent.com`, while GitHub submodule contents are not exposed at raw paths.
 
 ---
 
@@ -227,4 +219,3 @@ The Docker image contains all R dependencies and utility scripts required by the
 | `MAF` | Float; MAF cutoff for variants. Requires `AncestryMetadata`. MAF is calculated per population and a variant must pass the cutoff in at least one population. Note: individuals not assigned to any population are excluded from the MAF calculation. |
 | `AncestryMetadata` | Ancestry metadata file; requires a column `ancestry_pred_oth` for population assignment |
 | `VariantList` | Single-column file of variants formatted as `chr_pos_ref_alt`; restricts analysis to listed variants. Takes precedence over `MAF` filtering. |
-

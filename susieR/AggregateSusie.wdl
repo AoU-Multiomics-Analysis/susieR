@@ -1,6 +1,6 @@
 version 1.0
 
-import "dependencies/AncestrySkew/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
+import "https://raw.githubusercontent.com/AoU-Multiomics-Analysis/AncestrySkew/main/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
 
 
 

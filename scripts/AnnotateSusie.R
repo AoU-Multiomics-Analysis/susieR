@@ -307,7 +307,9 @@ annotated_fm_res <-  fread(PathSusie) %>%
     mutate(gene_id = str_remove(molecular_trait_id,'\\..*')) 
 
 message('Annotating fine-mapping data with external data sources')
-drop_columns  <- c('alleles','locus','chrom','pos','ref.y','alt.y','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
+#drop_columns  <- c('alleles','locus','chrom','pos','ref.y','alt.y','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
+drop_columns  <- c('alleles','locus','chrom','pos','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
+
 
 full_annotated_data <- annotated_fm_res %>%
             query_grange_data(ENCODE_data) %>% 

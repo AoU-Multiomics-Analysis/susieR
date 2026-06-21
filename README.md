@@ -239,15 +239,16 @@ The combined `AggregateSusieWorkflow` keeps the same aggregate and annotation in
 
 ## GitHub Actions Workflow
 
-### `.github/workflows/docker-image.yml` — Docker Image CI
+### Docker Image CI
 
-Automatically builds and pushes the Docker image (defined in `envs/SusieR/Dockerfile`) to the GitHub Container Registry (`ghcr.io`) on every push or pull request to the `main` branch.
+Automatically builds and pushes Docker images to the GitHub Container Registry (`ghcr.io`) on every push or pull request to the `main` branch.
 
-- **Trigger:** Push or pull request to `main`
-- **Registry:** `ghcr.io/aou-multiomics-analysis/susier`
-- **Tags:** Automatically generated from branch/tag metadata using `docker/metadata-action`
+| Workflow | Dockerfile | Image | Rebuilds when |
+|---|---|---|---|
+| `.github/workflows/docker-image.yml` | `envs/SusieR/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier` | fine-mapping image dependencies, `scripts/**`, or `R/utils/**` change |
+| `.github/workflows/PostAnalysisImage.yml` | `envs/PostAnalysis/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier/postanalysis` | post-analysis image dependencies, `scripts/AnnotateSusie.R`, or `scripts/MergeSusie.R` change |
 
-The Docker image contains all R dependencies and utility scripts required by the WDL workflows.
+The fine-mapping image copies the shared helper code from `R/utils/` into `/opt/r/lib`. The post-analysis image only copies `AnnotateSusie.R` and `MergeSusie.R`, which are the scripts called by the aggregate and annotate WDL tasks.
 
 ---
 

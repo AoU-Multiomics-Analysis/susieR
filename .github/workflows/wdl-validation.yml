@@ -30,6 +30,7 @@ jobs:
           miniwdl check AggregateSusie.wdl
           miniwdl check AggregateSusieTask.wdl
           miniwdl check AnnotateSusie.wdl
+          miniwdl check ComputeAncestrySkew.wdl
           miniwdl check ComputeR2Susie.wdl
           miniwdl check prepInputsSusieR.wdl
           miniwdl check susieR.wdl

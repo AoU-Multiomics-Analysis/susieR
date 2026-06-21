@@ -8,6 +8,7 @@ on:
       - "containers/PostAnalysis/Dockerfile"
       - "R/scripts/AnnotateSusie.R"
       - "R/scripts/MergeSusie.R"
+      - "R/scripts/ComputeAncestrySkew.R"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -15,6 +16,7 @@ on:
       - "containers/PostAnalysis/Dockerfile"
       - "R/scripts/AnnotateSusie.R"
       - "R/scripts/MergeSusie.R"
+      - "R/scripts/ComputeAncestrySkew.R"
 
 jobs:
   build_and_push:

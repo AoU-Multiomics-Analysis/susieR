@@ -1,0 +1,8 @@
+{
+  "ComputeAncestrySkew.AnnotationData": "gs://bucket/path/to/susie_annotated.tsv.gz",
+  "ComputeAncestrySkew.OutputFile": "susie_annotated.ancestry_skew.tsv.gz",
+  "ComputeAncestrySkew.VariantsPerShard": 50000,
+  "ComputeAncestrySkew.PipThreshold": 0.9,
+  "ComputeAncestrySkew.AdmixedSubpops": "oth",
+  "ComputeAncestrySkew.KeepInputColumns": false
+}

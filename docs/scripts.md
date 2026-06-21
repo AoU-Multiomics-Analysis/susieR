@@ -70,3 +70,31 @@ Outputs:
 ## `R/scripts/AnnotateSusie.R`
 
 Annotates a merged Susie TSV with external annotation resources used by the post-analysis workflows.
+
+## `R/scripts/ComputeAncestrySkew.R`
+
+Computes ancestry skew for variants in an annotated TSV or gzipped TSV. The script filters variants by PIP, recalculates the GVS max subpopulation from minor allele frequency, and runs Fisher tests comparing the max subpopulation to the remaining cohort.
+
+The script also reports a second ancestry skew calculation with admixed samples removed from the cohort background. By default, the admixed subpopulation is `oth`, but this can be changed with a comma-separated value such as `oth,amr`.
+
+Required annotation columns:
+
+| Column pattern | Description |
+|---|---|
+| `variant` | Variant identifier. |
+| `pip` | Posterior inclusion probability used for filtering. |
+| `gvs_all_ac`, `gvs_all_an` | Cohort-level alternate allele count and allele number. |
+| `gvs_<subpop>_af` | Subpopulation allele frequency columns, such as `gvs_afr_af`, `gvs_amr_af`, and `gvs_eur_af`. |
+| `gvs_<subpop>_ac`, `gvs_<subpop>_an` | Matching subpopulation AC/AN columns for every `gvs_<subpop>_af` column. |
+
+Key command-line arguments:
+
+| Argument | Description |
+|---|---|
+| `--AnnotationData` | Annotated variant table. Plain TSV and gzip-compressed TSV inputs are supported. |
+| `--OutputPrefix` | Output file prefix. |
+| `--PipThreshold` | Minimum PIP threshold used to select variants. Defaults to `0.9`. |
+| `--AdmixedSubpops` | Comma-separated GVS subpopulation labels to remove for the no-admixed skew calculation. Defaults to `oth`. |
+| `--KeepInputColumns` | Keep all input annotation columns and append ancestry skew columns. |
+
+Output: `<OutputPrefix>.AncestrySkew.tsv.gz`.

@@ -44,11 +44,12 @@ This repository provides WDL workflows and R scripts for running [susieR](https:
 | [`workflows/ComputeR2Susie.wdl`](workflows/ComputeR2Susie.wdl) | `ComputeR2SusieWorkflow` | Run cross-validation R2 evaluation. |
 | [`workflows/AggregateSusieTask.wdl`](workflows/AggregateSusieTask.wdl) | `AggregateSusieTaskWorkflow` | Merge sharded Susie Parquet outputs. |
 | [`workflows/AnnotateSusie.wdl`](workflows/AnnotateSusie.wdl) | `AnnotateSusieWorkflow` | Annotate a merged Susie TSV. |
+| [`workflows/ComputeAncestrySkew.wdl`](workflows/ComputeAncestrySkew.wdl) | `ComputeAncestrySkew` | Compute ancestry skew for annotated Susie variants. |
 | [`workflows/AggregateSusie.wdl`](workflows/AggregateSusie.wdl) | `AggregateSusieWorkflow` | Run aggregate, annotate, and ancestry skew together. |
 
-## External Dependency
+## Post-Analysis
 
-`AggregateSusie.wdl` imports the canonical ancestry skew workflow from the [AncestrySkew](https://github.com/AoU-Multiomics-Analysis/AncestrySkew) repository over HTTPS. Make ancestry skew workflow changes in that repository rather than duplicating the WDL or R code here.
+The aggregate, annotate, and ancestry skew steps are available as standalone workflows and as one combined `AggregateSusieWorkflow`. Ancestry skew now lives in this repository and is validated with the rest of the susieR WDLs.
 
 ## Local Checks
 
@@ -59,4 +60,4 @@ tools/validate_repo.sh
 Rscript tools/lint_r.R
 ```
 
-The WDL validation resolves remote imports through `raw.githubusercontent.com`, so it requires network access.
+The WDL validation checks all workflow descriptors in `workflows/`.

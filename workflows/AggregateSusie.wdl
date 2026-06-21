@@ -2,7 +2,7 @@ version 1.0
 
 import "AggregateSusieTask.wdl" as AggregateSusieTask
 import "AnnotateSusie.wdl" as AnnotateSusieTask
-import "https://raw.githubusercontent.com/AoU-Multiomics-Analysis/AncestrySkew/main/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
+import "ComputeAncestrySkew.wdl" as AncestrySkew
 
 workflow AggregateSusieWorkflow {
     input {

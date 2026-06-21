@@ -21,3 +21,6 @@ workflows:
   - subclass: WDL
     primaryDescriptorPath: /workflows/AnnotateSusie.wdl
     name: "AnnotateSusie"
+  - subclass: WDL
+    primaryDescriptorPath: /workflows/ComputeAncestrySkew.wdl
+    name: "ComputeAncestrySkew"

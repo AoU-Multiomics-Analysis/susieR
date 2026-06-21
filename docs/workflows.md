@@ -10,6 +10,7 @@ The WDL descriptors live in `workflows/`. Each descriptor has a unique workflow 
 | `workflows/ComputeR2Susie.wdl` | `ComputeR2SusieWorkflow` | Run cross-validation R2 evaluation. |
 | `workflows/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Merge sharded Susie Parquet outputs. |
 | `workflows/AnnotateSusie.wdl` | `AnnotateSusieWorkflow` | Annotate a merged Susie TSV. |
+| `workflows/ComputeAncestrySkew.wdl` | `ComputeAncestrySkew` | Compute ancestry skew for annotated Susie variants. |
 | `workflows/AggregateSusie.wdl` | `AggregateSusieWorkflow` | Run aggregate, annotate, and ancestry skew together. |
 
 Template input JSONs live in [`../examples/inputs/`](../examples/inputs/). They use placeholder paths and values; replace those with workspace-specific files before submitting.
@@ -88,7 +89,8 @@ The post-fine-mapping workflows are split into standalone WDLs so each step can 
 |---|---|---|
 | `workflows/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Localizes sharded Susie Parquet outputs from a FOFN and merges them into one Parquet plus one gzipped TSV. |
 | `workflows/AnnotateSusie.wdl` | `AnnotateSusieWorkflow` | Annotates an existing merged Susie TSV with GENCODE, ENCODE, FANTOM5, gnomAD constraint, phyloP, and VAT data. |
-| `workflows/AggregateSusie.wdl` | `AggregateSusieWorkflow` | Runs aggregate, annotate, and ancestry-skew analysis together by importing the two standalone Susie WDLs plus the AncestrySkew workflow. |
+| `workflows/ComputeAncestrySkew.wdl` | `ComputeAncestrySkew` | Computes ancestry skew on an annotated Susie TSV. |
+| `workflows/AggregateSusie.wdl` | `AggregateSusieWorkflow` | Runs aggregate, annotate, and ancestry-skew analysis together by importing the three standalone post-analysis WDLs. |
 
 ### Aggregate-Only Inputs
 
@@ -124,15 +126,20 @@ Annotate-only output: `AnnotatedSusieTsv`, written as `<OutputPrefix>_SusieMerge
 
 The combined `AggregateSusieWorkflow` keeps the same aggregate and annotation inputs, adds optional ancestry-skew controls (`AncestrySkewVariantsPerShard`, `AncestrySkewPipThreshold`, and `AncestrySkewAdmixedSubpops`), and returns both the ancestry-skew annotated TSV and the annotation-only TSV.
 
-## AncestrySkew Dependency
+### Ancestry Skew Inputs
 
-`AggregateSusie.wdl` imports the canonical ancestry skew workflow directly from the AncestrySkew repository:
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `AnnotationData` | File | required | Annotated variant table. Plain TSV and gzip-compressed TSV inputs are supported. |
+| `OutputFile` | String | required | Name for the aggregated output file, usually ending in `.tsv.gz`. |
+| `VariantsPerShard` | Int | required | Number of input rows per shard. |
+| `PipThreshold` | Float | `0.9` | Variants with `pip >= PipThreshold` are included. |
+| `AdmixedSubpops` | String | `"oth"` | Comma-separated GVS subpopulation labels to remove for the no-admixed skew calculation. |
+| `KeepInputColumns` | Boolean | `false` | Keep all input annotation columns and append ancestry skew columns. |
 
-```wdl
-import "https://raw.githubusercontent.com/AoU-Multiomics-Analysis/AncestrySkew/main/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
-```
+### Ancestry Skew Outputs
 
-Ancestry skew changes should be made in the [AncestrySkew](https://github.com/AoU-Multiomics-Analysis/AncestrySkew) repository. susieR imports that WDL over HTTPS instead of carrying duplicate copies of `ComputeAncestrySkew.wdl` and `ComputeAncestrySkew.R`. This import style works in Terra because Terra resolves WDL imports through `raw.githubusercontent.com`, while GitHub submodule contents are not exposed at raw paths.
+The aggregated output is a gzip-compressed TSV with one row per variant passing the PIP threshold. Key added columns include `gvs_max_subpop`, `gvs_max_maf`, `gvs_odds_ratio`, `gvs_p_value`, `gvs_no_admixed_max_subpop`, `gvs_no_admixed_odds_ratio`, and `gvs_no_admixed_p_value`.
 
 ## Validation
 

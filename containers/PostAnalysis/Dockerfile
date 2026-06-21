@@ -32,6 +32,6 @@ RUN find ${HOME}/.pixi/envs/r-base/bin -name '*bioconductor-*-post-link.sh' | \
     #conda-forge::r-bedr \
     #bioconda::tabix
 
-COPY R/scripts/AnnotateSusie.R R/scripts/MergeSusie.R /
+COPY R/scripts/AnnotateSusie.R R/scripts/MergeSusie.R R/scripts/ComputeAncestrySkew.R /
 
 CMD ["bash"]

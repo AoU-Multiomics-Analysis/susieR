@@ -13,6 +13,8 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 │   ├── ComputeR2Susie.R        # Cross-validation R² computation
 │   ├── PrepSusieCVPCs.R        # Prepare cross-validation PCs/covariates
 │   └── merge_susie.R           # Merge sharded susie output files
+├── dependencies/
+│   └── AncestrySkew/            # Git submodule with the canonical ancestry skew workflow
 ├── susieR/                     # WDL workflows and supporting files
 │   ├── susieR.wdl              # Full pipeline: input prep + fine-mapping
 │   ├── susieRonly.wdl          # Fine-mapping only (no input prep)
@@ -23,6 +25,22 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 └── .github/workflows/
     └── docker-image.yml        # CI/CD: build and push Docker image
 ```
+
+### Dependencies
+
+`AggregateSusie.wdl` imports the canonical ancestry skew workflow from the `dependencies/AncestrySkew` git submodule:
+
+```wdl
+import "../dependencies/AncestrySkew/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
+```
+
+Clone this repository with submodules, or initialize them after cloning:
+
+```bash
+git submodule update --init --recursive
+```
+
+Ancestry skew changes should be made in the [AncestrySkew](https://github.com/AoU-Multiomics-Analysis/AncestrySkew) repository. susieR then consumes a pinned AncestrySkew commit via the submodule instead of carrying duplicate copies of `ComputeAncestrySkew.wdl` and `ComputeAncestrySkew.R`.
 
 ---
 
@@ -209,6 +227,5 @@ The Docker image contains all R dependencies and utility scripts required by the
 | `MAF` | Float; MAF cutoff for variants. Requires `AncestryMetadata`. MAF is calculated per population and a variant must pass the cutoff in at least one population. Note: individuals not assigned to any population are excluded from the MAF calculation. |
 | `AncestryMetadata` | Ancestry metadata file; requires a column `ancestry_pred_oth` for population assignment |
 | `VariantList` | Single-column file of variants formatted as `chr_pos_ref_alt`; restricts analysis to listed variants. Takes precedence over `MAF` filtering. |
-
 
 

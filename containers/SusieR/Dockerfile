@@ -24,6 +24,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-arrow \
     bioconda::bioconductor-genomicranges=1.58.0 \
     bioconda::bioconductor-rsamtools \
+    bioconda::bioconductor-edger \
     bioconda::bioconductor-summarizedexperiment \
     conda-forge::r-susier \
     conda-forge::r-igraph \
@@ -41,7 +42,14 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
 ENV SUSIER_FUNCTIONS_PATH=/opt/r/lib
 COPY R/utils/*  /opt/r/lib/
-COPY R/scripts/*  .
+RUN mkdir -p /opt/r/scripts
+COPY R/scripts/susie.R R/scripts/ComputeR2Susie.R R/scripts/PrepSusieCVPCs.R /opt/r/scripts/
+RUN ln -s /opt/r/scripts/susie.R /susie.R && \
+    ln -s /opt/r/scripts/ComputeR2Susie.R /ComputeR2Susie.R && \
+    ln -s /opt/r/scripts/PrepSusieCVPCs.R /PrepSusieCVPCs.R && \
+    ln -s /opt/r/scripts/susie.R /tmp/susie.R && \
+    ln -s /opt/r/scripts/ComputeR2Susie.R /tmp/ComputeR2Susie.R && \
+    ln -s /opt/r/scripts/PrepSusieCVPCs.R /tmp/PrepSusieCVPCs.R
 
 
 

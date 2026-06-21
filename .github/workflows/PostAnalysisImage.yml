@@ -1,6 +1,7 @@
 name: Post-analysis Docker Image CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [ "main" ]
     paths:
@@ -42,7 +43,33 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/postanalysis
 
+      - name: Build docker image for smoke tests
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: containers/PostAnalysis/Dockerfile
+          load: true
+          tags: susier-postanalysis:smoke-test
+
+      - name: Smoke test docker image
+        run: |
+          set -euo pipefail
+          docker run --rm susier-postanalysis:smoke-test test -f /opt/r/scripts/MergeSusie.R
+          docker run --rm susier-postanalysis:smoke-test test -f /opt/r/scripts/AnnotateSusie.R
+          docker run --rm susier-postanalysis:smoke-test test -f /opt/r/scripts/ComputeAncestrySkew.R
+          docker run --rm susier-postanalysis:smoke-test test -f /MergeSusie.R
+          docker run --rm susier-postanalysis:smoke-test test -f /AnnotateSusie.R
+          docker run --rm susier-postanalysis:smoke-test test -f /ComputeAncestrySkew.R
+          docker run --rm susier-postanalysis:smoke-test test -f /tmp/MergeSusie.R
+          docker run --rm susier-postanalysis:smoke-test test -f /tmp/AnnotateSusie.R
+          docker run --rm susier-postanalysis:smoke-test test -f /tmp/ComputeAncestrySkew.R
+          docker run --rm susier-postanalysis:smoke-test Rscript -e 'library(tidyverse); library(data.table); library(arrow); library(optparse); library(rtracklayer); library(plyranges); library(bedr)'
+          docker run --rm susier-postanalysis:smoke-test Rscript /opt/r/scripts/MergeSusie.R --help
+          docker run --rm susier-postanalysis:smoke-test Rscript /opt/r/scripts/AnnotateSusie.R --help
+          docker run --rm susier-postanalysis:smoke-test Rscript /opt/r/scripts/ComputeAncestrySkew.R --help
+
       - name: Build and push docker containers
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v7
         with:
           context: .

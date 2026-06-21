@@ -7,14 +7,18 @@ on:
     paths:
       - ".github/workflows/docker-image.yml"
       - "containers/SusieR/Dockerfile"
-      - "R/scripts/**"
+      - "R/scripts/susie.R"
+      - "R/scripts/ComputeR2Susie.R"
+      - "R/scripts/PrepSusieCVPCs.R"
       - "R/utils/**"
   pull_request:
     branches: [ "main" ]
     paths:
       - ".github/workflows/docker-image.yml"
       - "containers/SusieR/Dockerfile"
-      - "R/scripts/**"
+      - "R/scripts/susie.R"
+      - "R/scripts/ComputeR2Susie.R"
+      - "R/scripts/PrepSusieCVPCs.R"
       - "R/utils/**"
 
 jobs:
@@ -41,7 +45,30 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
 
+      - name: Build docker image for smoke tests
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: containers/SusieR/Dockerfile
+          load: true
+          tags: susier:smoke-test
+
+      - name: Smoke test docker image
+        run: |
+          set -euo pipefail
+          docker run --rm susier:smoke-test test -f /opt/r/scripts/susie.R
+          docker run --rm susier:smoke-test test -f /opt/r/scripts/ComputeR2Susie.R
+          docker run --rm susier:smoke-test test -f /opt/r/scripts/PrepSusieCVPCs.R
+          docker run --rm susier:smoke-test test -f /tmp/susie.R
+          docker run --rm susier:smoke-test test -f /tmp/ComputeR2Susie.R
+          docker run --rm susier:smoke-test test -f /tmp/PrepSusieCVPCs.R
+          docker run --rm susier:smoke-test Rscript -e 'library(devtools); library(susieR); library(stringr); library(optparse); library(Rsamtools); library(readr); library(tidyr); library(dplyr); library(arrow); library(Rfast); library(edgeR); library(eQTLUtils)'
+          docker run --rm susier:smoke-test Rscript /opt/r/scripts/susie.R --help
+          docker run --rm susier:smoke-test Rscript /opt/r/scripts/ComputeR2Susie.R --help
+          docker run --rm susier:smoke-test Rscript -e 'parse(file = "/opt/r/scripts/PrepSusieCVPCs.R")'
+
       - name: Build and push docker containers
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v7
         with:
           context: .

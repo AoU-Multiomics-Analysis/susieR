@@ -9,4 +9,13 @@ This repository builds two Docker images from the `containers/` directory.
 
 The fine-mapping image sets `SUSIER_FUNCTIONS_PATH=/opt/r/lib`, and the R scripts default to that location when sourcing shared helpers.
 
-GitHub Actions rebuild the images when the relevant Dockerfile or copied R scripts change.
+## GitHub Actions
+
+The Docker workflows build and push images to GitHub Container Registry (`ghcr.io`) on pushes and pull requests to `main`.
+
+| Workflow | Dockerfile | Image | Rebuilds when |
+|---|---|---|---|
+| `.github/workflows/docker-image.yml` | `containers/SusieR/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier` | Fine-mapping image dependencies, `R/scripts/**`, or `R/utils/**` change. |
+| `.github/workflows/PostAnalysisImage.yml` | `containers/PostAnalysis/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier/postanalysis` | Post-analysis image dependencies, `R/scripts/AnnotateSusie.R`, or `R/scripts/MergeSusie.R` change. |
+
+The post-analysis image only copies `AnnotateSusie.R` and `MergeSusie.R`, which are the scripts called by the aggregate and annotate WDL tasks.

@@ -6,6 +6,9 @@
 # the CV Meta file, run the PrepSusieCVPCs.R script. Again, importantly, 
 # the input for that script should not be rank normalized values 
 
+# Estimate cross-validated prediction performance for one molecular trait using
+# both all cis variants and the MAF-filtered variant subset.
+
 suppressPackageStartupMessages(library("devtools"))
 suppressPackageStartupMessages(library("susieR"))
 suppressPackageStartupMessages(library("stringr"))
@@ -24,6 +27,8 @@ suppressPackageStartupMessages(library("Rfast"))
 
 FunctionPath <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
 ####### IMPORT FUNCTINS AND PARSE OTHER COMMAND LINE ARGUMENTS########## 
+# Load shared import, initialization, fine-mapping, CV, and memory helpers from
+# the Docker image path or an override supplied by SUSIER_FUNCTIONS_PATH.
 source(file.path(FunctionPath, "ImportFunctions.R"))
 source(file.path(FunctionPath, "InitFunctions.R"))
 source(file.path(FunctionPath, "SusieCVFunctions.R"))
@@ -36,6 +41,8 @@ message('Functions Loaded')
 option_list <- Optlist()
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 
+# LoadData centralizes all WDL-provided inputs and returns named objects used
+# throughout this script.
 data_list <- LoadData(opt)
 list2env(data_list,envir = environment())
 
@@ -44,6 +51,8 @@ if (is.null(cv_meta)) {
 }
 
 # Load Sample metadata from CV PC object
+# The CV metadata already contains fold assignments; here it is reshaped into
+# the sample metadata format expected by eQTLUtils.
 SampleMetaData <- cv_meta[['Metadata']] %>% 
             #dplyr::rename('sample_id' =1 ) %>% 
             mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
@@ -63,6 +72,8 @@ empty_cs_df <- InitEmptyCS()
 ######## CHUNK DATA ##########
 # convert sample list into sample metadata 
 # required by eQTLUtils and assign sampels to train and holdout  
+# This WDL task processes one molecular trait at a time, so the selected chunk
+# intentionally spans the full available phenotype group list.
 selected_chunk_group = splitIntoChunks(1, 1, length(unique(phenotype_list$group_id)))
 selected_group_ids = unique(phenotype_list$group_id)[selected_chunk_group]
 selected_phenotypes = phenotype_list %>%
@@ -74,6 +85,8 @@ selected_phenotypes = phenotype_list %>%
 
 #sample_metadata_folds <- LoadSampleMetadataCV(opt$sample_meta,AncestryDf,nFolds =n_folds ) 
 
+# Build a summarized experiment so phenotype values, metadata, and sample
+# annotations stay aligned when extracting the target trait.
 se = eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = expression_matrix %>% 
                                                                 select(-1,-2,-3) , 
                                                              row_data = phenotype_meta, 
@@ -87,6 +100,8 @@ gene_vector = eQTLUtils::extractPhentypeFromSE(output_prefix, se, "counts") %>%
     dplyr::mutate(phenotype_value_std = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
 
 #message('Fine-mapping begin')
+# Load the full cis-window genotype matrix once, then reuse it for full and
+# MAF-filtered CV runs.
 genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
     start = gene_meta$phenotype_pos - cis_distance, 
@@ -95,6 +110,7 @@ genotype_matrix_full = eQTLUtils::extractGenotypeMatrixFromDosage(
 
 ######### RUN CROSS VALIDATION ANALYSIS AND FINE MAPPING ###########
 
+# First evaluate prediction performance using every available cis variant.
 FullPredictions <- data.frame()
 message('Running CV on all variants')
 for (k in c(1:nFolds)) {
@@ -118,10 +134,12 @@ for (k in c(1:nFolds)) {
 }
 
 message('Filtering Genotype matrix')
+# Reuse the same CV folds after filtering to the configured MAF/variant list.
 genotype_type_matrix_one_percent <- genotype_matrix_full %>% 
         filterMAF(AncestryDf,variant_list = variant_list)
 rm(genotype_matrix_full)
 
+# Then evaluate prediction performance on the filtered variant set.
 ThresholdPredictions <- data.frame()
 message('Running CV on 1% variants')
 for (k in c(1:nFolds)) {
@@ -145,6 +163,7 @@ for (k in c(1:nFolds)) {
     })
 }
 
+# Combine both evaluation modes into a single TSV for downstream comparison.
 Predictions <- bind_rows(ThresholdPredictions,FullPredictions)
 Predictions %>% mutate(Gene = output_prefix) %>% write_tsv(OutputFile)
 
@@ -152,4 +171,3 @@ Predictions %>% mutate(Gene = output_prefix) %>% write_tsv(OutputFile)
 #FullDataSummary <- broom::glance(lm(Observed ~ Predicted,data =FullSusieHoldoutData))%>% mutate(AF_threshold = 0)
 #Out <- bind_rows(FullDataSummary,OnePercentSummary) %>% mutate(Fold = k,gene = output_prefix)
 #R2_data <- bind_rows(Out,R2_data) 
-

@@ -1,3 +1,8 @@
+# Helpers for generating cross-validation expression PCs. PCs are fit on
+# training samples within each fold and projected onto held-out samples to avoid
+# leakage from the test fold.
+
+# Rank-normalize expression rows and compute the number of PCs to keep.
 ComputePCs <- function(expression_df){
 
 # subset to just molecular data values and then 
@@ -21,6 +26,7 @@ pca_standardized$n_pcs <- n_pcs
 pca_standardized
 }
 
+# Fit expression PCs on all samples outside the requested fold.
 ComputeTrainPCs <- function(BedData,SampleMetadataCV,Fold) {
 message('Computing Training data PCs fold:',Fold)
 TrainMetadata <- SampleMetadataCV %>% filter(fold != Fold)
@@ -31,6 +37,7 @@ TrainPCs <- ComputePCs(TrainBedData)
 TrainPCs
 }
 
+# Project held-out fold samples onto training-fold PC loadings.
 ComputeTestPCs <- function(BedData,
                             TrainPCs,
                            SampleMetadataCV,
@@ -53,6 +60,8 @@ TestPCs <- t(data.matrix(TestBedData)) %*% data.matrix(TrainPCs$loadings) %>% da
 TestPCs
 }
 
+# Generate train/test PC objects for every CV fold and preserve metadata in the
+# returned object.
 ComputePCsCV <- function(SampleMetadata,ExpressionDf) {
 nFolds <- max(SampleMetadata$fold)
 FoldLabels <- paste0("Fold",seq_len(nFolds))

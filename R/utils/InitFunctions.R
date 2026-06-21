@@ -1,5 +1,8 @@
+# Empty output-schema constructors. These keep WDL outputs valid when a run has
+# no credible sets or no variants after filtering.
+
+# Return an empty full-SuSiE variant table with the columns written by susie.R.
 InitEmptyVariantDf <- function() {
-#Define empty data frames
 empty_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
   variant = character(),
@@ -52,7 +55,7 @@ empty_variant_df
 
 }
 
-
+# Return an empty log-Bayes-factor table.
 InitEmptyLbfDf <- function() {
 empty_lbf_df = dplyr::tibble(
   molecular_trait_id = character(),
@@ -74,6 +77,7 @@ empty_lbf_df = dplyr::tibble(
 empty_lbf_df
 }
 
+# Return an empty credible-set variant table.
 InitEmptyInCSVariantDf <- function() {
 empty_in_cs_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
@@ -97,6 +101,7 @@ empty_in_cs_variant_df = dplyr::tibble(
 empty_in_cs_variant_df
 }
 
+# Return an empty credible-set summary table.
 InitEmptyCS <- function() {
 empty_cs_df = dplyr::tibble(
   molecular_trait_id = numeric(),

@@ -1,5 +1,7 @@
-# ---------- DEBUG HELPERS (put near top of utils/SusieFunctions.R) ----------
-# require lobstr for accurate object sizes if available
+# Debug helpers for memory-heavy fine-mapping tasks. They are intentionally
+# lightweight and fall back to base object.size() when lobstr is unavailable.
+
+# Print the largest objects in an environment to diagnose task memory pressure.
 debug_list_locals <- function(env = parent.frame(), top_n = 50) {
   objs <- ls(envir = env, all.names = TRUE)
   if (length(objs) == 0) {
@@ -22,6 +24,7 @@ debug_list_locals <- function(env = parent.frame(), top_n = 50) {
   invisible(info)
 }
 
+# Print class, dimensions, and object size for specific local variables.
 debug_print_specific <- function(env = parent.frame(), var_names = c("gt_matrix","gt_std","covariates_matrix","hat")) {
   for (nm in var_names) {
     if (exists(nm, envir = env)) {

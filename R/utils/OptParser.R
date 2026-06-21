@@ -1,3 +1,5 @@
+# Build the shared command-line option list used by the fine-mapping and CV
+# scripts. Keeping this in one helper prevents WDL/script option drift.
 Optlist <- function() {
 option_list <- list(
   # TODO look around if there is a package recognizing delimiter in dataset
@@ -42,5 +44,4 @@ option_list <- list(
 )
 option_list
 }
-
 

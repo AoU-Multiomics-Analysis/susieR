@@ -3,6 +3,9 @@ library(data.table)
 library(arrow)
 library(optparse)
 
+# Merge per-phenotype SuSiE parquet outputs into a single TSV and parquet table,
+# skipping missing, unreadable, or empty shards.
+
 ########### COMMAND LINE ARGUMENTS ########
 option_list <- list(
   #TODO look around if there is a package recognizing delimiter in dataset
@@ -14,15 +17,20 @@ option_list <- list(
 
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 
+# The aggregate task writes both a human-readable TSV and a parquet file for
+# downstream WDL tasks that prefer columnar input.
 merged_parquet <- paste0(opt$OutputPrefix,'_SusieMerged.parquet') 
 merged_tsv <- paste0(opt$OutputPrefix,'_SusieMerged.tsv.gz') 
 aggregate_mode <- opt$SusieType
 
 ######## PARSE DATA #########
+# FilePaths is a one-column manifest produced by Cromwell scatter collection.
 filepath_df <- fread(opt$FilePaths,header = FALSE) %>% dplyr::rename('path' = 1) %>% pull(path)
 number_files <- filepath_df %>% length() 
 
 message(paste0('Number of files found: ',number_files))
+# Read one parquet shard defensively so a single bad or empty shard does not
+# obscure which input caused trouble.
 read_one_parquet <- function(path) {
   message("Reading: ", path)
   
@@ -51,10 +59,13 @@ read_one_parquet <- function(path) {
 all_dat <- lapply(filepath_df, read_one_parquet)
 all_dat <- Filter(Negate(is.null), all_dat)
 
+# Fail explicitly when every shard was empty or unreadable, since an empty merge
+# would otherwise look like a successful aggregate.
 if (length(all_dat) == 0) {
   stop("No non-empty parquet files were found.")
 }
 
+# Bind all surviving shards and write both configured aggregate formats.
 merged_df <- dplyr::bind_rows(all_dat)
 
 data.table::fwrite(merged_df, merged_tsv)

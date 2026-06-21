@@ -1,9 +1,12 @@
-# Wrapper function to run cross validation within a single fold
-# Metadata - Metadata component of CVObj
-# CovariatesMatrix - full covarriate matrix for all samples
-# ExpressionMatrix - Full CPM expression matrix (or similar non rank normalized matrix) for all samples
-# GenotypeMatrix 
-# GeneID - name of gene to run on 
+# Cross-validation helpers used by ComputeR2Susie.R. These functions fit SuSiE
+# on training folds and evaluate held-out expression prediction performance.
+
+# Run one train/test fold for a single phenotype.
+# Metadata: metadata component of the CV object.
+# CovariatesMatrix: full covariate matrix for all samples.
+# ExpressionMatrix: non-rank-normalized expression matrix for all samples.
+# GenotypeMatrix: preloaded genotype matrix covering the phenotype region.
+# GeneID: phenotype/gene identifier to evaluate.
 RunFoldCV <- function(Metadata,
                       CovariatesMatrix,
                       CVObj,
@@ -17,7 +20,7 @@ RunFoldCV <- function(Metadata,
                       VariantList = NULL
                       ) {
 
-    # Parse test and train data from metadata file containing fold information
+    # Parse test and train samples from metadata containing fold assignments.
     FoldMetadata <-  Metadata %>% mutate(qtl_group = case_when(fold == k ~ 'Test',TRUE ~ 'Train'))
     TestSamples <- FoldMetadata %>% filter(qtl_group == 'Test') %>% mutate(sample_id = as.character(sample_id)) 
     TrainSamples <- FoldMetadata %>% filter(qtl_group == 'Train') %>% mutate(sample_id = as.character(sample_id))
@@ -26,9 +29,8 @@ RunFoldCV <- function(Metadata,
     TrainBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TrainSamples$sample_id))
     TestBedDf <- expression_matrix %>% select(1,2,3,4,all_of(TestSamples$sample_id))
     
-    # create summarized experiment objects for the test and train data set. The genes are normalzied 
-    # below and while the unnormalized SE object goes into fine-map phenotype, rank normalization 
-    # is performed within that function as well
+    # Create separate summarized experiment objects for train/test samples.
+    # Rank normalization happens within fold-specific vectors to avoid leakage.
     TrainSe <- eQTLUtils::makeSummarizedExperimentFromCountMatrix(assay = TrainBedDf %>% 
                                                                         select(-1,-2,-3) , 
                                                                     row_data = PhenotypeMeta, 
@@ -41,13 +43,13 @@ RunFoldCV <- function(Metadata,
                                                                     col_data = TestSamples, 
                                                                     quant_method = "gene_counts",
                                                                     reformat = FALSE)
-    # normalize Test and Train gene vectors seperately form each other 
+    # Normalize test and train gene vectors separately from each other.
     TrainGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TrainSe, "counts") %>% 
                 dplyr::mutate(phenotype_value = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
     TestGeneVector <- eQTLUtils::extractPhentypeFromSE(GeneID, TestSe, "counts") %>% 
                 dplyr::mutate(phenotype_value = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
 
-    # estiamte Beta values for covariate adjustment from the training data 
+    # Estimate covariate effects using training data only.
     TrainCovarModel <- EstimateBetaHat(TrainGeneVector$phenotype_value,TrainCovariateSet)     
     
     selected_phenotype <- GeneID 
@@ -81,10 +83,11 @@ RunFoldCV <- function(Metadata,
 
 
 
-# helper function to perform residualization of test set expression using training data coefs
-# GeneVector - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this)
-# Covariates - Covar matrix for test data set
-#Train Coefs - Output from  EstimateBetaHat
+# Residualize held-out molecular values using coefficients estimated in the
+# training fold.
+# GeneVector: rank-normalized eQTLUtils phenotype vector.
+# Covariates: covariate matrix for the test data set.
+# Coefs: output from EstimateBetaHat().
 #ResidualizeMolecularData <- function(GeneVector,
                                      #Covariates,
                                      #Coefs) {
@@ -120,13 +123,12 @@ GeneVectorResidualized
 
 
 
-# Take Susie results and use them to predict gene expression 
-# from the genotype matrix on the test data set. 
-# SusieRes - Output from CleanSusieData 
-# GenotypeMatrix - Output from eQTLUtils load genotype matrix (can be filtered as well)
-# GeneVector - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this)
-# Train Coefs - Output from  EstimateBetaHat
-# Covariates - Covar matrix for test data set
+# Use fitted SuSiE effects to predict held-out expression from genotype data.
+# SusieRes: output from CleanSusieData().
+# GenotypeMatrix: genotype matrix, optionally variant-filtered.
+# GeneVector: held-out phenotype vector.
+# TrainCoefs: output from EstimateBetaHat().
+# Covariates: held-out covariate matrix.
 GetPredictions <- function(SusieRes,
                         GenotypeMatrix,
                         GeneVector,
@@ -159,15 +161,13 @@ message('Finish predictions')
 MergedData
 }
 
-# Helper function to estimate regression coefficeints from train data 
-# MoelcularVector  - Output from eQTLUtils::extractPhentypeFromSE (should be rank normalized before this and should be for the trian data)
-# CovarMatrix - Covar set for Train data  
+# Estimate covariate regression coefficients from the training fold.
 EstimateBetaHat <- function(MolecularVector,CovarMatrix) {
 BetaHat <- solve(crossprod(CovarMatrix), crossprod(CovarMatrix,MolecularVector ))
 BetaHat
 }
 
-# helper function to extract PC data from CVMeta object
+# Extract one fold's PC data from the CV metadata object.
 GetFoldPCData <- function(FoldPCData,
                        Fold) {
 FoldLabel <- paste0('Fold',Fold)
@@ -175,7 +175,7 @@ FoldData <- FoldPCData[[FoldLabel]]
 FoldData
 }
 
-# Helper function to extract Training PCs from CVMeta object
+# Extract training-sample PCs for one CV fold.
 GetFoldTrainPCs <- function(FoldPCData,
                             Fold) {
 FoldPCData <- GetFoldPCData(FoldPCData,Fold)
@@ -183,7 +183,7 @@ TrainPCs <- FoldPCData[['TrainPCs']]
 TrainPCs
 }
 
-# Helper function to extract Test PCs from CVMeta object
+# Extract held-out sample PCs for one CV fold.
 GetFoldTestPCs <- function(FoldPCData,
                             Fold) {
 FoldPCData <- GetFoldPCData(FoldPCData,Fold)
@@ -191,7 +191,7 @@ TestPCs <- FoldPCData[['TestPCs']]
 TestPCs
 }
 
-# Helper function to merge within fold molecular  PCs and genetic PCs
+# Merge within-fold molecular PCs with genetic PCs and return a numeric matrix.
 MergeMolecularGeneticPCs <- function (ExpressionPCs, GeneticPCs) {
     GeneticPCsFiltered <- GeneticPCs %>% 
         data.frame() %>% 
@@ -206,7 +206,7 @@ MergeMolecularGeneticPCs <- function (ExpressionPCs, GeneticPCs) {
     MergedData
 }
 
-# helper function to clean up susie object
+# Convert a susieR fitted object into credible-set, variant, and LBF tables.
 extractResults <- function(susie_object){
   credible_sets = susie_object$sets$cs
   cs_list = list()
@@ -290,6 +290,7 @@ extractResults <- function(susie_object){
   return(list(cs_df = cs_df, variant_df = variant_df, lbf_df = lbf_df))
 }
 
+# Format transposed SuSiE output lists into prediction-ready data frames.
 CleanSusieData <- function(res,region_df) {
       
   #Extract information about all variants
@@ -358,5 +359,4 @@ CleanSusieData <- function(res,region_df) {
 #Merged
     
 #}
-
 

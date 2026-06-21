@@ -2,6 +2,9 @@ library(tidyverse)
 library(data.table)
 library(optparse)
 
+# Compute enrichment of high-PIP variants in the GVS subpopulation with the
+# highest minor allele frequency, both before and after removing admixed groups.
+
 option_list <- list(
     optparse::make_option(c("--AnnotationData"), type = "character", default = NULL,
                         help = "Annotation data for variants containing ancestry specific AC/AN and cohort level AC/AN", metavar = "type"),
@@ -43,10 +46,12 @@ maf <- function(af) {
     pmin(af, 1 - af)
 }
 
+# Report which required columns are absent from an input table.
 missing_columns <- function(df, cols) {
     setdiff(cols, names(df))
 }
 
+# Detect gzip input from the magic bytes rather than relying on the file suffix.
 is_gzip_file <- function(path) {
     con <- file(path, "rb")
     on.exit(close(con))
@@ -54,6 +59,8 @@ is_gzip_file <- function(path) {
     length(magic) == 2 && identical(as.integer(magic), c(0x1f, 0x8b))
 }
 
+# Read annotation tables whether Cromwell localized them with or without a gzip
+# suffix.
 read_annotation <- function(path) {
     if (is_gzip_file(path)) {
         return(fread(cmd = paste("gzip -dc", shQuote(path))))
@@ -61,6 +68,8 @@ read_annotation <- function(path) {
     fread(path)
 }
 
+# Stop with a context-specific message when expected annotation columns are
+# missing.
 require_columns <- function(df, cols, context) {
     missing <- missing_columns(df, cols)
     if (length(missing) > 0) {
@@ -71,12 +80,15 @@ require_columns <- function(df, cols, context) {
     }
 }
 
+# Translate a GVS allele-frequency column name into its subpopulation label.
 get_subpop_from_af_col <- function(col) {
     col %>%
         str_remove("^gvs_") %>%
         str_remove("_af$")
 }
 
+# Select the subpopulation with the largest MAF for each variant and write both
+# the chosen label and the selected MAF into prefix-specific output columns.
 choose_max_subpop <- function(df, subpops, prefix) {
     maf_cols <- paste0("gvs_", subpops, "_maf")
     max_maf_col <- paste0(prefix, "_max_maf")
@@ -108,6 +120,8 @@ choose_max_subpop <- function(df, subpops, prefix) {
         select(-.row_id)
 }
 
+# Given the selected max subpopulation, copy that subpopulation's AC/AN into
+# prefix-specific max count columns.
 add_max_counts <- function(df, prefix) {
     max_subpop_col <- paste0(prefix, "_max_subpop")
     max_ac_col <- paste0(prefix, "_max_ac")
@@ -135,6 +149,8 @@ add_max_counts <- function(df, prefix) {
         select(-.row_id)
 }
 
+# Define the Fisher-test background as all cohort counts minus the max
+# subpopulation counts.
 add_background_counts <- function(df, prefix, all_ac_col, all_an_col) {
     max_ac_col <- paste0(prefix, "_max_ac")
     max_an_col <- paste0(prefix, "_max_an")
@@ -148,6 +164,8 @@ add_background_counts <- function(df, prefix, all_ac_col, all_an_col) {
         )
 }
 
+# Run one Fisher exact test per variant, returning odds ratio and p-value columns
+# named for the current analysis prefix.
 run_fisher <- function(df, prefix) {
     max_ac_col <- paste0(prefix, "_max_ac")
     max_an_col <- paste0(prefix, "_max_an")
@@ -184,10 +202,13 @@ run_fisher <- function(df, prefix) {
 }
 
 ####### LOAD DATA ########
+# Read the annotated SuSiE table and validate the minimum columns needed for
+# ancestry skew calculations.
 AnnotationDf <- read_annotation(AnnotationPath)
 
 require_columns(AnnotationDf, required_columns, "Ancestry skew")
 
+# Discover all ancestry-specific GVS AF columns present in the annotation file.
 af_cols <- names(AnnotationDf) %>%
     keep(~ str_detect(.x, "^gvs_[^_]+_af$") && .x != "gvs_all_af" && .x != "gvs_max_af")
 
@@ -199,6 +220,8 @@ subpops <- map_chr(af_cols, get_subpop_from_af_col)
 admixed_subpops <- intersect(AdmixedSubpops, subpops)
 nonadmixed_subpops <- setdiff(subpops, admixed_subpops)
 
+# Validate that the requested admixed labels exist and that at least one
+# comparison population remains after removing them.
 if (length(admixed_subpops) == 0) {
     stop(
         paste0(
@@ -226,11 +249,15 @@ numeric_cols <- names(AnnotationDf) %>%
     keep(~ str_detect(.x, "^gvs_.*_(ac|an|af)$") || .x %in% c("pip"))
 numeric_cols <- unique(numeric_cols)
 
+# Include one removed-AC/AN pair per admixed subpopulation so the no-admixed
+# calculation can be audited from the output alone.
 removed_count_cols <- unlist(map(
     admixed_subpops,
     ~ c(paste0("gvs_no_admixed_removed_", .x, "_ac"), paste0("gvs_no_admixed_removed_", .x, "_an"))
 ))
 
+# Keep output columns explicit so empty and non-empty outputs have the same
+# schema.
 OutputColumns <- c(
     "variant", "pip",
     "gvs_max_subpop", "gvs_max_maf", "gvs_max_ac", "gvs_max_an",
@@ -307,6 +334,8 @@ SkewInput <- SkewInput %>%
 OutputDf <- SkewInput %>%
     select(all_of(OutputColumns))
 
+# Optionally preserve the full annotation input beside the newly computed skew
+# columns for downstream ad hoc review.
 if (KeepInputColumns) {
     OutputDf <- SkewInput %>%
         select(all_of(names(AnnotationDf)), all_of(setdiff(OutputColumns, names(AnnotationDf))))

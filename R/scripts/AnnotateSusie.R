@@ -5,8 +5,13 @@ library(arrow)
 library(plyranges)
 library(bedr)
 
+# Annotate merged SuSiE fine-mapping output with gene, regulatory, conservation,
+# and GVS/VAT variant annotations.
+
 ########## LOADING FUNCTIONS ##################
 
+# Read gnomAD gene constraint metrics and convert pLI into a coarse constrained
+# vs. unconstrained label for downstream joins by Ensembl gene ID.
 load_constraint_data <- function(gnomad_constraint_data) {
 message('Loading gnomad data')
 message(paste0('Using file: ',basename(gnomad_constraint_data)))
@@ -20,6 +25,8 @@ gnomad_dat
 
 
 # load encode hg38 regulatory element annotations
+# Expand ENCODE cCRE records with multiple labels into one logical column per
+# annotation type, then return them as GRanges for overlap joins.
 load_ENCODE_data <- function(ENCODE_cCRES_path) {
 message('Loading ENCODE data')
 message(paste0('Using file: ',basename(ENCODE_cCRES_path)))
@@ -34,6 +41,8 @@ ENCODE_cres
 
 }
 
+# Read GVS/VAT variant annotations and create the same chromosome-position-ref-alt
+# ID used in fine-mapping output.
 load_gvs_VAT_data <- function(PathVAT) {
 message('Loading VAT data')
 message(paste0('Using file: ',basename(PathVAT)))
@@ -42,6 +51,8 @@ VariantAnnotations <- fread(PathVAT) %>%
 VariantAnnotations
 }
 
+# Convert GVS allele frequencies to minor allele frequencies and derive the
+# highest-MAF subpopulation plus matching AC/AN counts for each variant.
 convert_gvs_af_to_maf <- function(VariantAnnotations) {
 message('Converting GVS allele frequencies to MAF')
 
@@ -98,6 +109,8 @@ VariantAnnotations
 
 
 # load plink allele frequency data
+# This loader is retained for optional PLINK AF annotation, although the current
+# workflow uses GVS/VAT frequencies instead.
 load_afreq_data <- function(afreq_path){
 message('Loading allele frequency data')
 message(paste0('Using file: ',basename(afreq_path)))
@@ -114,6 +127,8 @@ dat
 
 # function to load in FANTOM5 data, note this data 
 # as of right now is downloaded from the UCSC genome browser
+# FANTOM5 promoter/enhancer intervals are converted to GRanges so they can be
+# joined in the same overlap pipeline as ENCODE cCRE annotations.
 load_FANTOM5_data <- function(FANTOM5_path) {
 message('Loading FANTOM5 data')
 message(paste0('Using file: ',basename(FANTOM5_path)))
@@ -133,6 +148,8 @@ FANTOM5_df
 # This is not the vep generated VCF but rather 
 # a cleaned table that has typically been summarized 
 # to the worst consequence
+# Build tabix query ranges from fine-mapped variants and widen the returned VEP
+# consequence labels into one logical column per consequence term.
 query_tabix <- function(fm_res,tabix_path) {
 message('Querying tabix data')
 
@@ -153,6 +170,8 @@ tabix_res
 
 # helper function to query big wig file and 
 # get scores
+# Pull conservation scores at variant positions from a BigWig file and append
+# them to the fine-mapping table.
 query_bigwig <- function(fm_data,bw_path) {
 message(paste0('Annotating with ',basename(bw_path)))
 
@@ -177,6 +196,8 @@ fm_data
 
 # querys vep table and removes synonymous variant 
 # annotations if another column is  true 
+# Join preprocessed VEP consequences back to the fine-mapping table and suppress
+# synonymous-only labels when a more severe consequence is also present.
 query_vep_table <- function(fm_data,VEP_table) {
 message('Annotating with VEP')
 VEP_annotation_data <- query_tabix(fm_data ,VEP_table)
@@ -201,6 +222,8 @@ VEP_annotated
 
 # helper function to annotate fine mapped data with granges 
 # object
+# Convert variants into single-base GRanges and left-join overlapping annotation
+# intervals, filling missing logical annotation flags with FALSE.
 query_grange_data <- function(fm_data,grange_annotations) {
 message('annotating data with grange')
 
@@ -221,6 +244,8 @@ annotated_fm_data
 
 ########### COMMAND LINE ARGUMENTS ########
 message('Begin')
+# Paths here are supplied by the WDL task. Optional sources that are not part of
+# the current production annotation path remain commented for easy restoration.
 option_list <- list(
   optparse::make_option(c("--SusieTSV"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--GencodeGTF"), type="character", default=NULL, metavar = "type"),
@@ -255,7 +280,8 @@ PathSusie <- opt$SusieTSV
 PathVAT <- opt$VAT
 ########### LOAD DATA ############
 
-
+# Load all external annotation resources before touching the SuSiE data so
+# missing reference files fail early.
 FANTOM5_granges <- load_FANTOM5_data(PathFANTOM5)
 ENCODE_data <- load_ENCODE_data(PathENCODE)
 gnomad_data <- load_constraint_data(PathGnomad) 
@@ -266,6 +292,8 @@ VATData <- load_gvs_VAT_data(PathVAT)
 
 
 message('Loading GTF')
+# The Gencode GTF provides gene IDs, names, types, and strand-aware TSS
+# positions used for distance-to-TSS annotations.
 gene_data <- rtracklayer::readGFF(opt$GencodeGTF) %>% filter(type == 'gene')
 
 message('Extracting TSS  locations')
@@ -279,6 +307,8 @@ tss_data <- gene_data %>% mutate(tss = case_when(strand == '+' ~ start,TRUE ~ en
 # annotate fine mapping data with internal data 
 # generated from QTL mapping
 message('Annotating fine-mapping data')
+# Normalize variant IDs, attach gene/TSS metadata, and bin PIPs before adding
+# external annotations.
 annotated_fm_res <-  fread(PathSusie) %>%
   mutate(group = OutputPrefix) %>%
   mutate(variant = str_remove_all(variant,'chr')) %>% 
@@ -310,7 +340,8 @@ message('Annotating fine-mapping data with external data sources')
 #drop_columns  <- c('alleles','locus','chrom','pos','ref.y','alt.y','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
 drop_columns  <- c('alleles','locus','chrom','pos','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
 
-
+# Layer interval annotations, conservation scores, gene constraints, and VAT/GVS
+# data into one final variant table.
 full_annotated_data <- annotated_fm_res %>%
             query_grange_data(ENCODE_data) %>% 
             query_grange_data(FANTOM5_granges) %>% 
@@ -323,6 +354,8 @@ full_annotated_data <- annotated_fm_res %>%
             dplyr::rename('ref' = 'ref.x','alt' = 'alt.x','ENCODE_ID_1' = 'V4','ENCODE_ID_2' = 'V5') 
 
 message('Cleaning annotated data')
+# Collapse overlapping promoter/enhancer signals into a single broad annotation
+# label used by downstream summaries.
 cleaned_full_annotated_data <- full_annotated_data %>% 
     #mutate(
     # synonymous_variant = ifelse(

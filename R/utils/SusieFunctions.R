@@ -1,11 +1,12 @@
-# build trigger
+# Core SuSiE fine-mapping helpers used by susie.R and the CV workflow.
+
+# Filter variants by per-ancestry MAF or by an explicit variant allowlist.
 filterMAF <- function(genotype_matrix,
                       ancestry_df,
                       MAF_threshold = 0,
                       variant_list = NULL) {
-    # If no variant list is specified then use 
-    # genotype data to compute MAFs for each variant 
-    # for each ancestry and filter based on this 
+    # If no variant list is specified, compute MAFs from the dosage matrix per
+    # ancestry and keep variants passing in at least one non-admixed ancestry.
     if (is.null(variant_list) && MAF_threshold > 0 && !is.null(ancestry_df))  {
     message('Filtering genotype matrix using MAF from dataset per ancestry')
     MAF_calculations_table <- genotype_matrix %>% 
@@ -34,7 +35,7 @@ filterMAF <- function(genotype_matrix,
     filtered_genotype_matrix <- genotype_matrix[MAF_calculations,]
     }else if (!is.null(variant_list)){
         message('Filtering genotype matrix by external  variant set')
-        # uses variant list to filter genotype matrix 
+        # Variant lists take precedence over MAF filtering.
         variant_df <- ImportVariantList(variant_list)
         genotype_df_variant_names <- data.frame(variants=rownames(genotype_matrix) ) %>% 
                                             mutate(variants = str_replace(variants,'chrchr','chr')) %>% 
@@ -51,7 +52,7 @@ filterMAF <- function(genotype_matrix,
 }
 
 
-# Impute missing values (sentinel -1 or NA) with row means, in a memory-efficient way
+# Impute missing values (sentinel -1 or NA) with row means.
 impute_matrix_rowmean <- function(mat, missing_value = -1) {
   # mat: numeric matrix (variants x samples)
   # Replace sentinel with NA
@@ -67,7 +68,7 @@ impute_matrix_rowmean <- function(mat, missing_value = -1) {
   mat
 }
 
-# Standardize rows (zero mean) using rowMeans and sweep (no big temporary transposes)
+# Standardize variants by subtracting row means without large transposes.
 standardize_rows <- function(mat) {
   rm <- rowMeans(mat)
   # subtract row means (in-place-like by using sweep)
@@ -97,7 +98,8 @@ standardize_rows <- function(mat) {
 #MergedGenotypes
 #}
 
-# safer version of merge additional genotypes
+# Merge ordinary dosage data with optional additional genotype features while
+# preserving only samples shared by both matrices.
 MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
   common_samples <- intersect(
     str_remove(colnames(GenotypeMatrix), "^X"),
@@ -133,18 +135,18 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
   return(MergedGenotypes)
 }
 
-
-
+# Fine-map one phenotype by loading local cis dosages, residualizing expression
+# and genotypes against covariates, then fitting susieR.
 finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL){
   message("Processing phenotype: ", phenotype_id)
   
-  #Extract phenotype from SE
+  # Extract and rank-normalize the target phenotype from the SummarizedExperiment.
   gene_vector = eQTLUtils::extractPhentypeFromSE(phenotype_id, se, "counts") %>%
     dplyr::mutate(phenotype_value_std = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
   selected_phenotype = phenotype_id
   gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
 
-  #Rearrange samples in the covariates matrix
+  # Align covariates to phenotype sample order and add an intercept column.
   covariates_matrix = cbind(covariates[gene_vector$genotype_id,], 1)
   
   if (is.character(genotype_file)) {
@@ -160,7 +162,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     message('Using pre-loaded genotype matrix')
     genotype_matrix <- genotype_file
     }
-  #Residualise gene expression and genotype matrix
+  # Residualize expression against covariates using a hat matrix.
   message('Residualizing gene expression')
   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
   expression_vector = hat %*% gene_vector$phenotype_value_std
@@ -183,8 +185,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   }
 
 
-  # subset genotype matrix to individuals that are in 
-  # expression vector
+  # Restrict genotype columns to the samples present in molecular data.
   message('Subsetting genotype matrix to individuals in the molecular data')
   gt_matrix = genotype_matrix[,names(expression_vector)]
   rm(genotype_matrix)
@@ -211,7 +212,8 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     debug_print_specific(environment(), var_names = c("gt_matrix", "covariates_matrix"))
     message("GC before imputation:")
     print(gc())
-  # Impute missing values using row means (efficient)
+  # Impute missing values using row means and keep variant IDs before matrix
+  # operations drop or reorder row names.
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
   variant_names <- rownames(gt_matrix)
   # Standardize genotypes (subtract row means)
@@ -241,7 +243,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   gc()
 
 
-  # Fit finemapping model
+  # Fit the SuSiE model on residualized genotypes and expression.
   fitted <- susieR::susie(gt_hat, expression_vector,
                           L = 10,
                           estimate_residual_variance = TRUE, 
@@ -254,7 +256,8 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   return(fitted)
 }
 
-
+# Convert a susieR fitted object into output tables for credible sets, variants,
+# and per-effect log-Bayes factors.
 extractResults <- function(susie_object){
   credible_sets = susie_object$sets$cs
   cs_list = list()
@@ -282,7 +285,7 @@ extractResults <- function(susie_object){
   }
   df = purrr::map_df(cs_list, identity)
 
-  #Extract purity values for all sets
+  # Extract purity values for all non-overlapping credible sets.
   purity_res = susie_object$sets$purity
 
   #Sometimes all the PIP values are 0 and there are no purity values, then skip this step
@@ -299,7 +302,7 @@ extractResults <- function(susie_object){
     purity_df = dplyr::tibble()
   }
   
-  #Extract betas and standard errors and lbf_variables
+  # Extract posterior means, standard errors, and lbf variables.
   mean_vec = susieR::susie_get_posterior_mean(susie_object)
   sd_vec = susieR::susie_get_posterior_sd(susie_object)
   
@@ -339,6 +342,7 @@ extractResults <- function(susie_object){
 }
 
 extractPipsFromVariantDf <- function(variant_df){
+# Recover the PIP for the specific credible set assignment stored in cs_index.
   alpha_df = dplyr::select(variant_df, phenotype_id, variant_id, cs_id, cs_index, alpha1:alpha10)
   #Rename alpha1:alpha10 to L1:L10
   colnames(alpha_df) = c("phenotype_id", "variant_id", "cs_id","cs_index", "L1","L2","L3","L4", "L5", "L6", "L7", "L8", "L9", "L10")
@@ -351,6 +355,8 @@ extractPipsFromVariantDf <- function(variant_df){
   return(pip_df)
 }
 
+# Build connected components across credible sets and keep the highest-PIP
+# representative variant per component.
 make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_size_threshold = 10) {
   # Filter the credible sets by Z-score and size
   susie_filt_all <- susie_all_df %>%
@@ -405,12 +411,14 @@ make_connected_components_from_cs <- function(susie_all_df, z_threshold = 3, cs_
   return(susie_highest_pip_per_cc)
 }
 
+# Assign n items into fixed-size batches.
 splitIntoBatches <- function(n, batch_size){
   n_batches = ceiling(n/batch_size)
   batch_ids = rep(seq(1:n_batches), each = batch_size)[1:n]
   return(batch_ids)
 }
 
+# Select the items belonging to one chunk among n_chunks total chunks.
 splitIntoChunks <- function(chunk_number, n_chunks, n_total){
   chunk_size = max(1,floor(n_total/(n_chunks)))
   batches = splitIntoBatches(n_total,chunk_size)

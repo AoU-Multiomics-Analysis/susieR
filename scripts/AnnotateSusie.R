@@ -253,13 +253,17 @@ annotated_fm_res <-  fread(PathSusie) %>%
     mutate(gene_id = str_remove(molecular_trait_id,'\\..*')) 
 
 message('Annotating fine-mapping data with external data sources')
+drop_columns  <- c('alleles','locus','chrom','pos','ref.y','ref.x','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
+
 full_annotated_data <- annotated_fm_res %>%
             query_grange_data(ENCODE_data) %>% 
             query_grange_data(FANTOM5_granges) %>% 
             #query_vep_table(PathVEP)  %>%
             query_bigwig(PathPhyloP) %>% 
             left_join(gnomad_data,by = 'gene_id') %>% 
-            left_join(VATData,by = c('variant' = 'ID'))
+            left_join(VATData,by = c('variant' = 'ID')) %>% 
+            dplyr::select(-drop_columns) %>% 
+            dplyr::rename('ref' = 'ref.x','alt' = 'alt.x','ENCODE_ID_1' = 'V4','ENCODE_ID_2' = 'V5') 
 
 message('Cleaning annotated data')
 cleaned_full_annotated_data <- full_annotated_data %>% 

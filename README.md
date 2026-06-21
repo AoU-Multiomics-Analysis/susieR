@@ -13,14 +13,14 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 │   ├── ComputeR2Susie.R        # Cross-validation R² computation
 │   ├── PrepSusieCVPCs.R        # Prepare cross-validation PCs/covariates
 │   └── merge_susie.R           # Merge sharded susie output files
-├── dependencies/
-│   └── AncestrySkew/            # Git submodule with the canonical ancestry skew workflow
 ├── susieR/                     # WDL workflows and supporting files
 │   ├── susieR.wdl              # Full pipeline: input prep + fine-mapping
 │   ├── susieRonly.wdl          # Fine-mapping only (no input prep)
 │   ├── prepInputsSusieR.wdl    # Input preparation only
 │   ├── ComputeR2Susie.wdl      # Cross-validation R² workflow
 │   ├── Dockerfile              # Docker image definition
+│   ├── dependencies/
+│   │   └── AncestrySkew/        # Git submodule with the canonical ancestry skew workflow
 │   └── utils/                  # R utility functions used by the scripts
 └── .github/workflows/
     └── docker-image.yml        # CI/CD: build and push Docker image
@@ -28,10 +28,10 @@ This repository provides WDL workflows and R scripts for running [SusieR](https:
 
 ### Dependencies
 
-`AggregateSusie.wdl` imports the canonical ancestry skew workflow from the `dependencies/AncestrySkew` git submodule:
+`AggregateSusie.wdl` imports the canonical ancestry skew workflow from the `susieR/dependencies/AncestrySkew` git submodule:
 
 ```wdl
-import "../dependencies/AncestrySkew/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
+import "dependencies/AncestrySkew/workflows/ComputeAncestrySkew.wdl" as AncestrySkew
 ```
 
 Clone this repository with submodules, or initialize them after cloning:
@@ -227,5 +227,4 @@ The Docker image contains all R dependencies and utility scripts required by the
 | `MAF` | Float; MAF cutoff for variants. Requires `AncestryMetadata`. MAF is calculated per population and a variant must pass the cutoff in at least one population. Note: individuals not assigned to any population are excluded from the MAF calculation. |
 | `AncestryMetadata` | Ancestry metadata file; requires a column `ancestry_pred_oth` for population assignment |
 | `VariantList` | Single-column file of variants formatted as `chr_pos_ref_alt`; restricts analysis to listed variants. Takes precedence over `MAF` filtering. |
-
 

@@ -1,4 +1,4 @@
-name: Docker Image CI
+name: Post-analysis Docker Image CI
 
 on:
   push:
@@ -6,13 +6,15 @@ on:
     paths:
       - ".github/workflows/PostAnalysisImage.yml"
       - "envs/PostAnalysis/Dockerfile"
-      - "scripts/**"
+      - "scripts/AnnotateSusie.R"
+      - "scripts/MergeSusie.R"
   pull_request:
     branches: [ "main" ]
     paths:
       - ".github/workflows/PostAnalysisImage.yml"
       - "envs/PostAnalysis/Dockerfile"
-      - "scripts/**"
+      - "scripts/AnnotateSusie.R"
+      - "scripts/MergeSusie.R"
 
 jobs:
   build_and_push:
@@ -36,7 +38,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/PostAnalysis
+          images: ghcr.io/${{ github.repository }}/postanalysis
 
       - name: Build and push docker containers
         uses: docker/build-push-action@v6

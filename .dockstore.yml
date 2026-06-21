@@ -1,23 +1,23 @@
 version: 1.2
 workflows:
   - subclass: WDL 
-    primaryDescriptorPath: /susieR/susieR.wdl
+    primaryDescriptorPath: /workflows/susieR.wdl
     name: "SusieR"
   - subclass: WDL 
-    primaryDescriptorPath: /susieR/prepInputsSusieR.wdl
+    primaryDescriptorPath: /workflows/prepInputsSusieR.wdl
     name: "PrepSusieR"
   - subclass: WDL 
-    primaryDescriptorPath: /susieR/susieRonly.wdl
+    primaryDescriptorPath: /workflows/susieRonly.wdl
     name: "SusieRonly"
   - subclass: WDL 
-    primaryDescriptorPath: /susieR/ComputeR2Susie.wdl
+    primaryDescriptorPath: /workflows/ComputeR2Susie.wdl
     name: "ComputeR2Susie"
   - subclass: WDL 
-    primaryDescriptorPath: /susieR/AggregateSusie.wdl
+    primaryDescriptorPath: /workflows/AggregateSusie.wdl
     name: "AggregateSusie"
   - subclass: WDL
-    primaryDescriptorPath: /susieR/AggregateSusieTask.wdl
+    primaryDescriptorPath: /workflows/AggregateSusieTask.wdl
     name: "AggregateSusieTask"
   - subclass: WDL
-    primaryDescriptorPath: /susieR/AnnotateSusie.wdl
+    primaryDescriptorPath: /workflows/AnnotateSusie.wdl
     name: "AnnotateSusie"

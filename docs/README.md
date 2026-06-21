@@ -9,8 +9,9 @@ This directory holds focused notes for using and maintaining the susieR workflow
 
 Template WDL input JSONs live in [`../examples/inputs`](../examples/inputs). They use placeholder paths and values that should be replaced before submitting workflows.
 
-For a local repository health check, run:
+For local repository checks, run:
 
 ```bash
 tools/validate_repo.sh
+Rscript tools/lint_r.R
 ```

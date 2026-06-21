@@ -63,7 +63,7 @@ RunFoldCV <- function(Metadata,
                                                                            GenotypeMatrix, 
                                                                            TrainCovariateSet, 
                                                                            CisDistance,
-                                                                           variant_list = VariantList, 
+                                                                           variant_list = VariantList
                                                                            ))
     message('Extracting susie results')
     SusieRes <- purrr::map(SusieOut, extractResults) %>%
@@ -257,16 +257,16 @@ extractResults <- function(susie_object){
   
   #Extract matrices
   alpha_mat = t(susie_object$alpha)
-  colnames(alpha_mat) = paste0("alpha", seq(ncol(alpha_mat)))
+  colnames(alpha_mat) = paste0("alpha", seq_len(ncol(alpha_mat)))
   
   mu_mat = t(susie_object$mu)
-  colnames(mu_mat) = paste0("mu_", seq(ncol(mu_mat)))
+  colnames(mu_mat) = paste0("mu_", seq_len(ncol(mu_mat)))
   
   mu2_mat = t(susie_object$mu2)
-  colnames(mu2_mat) = paste0("mu2_", seq(ncol(mu2_mat)))
+  colnames(mu2_mat) = paste0("mu2_", seq_len(ncol(mu2_mat)))
   
   lbf_variable_mat = t(susie_object$lbf_variable)
-  colnames(lbf_variable_mat) = paste0("lbf_variable", seq(ncol(lbf_variable_mat)))
+  colnames(lbf_variable_mat) = paste0("lbf_variable", seq_len(ncol(lbf_variable_mat)))
   posterior_df = dplyr::tibble(variant_id = rownames(alpha_mat), 
                                #pip = susie_object$pip,
                                z = susie_object$z[,1],
@@ -277,7 +277,7 @@ extractResults <- function(susie_object){
   lbf_df = dplyr::tibble(variant_id = rownames(lbf_variable_mat)) %>%
     dplyr::bind_cols(dplyr::as_tibble(lbf_variable_mat))
 
-  if(nrow(df) > 0 & nrow(purity_df) > 0 & ncol(lbf_df) > 10){ #ncol(lbf_df) <= 10 only if the number of variants in the region is < 10
+  if(nrow(df) > 0 && nrow(purity_df) > 0 && ncol(lbf_df) > 10){ #ncol(lbf_df) <= 10 only if the number of variants in the region is < 10
     cs_df = purity_df
     variant_df = dplyr::left_join(posterior_df, df, by = "variant_id") %>%
       dplyr::left_join(cs_df, by = "cs_id")
@@ -358,6 +358,5 @@ CleanSusieData <- function(res,region_df) {
 #Merged
     
 #}
-
 
 

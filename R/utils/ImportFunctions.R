@@ -6,7 +6,7 @@ ImportVariantList <- function(VariantListPath) {
 }
 
 importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE){
-  pc_matrix = read.table(covariates_path, check.names = F, header = T, stringsAsFactors = F)
+  pc_matrix = read.table(covariates_path, check.names = FALSE, header = TRUE, stringsAsFactors = FALSE)
   col_names <-  pc_matrix %>% pull(ID)
   pc_transpose = t(pc_matrix[,-1])
   colnames(pc_transpose) = pc_matrix$SampleID
@@ -23,7 +23,7 @@ importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE){
   return(pc_matrix)
 }
 importQtlmapPermutedPvalues <- function(perm_path){
-  tbl = read.table(perm_path, check.names = F, header = T, stringsAsFactors = F) %>%
+  tbl = read.table(perm_path, check.names = FALSE, header = TRUE, stringsAsFactors = FALSE) %>%
     dplyr::as_tibble() %>%
     dplyr::mutate(p_fdr = qval) %>% 
     #dplyr::mutate(p_fdr = p.adjust(pval_beta, method = "fdr")) %>%
@@ -197,4 +197,3 @@ LoadData <- function(opt_list) {
         )
     OutList
 }
-

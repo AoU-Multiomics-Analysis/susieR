@@ -3,8 +3,16 @@ name: Docker Image CI
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - ".github/workflows/PostAnalysisImage.yml"
+      - "envs/PostAnalysis/Dockerfile"
+      - "scripts/**"
   pull_request:
     branches: [ "main" ]
+    paths:
+      - ".github/workflows/PostAnalysisImage.yml"
+      - "envs/PostAnalysis/Dockerfile"
+      - "scripts/**"
 
 jobs:
   build_and_push:

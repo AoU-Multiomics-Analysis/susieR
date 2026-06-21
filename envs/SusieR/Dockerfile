@@ -39,7 +39,6 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-lobstr
 
 RUN R -e "remotes::install_github('kauralasoo/eQTLUtils')"
-COPY susieR/*  . 
 COPY susieR/utils/*  /opt/r/lib/ 
 COPY scripts/*  . 
 

@@ -36,6 +36,9 @@ RUN mkdir -p /opt/r/scripts
 COPY R/scripts/AnnotateSusie.R R/scripts/MergeSusie.R R/scripts/ComputeAncestrySkew.R /opt/r/scripts/
 RUN ln -s /opt/r/scripts/AnnotateSusie.R /AnnotateSusie.R && \
     ln -s /opt/r/scripts/MergeSusie.R /MergeSusie.R && \
-    ln -s /opt/r/scripts/ComputeAncestrySkew.R /ComputeAncestrySkew.R
+    ln -s /opt/r/scripts/ComputeAncestrySkew.R /ComputeAncestrySkew.R && \
+    ln -s /opt/r/scripts/AnnotateSusie.R /tmp/AnnotateSusie.R && \
+    ln -s /opt/r/scripts/MergeSusie.R /tmp/MergeSusie.R && \
+    ln -s /opt/r/scripts/ComputeAncestrySkew.R /tmp/ComputeAncestrySkew.R
 
 CMD ["bash"]

@@ -338,14 +338,13 @@ annotated_fm_res <-  fread(PathSusie) %>%
 
 message('Annotating fine-mapping data with external data sources')
 #drop_columns  <- c('alleles','locus','chrom','pos','ref.y','alt.y','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
-drop_columns  <- c('alleles','locus','chrom','pos','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
+drop_columns  <- c('alleles','locus','chrom','pos','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het','strand')
 
 # Layer interval annotations, conservation scores, gene constraints, and VAT/GVS
 # data into one final variant table.
 full_annotated_data <- annotated_fm_res %>%
             query_grange_data(ENCODE_data) %>% 
             query_grange_data(FANTOM5_granges) %>% 
-            #query_vep_table(PathVEP)  %>%
             query_bigwig(PathPhyloP) %>% 
             left_join(gnomad_data,by = 'gene_id') %>% 
             left_join(VATData,by = c('variant' = 'ID')) %>% 

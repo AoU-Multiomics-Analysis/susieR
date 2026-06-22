@@ -165,7 +165,8 @@ add_background_counts <- function(df, prefix, all_ac_col, all_an_col) {
 }
 
 # Run one Fisher exact test per variant, returning odds ratio and p-value columns
-# named for the current analysis prefix.
+# named for the current analysis prefix. A pseudocount of one keeps odds ratios
+# finite when one valid cell is zero.
 run_fisher <- function(df, prefix) {
     max_ac_col <- paste0(prefix, "_max_ac")
     max_an_col <- paste0(prefix, "_max_an")
@@ -181,6 +182,7 @@ run_fisher <- function(df, prefix) {
             return(tibble(odds_ratio = NA_real_, p_value = NA_real_))
         }
 
+        values <- values + 1
         test <- fisher.test(matrix(values, nrow = 2, byrow = TRUE))
         tibble(odds_ratio = unname(test$estimate), p_value = test$p.value)
     }

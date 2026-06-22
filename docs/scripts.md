@@ -73,7 +73,7 @@ Annotates a merged Susie TSV with external annotation resources used by the post
 
 ## `R/scripts/ComputeAncestrySkew.R`
 
-Computes ancestry skew for variants in an annotated TSV or gzipped TSV. The script filters variants by PIP, recalculates the GVS max subpopulation from minor allele frequency, and runs Fisher tests comparing the max subpopulation to the remaining cohort.
+Computes ancestry skew for variants in an annotated TSV or gzipped TSV. The script filters variants by PIP, recalculates the GVS max subpopulation from minor allele frequency, and runs Fisher tests comparing the max subpopulation to the remaining cohort. Fisher tests add a pseudocount of one to each valid count cell so odds ratios remain finite when one cell is zero.
 
 The script also reports a second ancestry skew calculation with admixed samples removed from the cohort background. By default, the admixed subpopulation is `oth`, but this can be changed with a comma-separated value such as `oth,amr`.
 

@@ -95,6 +95,8 @@ Key command-line arguments:
 | `--OutputPrefix` | Output file prefix. |
 | `--PipThreshold` | Minimum PIP threshold used to select variants. Defaults to `0.9`. |
 | `--AdmixedSubpops` | Comma-separated GVS subpopulation labels to remove for the no-admixed skew calculation. Defaults to `oth`. |
-| `--KeepInputColumns` | Keep all input annotation columns and append ancestry skew columns. |
+| `--KeepInputColumns` | Keep all input annotation columns and append only the compact ancestry-skew result columns. |
 
 Output: `<OutputPrefix>.AncestrySkew.tsv.gz`.
+
+Standalone output columns are `variant`, `pip`, `gvs_max_subpop`, recomputed MAF-based `gvs_max_af`, `gvs_odds_ratio`, `gvs_p_value`, `gvs_no_admixed_odds_ratio`, and `gvs_no_admixed_p_value`.

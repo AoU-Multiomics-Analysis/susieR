@@ -249,25 +249,14 @@ numeric_cols <- names(AnnotationDf) %>%
     keep(~ str_detect(.x, "^gvs_.*_(ac|an|af)$") || .x %in% c("pip"))
 numeric_cols <- unique(numeric_cols)
 
-# Include one removed-AC/AN pair per admixed subpopulation so the no-admixed
-# calculation can be audited from the output alone.
-removed_count_cols <- unlist(map(
-    admixed_subpops,
-    ~ c(paste0("gvs_no_admixed_removed_", .x, "_ac"), paste0("gvs_no_admixed_removed_", .x, "_an"))
-))
-
 # Keep output columns explicit so empty and non-empty outputs have the same
-# schema.
+# schema. These are the only columns added by ancestry-skew mode when
+# --KeepInputColumns is used.
 OutputColumns <- c(
     "variant", "pip",
-    "gvs_max_subpop", "gvs_max_maf", "gvs_max_ac", "gvs_max_an",
-    "gvs_background_ac", "gvs_background_an", "gvs_odds_ratio", "gvs_p_value",
-    "gvs_no_admixed_all_ac", "gvs_no_admixed_all_an",
-    "gvs_no_admixed_max_subpop", "gvs_no_admixed_max_maf",
-    "gvs_no_admixed_max_ac", "gvs_no_admixed_max_an",
-    "gvs_no_admixed_background_ac", "gvs_no_admixed_background_an",
-    "gvs_no_admixed_odds_ratio", "gvs_no_admixed_p_value",
-    removed_count_cols
+    "gvs_max_subpop", "gvs_max_af",
+    "gvs_odds_ratio", "gvs_p_value",
+    "gvs_no_admixed_odds_ratio", "gvs_no_admixed_p_value"
 )
 
 # Keep only variants at or above the requested PIP threshold, then create MAF
@@ -298,23 +287,10 @@ if (nrow(SkewInput) == 0) {
 # first Fisher test.
 SkewInput <- SkewInput %>%
     choose_max_subpop(subpops, "gvs") %>%
+    mutate(gvs_max_af = gvs_max_maf) %>%
     add_max_counts("gvs") %>%
     add_background_counts("gvs", "gvs_all_ac", "gvs_all_an") %>%
     run_fisher("gvs")
-
-# Store the admixed AC/AN values that will be subtracted so the output is
-# auditable. By default this is the GVS `oth` subpopulation.
-SkewInput <- reduce(
-    admixed_subpops,
-    .init = SkewInput,
-    .f = function(df, subpop) {
-        df %>%
-            mutate(
-                !!paste0("gvs_no_admixed_removed_", subpop, "_ac") := .data[[paste0("gvs_", subpop, "_ac")]],
-                !!paste0("gvs_no_admixed_removed_", subpop, "_an") := .data[[paste0("gvs_", subpop, "_an")]]
-            )
-    }
-)
 
 # Round 2: ancestry skew after admixed samples are removed.
 #

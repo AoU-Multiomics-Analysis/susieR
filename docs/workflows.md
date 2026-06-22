@@ -139,7 +139,7 @@ The combined `AggregateSusieWorkflow` keeps the same aggregate and annotation in
 
 ### Ancestry Skew Outputs
 
-The aggregated output is a gzip-compressed TSV with one row per variant passing the PIP threshold. Key added columns include `gvs_max_subpop`, `gvs_max_maf`, `gvs_odds_ratio`, `gvs_p_value`, `gvs_no_admixed_max_subpop`, `gvs_no_admixed_odds_ratio`, and `gvs_no_admixed_p_value`.
+The aggregated output is a gzip-compressed TSV with one row per variant passing the PIP threshold. In standalone mode, the output keeps identifiers plus `gvs_max_subpop`, recomputed MAF-based `gvs_max_af`, `gvs_odds_ratio`, `gvs_p_value`, `gvs_no_admixed_odds_ratio`, and `gvs_no_admixed_p_value`. When `KeepInputColumns` is true, those compact ancestry-skew columns are appended to the full input annotation table.
 
 ## Validation
 

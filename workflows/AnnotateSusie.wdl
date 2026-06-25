@@ -11,6 +11,7 @@ task AnnotateSusie {
         File AnnotationGnomad
         File AnnotationPhyloP
         File VATData
+        File? AllelicFoldChangeData
     }
 
     command <<<
@@ -22,7 +23,8 @@ task AnnotateSusie {
         --FANTOM5 ~{AnnotationFANTOM5} \
         --gnomadConstraint ~{AnnotationGnomad} \
         --ENCODEcCRES ~{AnnotationENCODE} \
-        --VAT ~{VATData}
+        --VAT ~{VATData} \
+        ~{if defined(AllelicFoldChangeData) then "--AllelicFoldChangeData " + AllelicFoldChangeData else ""}
     >>>
 
     runtime {
@@ -48,6 +50,7 @@ workflow AnnotateSusieWorkflow {
         File AnnotationGnomad
         File AnnotationPhyloP
         File VATData
+        File? AllelicFoldChangeData
     }
 
     call AnnotateSusie {
@@ -60,7 +63,8 @@ workflow AnnotateSusieWorkflow {
             AnnotationENCODE = AnnotationENCODE,
             AnnotationFANTOM5 = AnnotationFANTOM5,
             AnnotationGnomad = AnnotationGnomad,
-            VATData = VATData
+            VATData = VATData,
+            AllelicFoldChangeData = AllelicFoldChangeData
     }
 
     output {

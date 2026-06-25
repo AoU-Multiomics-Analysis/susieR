@@ -9,6 +9,7 @@
   "AggregateSusieWorkflow.AnnotationFANTOM5": "gs://bucket/path/fantom5.bed.gz",
   "AggregateSusieWorkflow.AnnotationGnomad": "gs://bucket/path/gnomad_constraint.tsv",
   "AggregateSusieWorkflow.VATData": "gs://bucket/path/vat.tsv.gz",
+  "AggregateSusieWorkflow.AllelicFoldChangeData": "gs://bucket/path/allelic_fold_change.tsv.gz",
   "AggregateSusieWorkflow.AncestrySkewVariantsPerShard": 10000,
   "AggregateSusieWorkflow.AncestrySkewPipThreshold": 0.9,
   "AggregateSusieWorkflow.AncestrySkewAdmixedSubpops": "oth"

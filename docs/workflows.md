@@ -119,12 +119,13 @@ The post-fine-mapping workflows are split into standalone WDLs so each step can 
 | `AnnotationGnomad` | File | gnomAD constraint annotation file. |
 | `AnnotationPhyloP` | File | phyloP bigWig annotation file. |
 | `VATData` | File | VAT annotation data. |
+| `AllelicFoldChangeData` | File? | Optional allelic fold-change table with `pid`, `sid`, `log2_aFC`, `log2_aFC_lower`, and `log2_aFC_upper`; `sid` may be formatted as `chr:pos_ref_alt`. |
 | `OutputPrefix` | String | Prefix for annotated output. |
 | `Memory` | Int | Memory in GB for the annotation task. |
 
 Annotate-only output: `AnnotatedSusieTsv`, written as `<OutputPrefix>_SusieMerged.annotated.tsv`.
 
-The combined `AggregateSusieWorkflow` keeps the same aggregate and annotation inputs, adds optional ancestry-skew controls (`AncestrySkewVariantsPerShard`, `AncestrySkewPipThreshold`, and `AncestrySkewAdmixedSubpops`), and returns both the ancestry-skew annotated TSV and the annotation-only TSV.
+The combined `AggregateSusieWorkflow` keeps the same aggregate and annotation inputs, adds optional ancestry-skew controls (`AncestrySkewVariantsPerShard`, `AncestrySkewPipThreshold`, and `AncestrySkewAdmixedSubpops`), and returns both the ancestry-skew annotated TSV and the annotation-only TSV. When `AllelicFoldChangeData` is supplied, annotation appends `log2_aFC`, `log2_aFC_lower`, and `log2_aFC_upper` by matching normalized `gene_id`/`pid` and `variant`/`sid` keys.
 
 ### Ancestry Skew Inputs
 

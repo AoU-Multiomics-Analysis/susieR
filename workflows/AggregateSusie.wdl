@@ -16,6 +16,7 @@ workflow AggregateSusieWorkflow {
         File AnnotationFANTOM5 
         File AnnotationGnomad
         File VATData  
+        File? AllelicFoldChangeData
         Int AncestrySkewVariantsPerShard = 10000
         Float AncestrySkewPipThreshold = 0.9
         String AncestrySkewAdmixedSubpops = "oth"
@@ -39,7 +40,8 @@ workflow AggregateSusieWorkflow {
             AnnotationENCODE = AnnotationENCODE,
             AnnotationFANTOM5 = AnnotationFANTOM5,
             AnnotationGnomad = AnnotationGnomad,
-            VATData = VATData
+            VATData = VATData,
+            AllelicFoldChangeData = AllelicFoldChangeData
     } 
 
     call AncestrySkew.ComputeAncestrySkew as ComputeAncestrySkew {

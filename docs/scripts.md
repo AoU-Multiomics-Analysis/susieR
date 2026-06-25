@@ -71,6 +71,8 @@ Outputs:
 
 Annotates a merged Susie TSV with external annotation resources used by the post-analysis workflows.
 
+Optional allelic fold-change data can be supplied with `--AllelicFoldChangeData`. The table must include `pid`, `sid`, `log2_aFC`, `log2_aFC_lower`, and `log2_aFC_upper`; `sid` values such as `chr1:169874249_C_T` are normalized to the SuSiE `chr1_169874249_C_T` variant format. The output keeps the three `log2_aFC` columns and drops aFC key/location columns.
+
 ## `R/scripts/ComputeAncestrySkew.R`
 
 Computes ancestry skew for variants in an annotated TSV or gzipped TSV. The script filters variants by PIP, recalculates the GVS max subpopulation from minor allele frequency, and runs Fisher tests comparing the max subpopulation to the remaining cohort. Fisher tests add a pseudocount of one to each valid count cell so odds ratios remain finite when one cell is zero.

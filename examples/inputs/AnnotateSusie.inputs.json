@@ -7,5 +7,6 @@
   "AnnotateSusieWorkflow.AnnotationFANTOM5": "gs://bucket/path/fantom5.bed.gz",
   "AnnotateSusieWorkflow.AnnotationGnomad": "gs://bucket/path/gnomad_constraint.tsv",
   "AnnotateSusieWorkflow.AnnotationPhyloP": "gs://bucket/path/phylop.bw",
-  "AnnotateSusieWorkflow.VATData": "gs://bucket/path/vat.tsv.gz"
+  "AnnotateSusieWorkflow.VATData": "gs://bucket/path/vat.tsv.gz",
+  "AnnotateSusieWorkflow.AllelicFoldChangeData": "gs://bucket/path/allelic_fold_change.tsv.gz"
 }

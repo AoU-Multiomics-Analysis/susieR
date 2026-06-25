@@ -51,6 +51,46 @@ VariantAnnotations <- fread(PathVAT) %>%
 VariantAnnotations
 }
 
+# Read optional allelic fold-change annotations and normalize their keys to the
+# gene_id and chr_pos_ref_alt variant ID used by the annotated SuSiE output.
+load_allelic_fold_change_data <- function(PathAllelicFoldChange) {
+message('Loading allelic fold-change data')
+message(paste0('Using file: ',basename(PathAllelicFoldChange)))
+
+required_cols <- c('pid','sid','log2_aFC','log2_aFC_lower','log2_aFC_upper')
+afc_value_cols <- c('log2_aFC','log2_aFC_lower','log2_aFC_upper')
+afc_data <- fread(PathAllelicFoldChange)
+missing_cols <- setdiff(required_cols,colnames(afc_data))
+
+if (length(missing_cols) > 0) {
+    stop(paste0(
+        'Allelic fold-change data is missing required columns: ',
+        paste(missing_cols,collapse = ', ')
+    ))
+}
+
+afc_data <- afc_data %>%
+    filter(pid != '<chr>',sid != '<chr>') %>%
+    mutate(pid = as.character(pid),sid = as.character(sid)) %>%
+    mutate(gene_id = str_remove(pid,'\\..*')) %>%
+    mutate(variant = str_replace(sid,':','_')) %>%
+    mutate(variant = str_remove_all(variant,'chr')) %>%
+    mutate(variant = paste0('chr',variant)) %>%
+    mutate(across(all_of(afc_value_cols), ~suppressWarnings(as.numeric(.x)))) %>%
+    select(gene_id,variant,all_of(afc_value_cols))
+
+duplicate_keys <- afc_data %>%
+    count(gene_id,variant) %>%
+    filter(n > 1)
+
+if (nrow(duplicate_keys) > 0) {
+    message('Allelic fold-change data has duplicate gene/variant rows; keeping the first row per key')
+}
+
+afc_data %>%
+    distinct(gene_id,variant,.keep_all = TRUE)
+}
+
 # Convert GVS allele frequencies to minor allele frequencies and derive the
 # highest-MAF subpopulation plus matching AC/AN counts for each variant.
 convert_gvs_af_to_maf <- function(VariantAnnotations) {
@@ -105,6 +145,19 @@ for (subpop in unique(max_subpop[!all_missing_af])) {
 }
 
 VariantAnnotations
+}
+
+# Append optional allelic fold-change columns when the annotation file is
+# provided. The aFC loader has already dropped sid_chr/sid_pos and normalized
+# pid/sid into gene_id/variant join keys.
+annotate_allelic_fold_change <- function(fm_data,allelic_fold_change_data) {
+if (is.null(allelic_fold_change_data)) {
+    return(fm_data)
+}
+
+message('Annotating with allelic fold-change data')
+fm_data %>%
+    left_join(allelic_fold_change_data,by = c('gene_id','variant'))
 }
 
 
@@ -256,7 +309,8 @@ option_list <- list(
   optparse::make_option(c("--gnomadConstraint"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--phyloPBigWig"), type="character", default=NULL, metavar = "type"),
   optparse::make_option(c("--FANTOM5"), type="character", default=NULL, metavar = "type"),
-  optparse::make_option(c("--VAT"), type="character", default=NULL, metavar = "type")
+  optparse::make_option(c("--VAT"), type="character", default=NULL, metavar = "type"),
+  optparse::make_option(c("--AllelicFoldChangeData"), type="character", default=NULL, metavar = "type")
 
 
 )
@@ -278,6 +332,7 @@ PathGnomad <- opt$gnomadConstraint
 PathFANTOM5 <- opt$FANTOM5
 PathSusie <- opt$SusieTSV
 PathVAT <- opt$VAT
+PathAllelicFoldChange <- opt$AllelicFoldChangeData
 ########### LOAD DATA ############
 
 # Load all external annotation resources before touching the SuSiE data so
@@ -286,6 +341,11 @@ FANTOM5_granges <- load_FANTOM5_data(PathFANTOM5)
 ENCODE_data <- load_ENCODE_data(PathENCODE)
 gnomad_data <- load_constraint_data(PathGnomad) 
 VATData <- load_gvs_VAT_data(PathVAT)
+AllelicFoldChangeData <- if (!is.null(PathAllelicFoldChange)) {
+    load_allelic_fold_change_data(PathAllelicFoldChange)
+} else {
+    NULL
+}
 #allele_frequencies <- load_afreq_data(opt$PlinkAfreq)
 
 #susie_res <- load_finemapping_data(opt$SusieParquet)
@@ -334,7 +394,7 @@ annotated_fm_res <-  fread(PathSusie) %>%
     )  %>% 
     #dplyr::select(-ALT_FREQS ) %>%
     mutate(PIP_decile = cut(pip, breaks = seq(0, 1, by = 0.1), include.lowest = TRUE)) %>%  
-    mutate(gene_id = str_remove(molecular_trait_id,'\\..*')) 
+    mutate(gene_id = str_remove(gene_id,'\\..*'))
 
 message('Annotating fine-mapping data with external data sources')
 #drop_columns  <- c('alleles','locus','chrom','pos','ref.y','alt.y','AF','AC','AN','ALL_p_value_hwe','ALL_p_value_excess_het')
@@ -349,6 +409,7 @@ full_annotated_data <- annotated_fm_res %>%
             left_join(gnomad_data,by = 'gene_id') %>% 
             left_join(VATData,by = c('variant' = 'ID')) %>% 
             convert_gvs_af_to_maf() %>%
+            annotate_allelic_fold_change(AllelicFoldChangeData) %>%
             dplyr::select(-drop_columns) %>% 
             dplyr::rename('ref' = 'ref.x','alt' = 'alt.x','ENCODE_ID_1' = 'V4','ENCODE_ID_2' = 'V5') 
 

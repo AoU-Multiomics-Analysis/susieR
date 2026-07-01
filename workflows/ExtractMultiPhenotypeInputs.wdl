@@ -5,21 +5,17 @@ task ExtractMultiPhenotypeInputs {
         File PhenotypeBed
         File TensorQTLPermutations
         String PhenotypeID
-        Array[String]? PhenotypeIDs
         Boolean MatchPhenotypeIDSubstring = false
         Boolean AddSkipRow = true
         Int NumPrempt = 2
     }
 
-    Array[String] phenotype_ids = select_first([PhenotypeIDs, [PhenotypeID]])
-    File PhenotypeIDFile = write_lines(phenotype_ids)
-    String phenotype_match_mode = if defined(PhenotypeIDs) then "exact-list" else if MatchPhenotypeIDSubstring then "contains" else "exact"
+    String phenotype_match_mode = if MatchPhenotypeIDSubstring then "contains" else "exact"
 
     command <<<
         echo "Extracting phenotype inputs"
         echo "Phenotype match mode: ~{phenotype_match_mode}"
-        echo "Requested phenotype IDs:"
-        cat "~{PhenotypeIDFile}"
+        echo "Requested phenotype ID: ~{PhenotypeID}"
 
         zcat "~{PhenotypeBed}" | head -n 1 > phenotype_header.txt
 
@@ -29,7 +25,7 @@ task ExtractMultiPhenotypeInputs {
                 > phenotype_rows.bed
         else
             zcat "~{PhenotypeBed}" \
-                | awk 'NR==FNR {ids[$1]=1; next} FNR == 1 && $4 == "phenotype_id" {next} ($4 in ids)' "~{PhenotypeIDFile}" - \
+                | awk -v phenotype_id="~{PhenotypeID}" 'FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id' \
                 > phenotype_rows.bed
         fi
 
@@ -85,7 +81,6 @@ workflow ExtractMultiPhenotypeInputsWorkflow {
         File PhenotypeBed
         File TensorQTLPermutations
         String PhenotypeID
-        Array[String]? PhenotypeIDs
         Boolean MatchPhenotypeIDSubstring = false
         Boolean AddSkipRow = true
         Int NumPrempt = 2
@@ -96,7 +91,6 @@ workflow ExtractMultiPhenotypeInputsWorkflow {
             PhenotypeBed = PhenotypeBed,
             TensorQTLPermutations = TensorQTLPermutations,
             PhenotypeID = PhenotypeID,
-            PhenotypeIDs = PhenotypeIDs,
             MatchPhenotypeIDSubstring = MatchPhenotypeIDSubstring,
             AddSkipRow = AddSkipRow,
             NumPrempt = NumPrempt

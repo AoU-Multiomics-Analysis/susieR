@@ -9,7 +9,9 @@ These inputs are shared across the main fine-mapping workflows.
 | `TensorQTLPermutations` | Permutation p-values output from tensorQTL. |
 | `PhenotypeBed` | BED file for the gene or phenotype to be fine-mapped. |
 | `CisDistance` | Window in bp added to each side of the TSS for fine-mapping. |
-| `PhenotypeID` | ID of the gene or protein to fine-map. |
+| `PhenotypeID` | Legacy single phenotype ID. When `PhenotypeIDs` or substring matching is used, this is used as the output prefix. |
+| `PhenotypeIDs` | Optional exact phenotype IDs to run together for one gene, such as multiple splicing introns. Omit to preserve the original single-phenotype behavior. |
+| `MatchPhenotypeIDSubstring` | If `true` and `PhenotypeIDs` is omitted, select all phenotype IDs containing `PhenotypeID`. Use for splice-junction IDs that embed the gene ID. |
 | `QTLCovariates` | Covariate table used in QTL calling. Use the same file given to tensorQTL. |
 | `SampleList` | List of sample IDs used in fine-mapping. Requires a header. |
 

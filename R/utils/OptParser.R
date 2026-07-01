@@ -44,4 +44,3 @@ option_list <- list(
 )
 option_list
 }
-

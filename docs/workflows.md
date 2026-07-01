@@ -6,6 +6,7 @@ The WDL descriptors live in `workflows/`. Each descriptor has a unique workflow 
 |---|---|---|
 | `workflows/susieR.wdl` | `SusieRWorkflow` | Prepare phenotype-specific inputs and run fine-mapping. |
 | `workflows/susieRonly.wdl` | `SusieROnlyWorkflow` | Run fine-mapping when inputs are already prepared. |
+| `workflows/ExtractMultiPhenotypeInputs.wdl` | `ExtractMultiPhenotypeInputsWorkflow` | Extract multi-phenotype BED and TensorQTL inputs without subsetting dosages. |
 | `workflows/prepInputsSusieR.wdl` | `PrepSusieRWorkflow` | Prepare phenotype-specific input files only. |
 | `workflows/ComputeR2Susie.wdl` | `ComputeR2SusieWorkflow` | Run cross-validation R2 evaluation. |
 | `workflows/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Merge sharded Susie Parquet outputs. |
@@ -28,7 +29,9 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `TensorQTLPermutations` | File | Permutation p-values output from tensorQTL. |
 | `PhenotypeBed` | File | BED file for the gene or phenotype to be fine-mapped. |
 | `CisDistance` | Int | Window size in bp added to each side of the TSS. |
-| `PhenotypeID` | String | ID of the gene or protein to fine-map. |
+| `PhenotypeID` | String | Legacy single phenotype ID. When `PhenotypeIDs` or substring matching is used, this becomes the output prefix. |
+| `PhenotypeIDs` | Array[String]? | Optional exact phenotype IDs to run together for one gene, such as multiple splicing introns. Omit to preserve the original single-phenotype behavior. |
+| `MatchPhenotypeIDSubstring` | Boolean | If `true` and `PhenotypeIDs` is omitted, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `QTLCovariates` | File | Covariate table used in QTL calling. |
 | `SampleList` | File | Sample IDs used in fine-mapping. Requires a header. |
 | `susie_rscript` | File | Path to the `susie.R` script. |
@@ -54,15 +57,38 @@ Optional inputs in addition to the shared fine-mapping inputs:
 | Input | Type | Description |
 |---|---|---|
 | `MAF` | Float? | Minor allele frequency cutoff. |
+| `PhenotypeIDs` | Array[String]? | Optional exact phenotype IDs to run together under `OutputPrefix`. Omit to preserve the original single-phenotype behavior. |
+| `MatchPhenotypeIDSubstring` | Boolean | If `true` and `PhenotypeIDs` is omitted, select all phenotype IDs containing `OutputPrefix`. |
 | `VariantList` | File? | Single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |
 | `AncestryFile` | File? | Ancestry metadata for per-population MAF filtering. |
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |
 
 Outputs are `SusieParquet`, `SusielbfParquet`, and `FullSusieParquet`.
 
+### `workflows/ExtractMultiPhenotypeInputs.wdl` - Phenotype Extraction Only
+
+Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenotype fine-mapping cases, without touching genotype dosages. Use this to materialize all splice-junction phenotypes for a gene before running fine-mapping against an already-prepared dosage file.
+
+| Input | Type | Description |
+|---|---|---|
+| `PhenotypeBed` | File | BED file containing phenotype rows. |
+| `TensorQTLPermutations` | File | TensorQTL permutation output. |
+| `PhenotypeID` | String | Legacy single phenotype ID, or gene/output prefix when selecting multiple embedded phenotype IDs. |
+| `PhenotypeIDs` | Array[String]? | Optional exact phenotype IDs to extract. Takes precedence over substring matching. |
+| `MatchPhenotypeIDSubstring` | Boolean | If `true` and `PhenotypeIDs` is omitted, select all phenotype IDs containing `PhenotypeID`. |
+| `AddSkipRow` | Boolean | Add the legacy `skip` row used by `susie.R` phenotype matrices. Defaults to `true`. |
+| `NumPrempt` | Int | Number of preemptible retries. |
+
+| Output | Description |
+|---|---|
+| `PhenotypeMatrix` | Uncompressed BED-style phenotype matrix containing the header, matched phenotype rows, and optional `skip` row. |
+| `SubsetPhenotypeBed` | Gzipped BED containing the header and matched phenotype rows only. |
+| `SubsetPermutationPvals` | TensorQTL permutation rows for the matched phenotype IDs. |
+| `MatchedPhenotypeIDs` | Exact phenotype IDs discovered from the phenotype BED. |
+
 ### `workflows/prepInputsSusieR.wdl` - Input Preparation Only
 
-Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation results to the region surrounding `PhenotypeID`. This is the first step of `workflows/susieR.wdl` exposed as a standalone workflow, useful for preparing inputs once before running fine-mapping multiple times.
+Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation results to the region surrounding `PhenotypeID`, all exact IDs in optional `PhenotypeIDs`, or all phenotype IDs containing `PhenotypeID` when `MatchPhenotypeIDSubstring` is true. This is the first step of `workflows/susieR.wdl` exposed as a standalone workflow, useful for preparing inputs once before running fine-mapping multiple times.
 
 | Output | Description |
 |---|---|

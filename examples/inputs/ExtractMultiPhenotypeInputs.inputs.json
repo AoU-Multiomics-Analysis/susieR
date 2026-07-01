@@ -1,0 +1,8 @@
+{
+  "ExtractMultiPhenotypeInputsWorkflow.PhenotypeBed": "gs://bucket/path/phenotypes.bed.gz",
+  "ExtractMultiPhenotypeInputsWorkflow.TensorQTLPermutations": "gs://bucket/path/tensorqtl.permutations.txt.gz",
+  "ExtractMultiPhenotypeInputsWorkflow.PhenotypeID": "gene_id",
+  "ExtractMultiPhenotypeInputsWorkflow.MatchPhenotypeIDSubstring": true,
+  "ExtractMultiPhenotypeInputsWorkflow.AddSkipRow": true,
+  "ExtractMultiPhenotypeInputsWorkflow.NumPrempt": 2
+}

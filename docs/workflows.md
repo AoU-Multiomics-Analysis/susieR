@@ -33,7 +33,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
 | `SelectTopPhenotypePerCluster` | Boolean | If `true`, fine-map one representative FDR-passing intron per parsed LeafCutter `clu_*` cluster instead of every matched intron. |
-| `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. Defaults to `pval_beta`. |
+| `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. Defaults to `qval`. |
 | `QTLCovariates` | File | Covariate table used in QTL calling. |
 | `SampleList` | File | Sample IDs used in fine-mapping. Requires a header. |
 | `susie_rscript` | File | Path to the `susie.R` script. |

@@ -30,7 +30,7 @@ task PrepInputs {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         File PhenotypeBed
         File TensorQTLPermutations
         Int NumPrempt
@@ -220,7 +220,7 @@ task susieR {
         Float MAF
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
     }
 
     command <<<
@@ -304,7 +304,7 @@ workflow SusieRWorkflow {
         Float MAF
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
     }
 
     call PrepInputs {

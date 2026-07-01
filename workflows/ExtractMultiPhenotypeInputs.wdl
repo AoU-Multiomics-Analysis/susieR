@@ -7,7 +7,7 @@ task ExtractMultiPhenotypeInputs {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         Boolean AddSkipRow = true
         Int NumPrempt = 2
     }
@@ -160,7 +160,7 @@ workflow ExtractMultiPhenotypeInputsWorkflow {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         Boolean AddSkipRow = true
         Int NumPrempt = 2
     }

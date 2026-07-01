@@ -21,7 +21,6 @@ Key command-line arguments:
 | `--genotype_matrix` | Tabix-indexed genotype dosage file. |
 | `--expression_matrix` | BED-format phenotype or expression file. |
 | `--phenotype_list` | TensorQTL permutation output that defines phenotypes to fine-map. |
-| `--phenotype_group` | Optional gene/group ID shared by all selected phenotypes in the run. |
 | `--covariates` | Covariate matrix used in QTL calling. |
 | `--sample_meta` | List of sample IDs to include. |
 | `--out_prefix` | Output file prefix. |

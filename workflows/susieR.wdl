@@ -145,7 +145,6 @@ task susieR {
             --phenotype_list ~{TensorQTLPermutations} \
             --expression_matrix ~{PhenotypeBed} \
             --covariates ~{QTLCovariates} \
-            --phenotype_group ~{OutputPrefix} \
             --out_prefix ~{OutputPrefix} \
             --cisdistance ~{CisDistance} \
 

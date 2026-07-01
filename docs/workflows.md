@@ -29,7 +29,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `TensorQTLPermutations` | File | Permutation p-values output from tensorQTL. |
 | `PhenotypeBed` | File | BED file for the gene or phenotype to be fine-mapped. |
 | `CisDistance` | Int | Window size in bp added to each side of the TSS. |
-| `PhenotypeID` | String | Legacy single phenotype ID. When `PhenotypeIDs` or substring matching is used, this becomes the output prefix and shared gene/group ID. |
+| `PhenotypeID` | String | Legacy single phenotype ID. When `PhenotypeIDs` or substring matching is used, this becomes the output prefix. |
 | `PhenotypeIDs` | Array[String]? | Optional exact phenotype IDs to run together for one gene, such as multiple splicing introns. Omit to preserve the original single-phenotype behavior. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true` and `PhenotypeIDs` is omitted, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `QTLCovariates` | File | Covariate table used in QTL calling. |

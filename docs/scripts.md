@@ -25,6 +25,7 @@ Key command-line arguments:
 | `--sample_meta` | List of sample IDs to include. |
 | `--out_prefix` | Output file prefix. |
 | `--cisdistance` | Cis window in bp added to each side of the TSS. |
+| `--reuse_genotype_matrix` | Reuse one residualized genotype matrix when selected phenotype windows merge into one region. |
 | `--MAF` | Optional minor allele frequency cutoff. |
 | `--AncestryMetadata` | Optional ancestry assignment file for per-population MAF filtering. |
 | `--VariantList` | Optional single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |

@@ -71,6 +71,14 @@ task PrepInputs {
         cat temp_header.txt feature.bed | bgzip -c - > ~{PhenotypeID}.bed.bgz
         #tabix ~{PhenotypeID}.bed.bgz
 
+        echo "Merging overlapping phenotype windows for dosage extraction"
+        awk 'BEGIN{OFS="\t"} {print $1,$2,$3}' feature.bed \
+            | sort -k1,1V -k2,2n -k3,3n \
+            | awk 'BEGIN{OFS="\t"} NR == 1 {chr=$1; start=$2; end=$3; next} $1 == chr && $2 <= end {if ($3 > end) end=$3; next} {print chr,start,end; chr=$1; start=$2; end=$3} END {if (NR > 0) print chr,start,end}' \
+            > dosage_regions.bed
+        echo "Matched phenotype rows: $(wc -l < feature.bed)"
+        echo "Merged dosage extraction regions: $(wc -l < dosage_regions.bed)"
+
         echo "Subsetting TensorQTL file"
         if [ "~{phenotype_match_mode}" = "contains" ]; then
             zcat "~{TensorQTLPermutations}" \
@@ -87,10 +95,13 @@ task PrepInputs {
         fi
         echo "$headerPermutations" > temp_header_perm.txt
         cat temp_header_perm.txt feature.txt > ~{PhenotypeID}.tensorqtl.txt
+        echo "Matched TensorQTL rows: $(wc -l < feature.txt)"
 
         echo "Subsetting dose file"
-        tabix "~{GenotypeDosages}" -R "~{PhenotypeID}.bed.bgz" > dose.tmp.tsv
+        tabix "~{GenotypeDosages}" -R dosage_regions.bed > dose.tmp.tsv
+        echo "Extracted dosage rows before de-duplication: $(wc -l < dose.tmp.tsv)"
         sort -k1,1V -k2,2n dose.tmp.tsv | awk '!seen[$0]++' > dose.sorted.tsv
+        echo "Extracted dosage rows after de-duplication: $(wc -l < dose.sorted.tsv)"
         (cat dosage_header.txt; cat dose.sorted.tsv) | bgzip -c > "~{PhenotypeID}.dose.tsv.gz"
         #tabix   ~{GenotypeDosages} --print-header  -R ~{PhenotypeID}.bed.bgz  | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
         #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
@@ -131,10 +142,11 @@ task susieR {
         Int memory
         Int NumPrempt
         Float MAF
+        Boolean ReuseGenotypeMatrix = false
     }
 
     command <<<
-        Rscript ~{susie_rscript} \
+        Rscript ~{susie_rscript} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true" else ""} \
             --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
@@ -147,7 +159,7 @@ task susieR {
     >>>
 
     runtime {
-        docker: 'quay.io/kfkf33/susier:v24.01.2'
+        docker: "ghcr.io/aou-multiomics-analysis/susier:main"
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
@@ -212,6 +224,7 @@ workflow SusieRWorkflow {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Float MAF
+        Boolean ReuseGenotypeMatrix = false
     }
 
     call PrepInputs {
@@ -238,7 +251,8 @@ workflow SusieRWorkflow {
             susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
-            MAF = MAF
+            MAF = MAF,
+            ReuseGenotypeMatrix = ReuseGenotypeMatrix
 
         }
     

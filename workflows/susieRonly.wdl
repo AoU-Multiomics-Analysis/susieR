@@ -15,6 +15,7 @@ task susieR {
         Int NumPrempt
         Float? MAF
         Boolean MatchPhenotypeIDSubstring = false
+        Boolean ReuseGenotypeMatrix = false
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -42,7 +43,7 @@ task susieR {
         head -n 1 input_gene.txt | awk -F'\t' 'BEGIN{OFS="\t"} {$4="skip"; print}' > skip.txt        
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
 
-        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \
+        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \
@@ -85,6 +86,7 @@ workflow SusieROnlyWorkflow {
         String OutputPrefix
         Float? MAF
         Boolean MatchPhenotypeIDSubstring = false
+        Boolean ReuseGenotypeMatrix = false
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -103,6 +105,7 @@ workflow SusieROnlyWorkflow {
             NumPrempt = NumPrempt,
             MAF = MAF,
             MatchPhenotypeIDSubstring = MatchPhenotypeIDSubstring,
+            ReuseGenotypeMatrix = ReuseGenotypeMatrix,
             VariantList = VariantList,
             AncestryFile = AncestryFile,
             AdditionalGenotypesBed = AdditionalGenotypesBed

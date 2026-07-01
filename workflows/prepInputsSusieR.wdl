@@ -50,6 +50,14 @@ task PrepInputs {
         cat temp_header.txt feature.bed | bgzip -c - > ~{PhenotypeID}.bed.bgz
         #tabix ~{PhenotypeID}.bed.bgz
 
+        echo "Merging overlapping phenotype windows for dosage extraction"
+        awk 'BEGIN{OFS="\t"} {print $1,$2,$3}' feature.bed \
+            | sort -k1,1V -k2,2n -k3,3n \
+            | awk 'BEGIN{OFS="\t"} NR == 1 {chr=$1; start=$2; end=$3; next} $1 == chr && $2 <= end {if ($3 > end) end=$3; next} {print chr,start,end; chr=$1; start=$2; end=$3} END {if (NR > 0) print chr,start,end}' \
+            > dosage_regions.bed
+        echo "Matched phenotype rows: $(wc -l < feature.bed)"
+        echo "Merged dosage extraction regions: $(wc -l < dosage_regions.bed)"
+
         echo "Subsetting TensorQTL file"
         if [ "~{phenotype_match_mode}" = "contains" ]; then
             zcat "~{TensorQTLPermutations}" \
@@ -66,15 +74,18 @@ task PrepInputs {
         fi
         echo "$headerPermutations" > temp_header_perm.txt
         cat temp_header_perm.txt feature.txt > ~{PhenotypeID}.tensorqtl.txt
+        echo "Matched TensorQTL rows: $(wc -l < feature.txt)"
 
         echo "Subsetting dose file"
         #(cat dosage_header.txt; tabix ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
-        tabix "~{GenotypeDosages}" -R "~{PhenotypeID}.bed.bgz" > dose.tmp.tsv
+        tabix "~{GenotypeDosages}" -R dosage_regions.bed > dose.tmp.tsv
+        echo "Extracted dosage rows before de-duplication: $(wc -l < dose.tmp.tsv)"
 
         #(head -n 1 dose.tmp.tsv && tail -n +2 dose.tmp.tsv | sort -k1,1V -k2,2n) \
         #| bgzip -c > ~{PhenotypeID}.dose.tsv.gz    
         (cat dosage_header.txt && sort -k1,1V -k2,2n dose.tmp.tsv | awk '!seen[$0]++') \
             | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
+        echo "Extracted dosage rows after de-duplication: $(zcat ~{PhenotypeID}.dose.tsv.gz | tail -n +2 | wc -l)"
         #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
         tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"
     >>>

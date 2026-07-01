@@ -27,6 +27,8 @@ option_list <- list(
     help="Value of the current qtl_group", metavar="type"),
   optparse::make_option(c("--cisdistance"), type="integer", default=1000000,
     help="Cis distance (bp) from center of gene [default \"%default\"]", metavar="number"),
+  optparse::make_option(c("--reuse_genotype_matrix"), type="logical", default=FALSE,
+    help="If true, reuse one residualized genotype matrix when selected phenotype windows merge into one region [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--chunk"), type="character", default="1 1",
     help="Chunking (e.g. '5 10' = 5th of 10 chunks) [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--eqtlutils"), type="character", default=NULL,

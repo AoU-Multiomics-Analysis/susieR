@@ -28,23 +28,19 @@ task PrepInputs {
         File GenotypeDosages
         File GenotypeDosageIndex
         String PhenotypeID
-        Array[String]? PhenotypeIDs
         Boolean MatchPhenotypeIDSubstring = false
         File PhenotypeBed
         File TensorQTLPermutations
         Int NumPrempt
     }
-    Array[String] phenotype_ids = select_first([PhenotypeIDs, [PhenotypeID]])
-    File PhenotypeIDFile = write_lines(phenotype_ids)
-    String phenotype_match_mode = if defined(PhenotypeIDs) then "exact-list" else if MatchPhenotypeIDSubstring then "contains" else "exact"
+    String phenotype_match_mode = if MatchPhenotypeIDSubstring then "contains" else "exact"
 
     command <<<
         echo "Extracting headers from files"
         headerPermutations=$(zcat "~{TensorQTLPermutations}" | head -n 1)
         headerBed=$(zcat "~{PhenotypeBed}" | head -n 1)
         echo "Phenotype match mode: ~{phenotype_match_mode}"
-        echo "Phenotype IDs selected for this run:"
-        cat "~{PhenotypeIDFile}"
+        echo "Phenotype ID selected for this run: ~{PhenotypeID}"
         
         echo "Bed file header:"
         echo "$headerBed"
@@ -62,7 +58,7 @@ task PrepInputs {
                 > feature.bed
         else
             zcat "~{PhenotypeBed}" \
-                | awk 'BEGIN{OFS="\t"} NR==FNR {ids[$1]=1; next} FNR == 1 && $4 == "phenotype_id" {next} ($4 in ids) {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' "~{PhenotypeIDFile}" - \
+                | awk -v phenotype_id="~{PhenotypeID}" 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {$2=$2-1000000; $3=$3+1000000; if($2<1) $2=1; print}' \
                 > feature.bed
         fi
         if [ ! -s feature.bed ]; then
@@ -82,7 +78,7 @@ task PrepInputs {
                 > feature.txt
         else
             zcat "~{TensorQTLPermutations}" \
-                | awk 'NR==FNR {ids[$1]=1; next} FNR == 1 && $1 == "phenotype_id" {next} ($1 in ids)' "~{PhenotypeIDFile}" - \
+                | awk -v phenotype_id="~{PhenotypeID}" 'FNR == 1 && $1 == "phenotype_id" {next} $1 == phenotype_id' \
                 > feature.txt
         fi
         if [ ! -s feature.txt ]; then
@@ -214,7 +210,6 @@ workflow SusieRWorkflow {
         Int memory
         Int NumPrempt
         String PhenotypeID
-        Array[String]? PhenotypeIDs
         Boolean MatchPhenotypeIDSubstring = false
         Float MAF
     }
@@ -223,7 +218,6 @@ workflow SusieRWorkflow {
         input:
             TensorQTLPermutations = TensorQTLPermutations,
             PhenotypeID = PhenotypeID,
-            PhenotypeIDs = PhenotypeIDs,
             MatchPhenotypeIDSubstring = MatchPhenotypeIDSubstring,
             GenotypeDosages = GenotypeDosages,
             GenotypeDosageIndex = GenotypeDosageIndex,

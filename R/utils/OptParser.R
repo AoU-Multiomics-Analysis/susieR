@@ -17,6 +17,8 @@ option_list <- list(
     help="Expression matrix file path (genes in rows, samples in columns)", metavar="type"),
   optparse::make_option(c("--phenotype_list"), type="character", default=NULL,
     help="Path to phenotype list file", metavar="type"),
+  optparse::make_option(c("--phenotype_group"), type="character", default=NULL,
+    help="Optional gene/group ID shared by all phenotypes in this run", metavar="type"),
   optparse::make_option(c("--genotype_matrix"), type="character", default=NULL,
     help="Genotype dosage matrix extracted from VCF", metavar="type"),
   optparse::make_option(c("--covariates"), type="character", default=NULL,
@@ -44,4 +46,3 @@ option_list <- list(
 )
 option_list
 }
-

@@ -14,15 +14,35 @@ task susieR {
         Int memory
         Int NumPrempt
         Float? MAF
+        Array[String]? PhenotypeIDs
+        Boolean MatchPhenotypeIDSubstring = false
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
     }
+    Array[String] phenotype_ids = select_first([PhenotypeIDs, [OutputPrefix]])
+    File PhenotypeIDFile = write_lines(phenotype_ids)
+    String phenotype_match_mode = if defined(PhenotypeIDs) then "exact-list" else if MatchPhenotypeIDSubstring then "contains" else "exact"
 
     command <<<
 
+        echo "Phenotype match mode: ~{phenotype_match_mode}"
+        echo "Phenotype IDs selected for this run:"
+        cat "~{PhenotypeIDFile}"
         zcat ~{PhenotypeBed} | head -n 1 > header.txt
-        zcat ~{PhenotypeBed} | grep ~{OutputPrefix} > input_gene.txt
+        if [ "~{phenotype_match_mode}" = "contains" ]; then
+            zcat ~{PhenotypeBed} \
+                | awk -v needle="~{OutputPrefix}" 'FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0' \
+                > input_gene.txt
+        else
+            zcat ~{PhenotypeBed} \
+                | awk 'NR==FNR {ids[$1]=1; next} FNR == 1 && $4 == "phenotype_id" {next} ($4 in ids)' "~{PhenotypeIDFile}" - \
+                > input_gene.txt
+        fi
+        if [ ! -s input_gene.txt ]; then
+            echo "No rows in PhenotypeBed matched the requested phenotype IDs" >&2
+            exit 1
+        fi
         head -n 1 input_gene.txt | awk -F'\t' 'BEGIN{OFS="\t"} {$4="skip"; print}' > skip.txt        
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
 
@@ -32,6 +52,7 @@ task susieR {
             --phenotype_list ~{TensorQTLPermutations} \
             --expression_matrix input_gene.bed \
             --covariates ~{QTLCovariates} \
+            --phenotype_group ~{OutputPrefix} \
             --out_prefix ~{OutputPrefix} \
             --cisdistance ~{CisDistance} 
 
@@ -68,6 +89,8 @@ workflow SusieROnlyWorkflow {
         Int NumPrempt
         String OutputPrefix
         Float? MAF
+        Array[String]? PhenotypeIDs
+        Boolean MatchPhenotypeIDSubstring = false
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -85,6 +108,8 @@ workflow SusieROnlyWorkflow {
             memory = memory,
             NumPrempt = NumPrempt,
             MAF = MAF,
+            PhenotypeIDs = PhenotypeIDs,
+            MatchPhenotypeIDSubstring = MatchPhenotypeIDSubstring,
             VariantList = VariantList,
             AncestryFile = AncestryFile,
             AdditionalGenotypesBed = AdditionalGenotypesBed

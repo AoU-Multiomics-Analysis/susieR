@@ -103,6 +103,7 @@ LoadData <- function(opt_list) {
     }
      
     expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 4)
+    phenotype_group <- opt_list$phenotype_group
     subset_matrix <- expression_matrix %>% select(1,2,3,4)
     print(colnames(subset_matrix))
     message('Loading covariates')
@@ -120,7 +121,10 @@ LoadData <- function(opt_list) {
         select(1,2,3,4) %>% 
         dplyr::rename('chromosome' = 1,'phenotype_pos' = 2) %>% 
         mutate(strand  = 1) %>% 
-        mutate(gene_id = phenotype_id,group_id = phenotype_id) %>% 
+        mutate(
+            gene_id = if (is.null(phenotype_group)) phenotype_id else phenotype_group,
+            group_id = if (is.null(phenotype_group)) phenotype_id else phenotype_group
+        ) %>%
         select(phenotype_id,group_id,gene_id,chromosome,phenotype_pos,strand)
     # Convert the sample list into the sample metadata shape required by
     # eQTLUtils; CV workflows can omit this because metadata is stored in CV RDS.
@@ -148,15 +152,28 @@ LoadData <- function(opt_list) {
     
     
     phenotype_table = importQtlmapPermutedPvalues(opt_list$phenotype_list)
+    if (!is.null(phenotype_group)) {
+        phenotype_table <- phenotype_table %>%
+            dplyr::left_join(
+                phenotype_meta %>% dplyr::select(phenotype_id, phenotype_group_id = group_id),
+                by = "phenotype_id"
+            ) %>%
+            dplyr::mutate(group_id = dplyr::coalesce(phenotype_group_id, group_id)) %>%
+            dplyr::select(-phenotype_group_id)
+    }
 
     filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
-    phenotype_list = dplyr::semi_join(data.frame(group_id=phenotype_table$phenotype_id,phenotype_id=phenotype_table$phenotype_id) , filtered_list, by = "group_id")
-    message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
-    if (nrow(phenotype_list) == 0) {
-        stop('No phenotypes found matching between phenotype table and  ')
-    }
+    phenotype_list = dplyr::semi_join(
+        phenotype_table %>% dplyr::select(group_id, phenotype_id) %>% dplyr::distinct(),
+        filtered_list %>% dplyr::select(group_id) %>% dplyr::distinct(),
+        by = "group_id"
+    )
     # Keep only phenotypes that are present in the expression matrix.
     phenotype_list = dplyr::filter(phenotype_list, phenotype_id %in% expression_matrix$phenotype_id)
+    message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
+    if (nrow(phenotype_list) == 0) {
+        stop('No phenotypes found matching between phenotype table and expression matrix')
+    }
 
     if (!is.null(opt_list$AncestryMetadata)) {
         AncestryDf <- LoadAncestryData(opt_list$AncestryMetadata)

@@ -32,6 +32,8 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `PhenotypeID` | String | Legacy single phenotype ID. When substring matching is used, this becomes the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
+| `SelectTopPhenotypePerCluster` | Boolean | If `true`, fine-map one representative FDR-passing intron per parsed LeafCutter `clu_*` cluster instead of every matched intron. |
+| `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. Defaults to `pval_beta`. |
 | `QTLCovariates` | File | Covariate table used in QTL calling. |
 | `SampleList` | File | Sample IDs used in fine-mapping. Requires a header. |
 | `susie_rscript` | File | Path to the `susie.R` script. |
@@ -59,6 +61,8 @@ Optional inputs in addition to the shared fine-mapping inputs:
 | `MAF` | Float? | Minor allele frequency cutoff. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `OutputPrefix`. |
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
+| `SelectTopPhenotypePerCluster` | Boolean | If `true`, reduce selected phenotypes to the strongest FDR-passing intron per parsed LeafCutter `clu_*` cluster. |
+| `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. |
 | `VariantList` | File? | Single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |
 | `AncestryFile` | File? | Ancestry metadata for per-population MAF filtering. |
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |
@@ -75,6 +79,8 @@ Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenot
 | `TensorQTLPermutations` | File | TensorQTL permutation output. |
 | `PhenotypeID` | String | Legacy single phenotype ID, or gene/output prefix when selecting multiple embedded phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. |
+| `SelectTopPhenotypePerCluster` | Boolean | If `true`, output one representative FDR-passing intron per parsed LeafCutter `clu_*` cluster. |
+| `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. |
 | `AddSkipRow` | Boolean | Add the legacy `skip` row used by `susie.R` phenotype matrices. Defaults to `true`. |
 | `NumPrempt` | Int | Number of preemptible retries. |
 

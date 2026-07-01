@@ -26,6 +26,8 @@ Key command-line arguments:
 | `--out_prefix` | Output file prefix. |
 | `--cisdistance` | Cis window in bp added to each side of the TSS. |
 | `--reuse_genotype_matrix` | Reuse one residualized genotype matrix when selected phenotype windows merge into one region. |
+| `--select_top_phenotype_per_cluster` | Fine-map only the strongest FDR-passing phenotype per parsed LeafCutter `clu_*` cluster. |
+| `--top_phenotype_pvalue_column` | Preferred TensorQTL p-value column for choosing the representative phenotype per cluster. Defaults to `pval_beta`. |
 | `--MAF` | Optional minor allele frequency cutoff. |
 | `--AncestryMetadata` | Optional ancestry assignment file for per-population MAF filtering. |
 | `--VariantList` | Optional single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |

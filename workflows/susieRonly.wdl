@@ -16,6 +16,8 @@ task susieR {
         Float? MAF
         Boolean MatchPhenotypeIDSubstring = false
         Boolean ReuseGenotypeMatrix = false
+        Boolean SelectTopPhenotypePerCluster = false
+        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -43,7 +45,7 @@ task susieR {
         head -n 1 input_gene.txt | awk -F'\t' 'BEGIN{OFS="\t"} {$4="skip"; print}' > skip.txt        
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
 
-        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true  " else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \
+        Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true  " else ""} ~{if SelectTopPhenotypePerCluster then "--select_top_phenotype_per_cluster true --top_phenotype_pvalue_column " else ""}~{if SelectTopPhenotypePerCluster then TopPhenotypePerClusterPvalueColumn else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
             --phenotype_list ~{TensorQTLPermutations} \
@@ -87,6 +89,8 @@ workflow SusieROnlyWorkflow {
         Float? MAF
         Boolean MatchPhenotypeIDSubstring = false
         Boolean ReuseGenotypeMatrix = false
+        Boolean SelectTopPhenotypePerCluster = false
+        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -106,6 +110,8 @@ workflow SusieROnlyWorkflow {
             MAF = MAF,
             MatchPhenotypeIDSubstring = MatchPhenotypeIDSubstring,
             ReuseGenotypeMatrix = ReuseGenotypeMatrix,
+            SelectTopPhenotypePerCluster = SelectTopPhenotypePerCluster,
+            TopPhenotypePerClusterPvalueColumn = TopPhenotypePerClusterPvalueColumn,
             VariantList = VariantList,
             AncestryFile = AncestryFile,
             AdditionalGenotypesBed = AdditionalGenotypesBed

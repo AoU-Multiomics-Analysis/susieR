@@ -12,6 +12,8 @@ These inputs are shared across the main fine-mapping workflows.
 | `PhenotypeID` | Legacy single phenotype ID. When substring matching is used, this is used as the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | If `true`, select all phenotype IDs containing `PhenotypeID`. Use for splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
+| `SelectTopPhenotypePerCluster` | If `true`, reduce matched, FDR-passing LeafCutter phenotypes to the strongest intron per parsed `clu_*` cluster before fine-mapping. Defaults to `false` to preserve all-intron behavior. |
+| `TopPhenotypePerClusterPvalueColumn` | Preferred TensorQTL p-value column for selecting the representative intron per cluster. Defaults to `pval_beta`, with fallbacks in the code. |
 | `QTLCovariates` | Covariate table used in QTL calling. Use the same file given to tensorQTL. |
 | `SampleList` | List of sample IDs used in fine-mapping. Requires a header. |
 

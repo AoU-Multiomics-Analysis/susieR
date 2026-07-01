@@ -142,10 +142,11 @@ task susieR {
         Int memory
         Int NumPrempt
         Float MAF
+        Boolean ReuseGenotypeMatrix = false
     }
 
     command <<<
-        Rscript ~{susie_rscript} \
+        Rscript ~{susie_rscript} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true" else ""} \
             --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
@@ -158,7 +159,7 @@ task susieR {
     >>>
 
     runtime {
-        docker: 'quay.io/kfkf33/susier:v24.01.2'
+        docker: "ghcr.io/aou-multiomics-analysis/susier:main"
         memory: "${memory}GB"
         disks: "local-disk 500 SSD"
         bootDiskSizeGb: 25
@@ -223,6 +224,7 @@ workflow SusieRWorkflow {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Float MAF
+        Boolean ReuseGenotypeMatrix = false
     }
 
     call PrepInputs {
@@ -249,7 +251,8 @@ workflow SusieRWorkflow {
             susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
-            MAF = MAF
+            MAF = MAF,
+            ReuseGenotypeMatrix = ReuseGenotypeMatrix
 
         }
     

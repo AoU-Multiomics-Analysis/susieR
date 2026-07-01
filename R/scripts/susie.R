@@ -72,6 +72,22 @@ selected_phenotypes = phenotype_list %>%
   dplyr::filter(group_id %in% selected_group_ids) %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
+reuse_genotype_matrix <- isTRUE(opt$reuse_genotype_matrix)
+reusable_genotype <- NULL
+if (reuse_genotype_matrix && length(selected_phenotypes) > 1) {
+  message("Reusable genotype matrix requested")
+  reusable_genotype <- prepareReusableGenotype(selected_phenotypes,
+                                               selected_qtl_group,
+                                               genotype_file,
+                                               covariates_matrix,
+                                               cis_distance,
+                                               ancestry_data = AncestryDf,
+                                               MAF = MAF_threshold,
+                                               variant_list = variant_list,
+                                               additional_genotypes = additional_genotypes)
+} else if (reuse_genotype_matrix) {
+  message("Reusable genotype matrix requested for a single phenotype; using per-phenotype path")
+}
 message('Fine-mapping begin')
 # Run finemapPhenotype for each selected trait and keep the raw result object as
 # an RDS for debugging or post hoc inspection.
@@ -82,7 +98,8 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
                                                               ancestry_data = AncestryDf, 
                                                               MAF = MAF_threshold,
                                                               variant_list =variant_list,
-                                                              additional_genotypes = additional_genotypes
+                                                              additional_genotypes = additional_genotypes,
+                                                              reusable_genotype = reusable_genotype
                                                               ))
 saveRDS(results,file = paste0(opt$out_prefix,'_susie.rds') )
 

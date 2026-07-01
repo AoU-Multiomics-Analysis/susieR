@@ -77,6 +77,134 @@ standardize_rows <- function(mat) {
   mat
 }
 
+normalize_chr <- function(chr) {
+  stringr::str_remove(as.character(chr), "^chr")
+}
+
+parse_variant_ids <- function(variant_ids) {
+  parts <- stringr::str_split_fixed(variant_ids, "_", 4)
+  data.frame(
+    variant_id = variant_ids,
+    chromosome = normalize_chr(parts[, 1]),
+    position = suppressWarnings(as.integer(parts[, 2])),
+    stringsAsFactors = FALSE
+  )
+}
+
+merge_phenotype_windows <- function(phenotype_meta, phenotype_ids, cis_distance) {
+  windows <- phenotype_meta %>%
+    dplyr::filter(phenotype_id %in% phenotype_ids) %>%
+    dplyr::transmute(
+      chromosome = as.character(chromosome),
+      chromosome_norm = normalize_chr(chromosome),
+      start = pmax(1, as.numeric(phenotype_pos) - cis_distance),
+      end = as.numeric(phenotype_pos) + cis_distance
+    ) %>%
+    dplyr::arrange(chromosome_norm, start, end)
+
+  if (nrow(windows) == 0) {
+    return(windows)
+  }
+
+  merged <- list()
+  current <- windows[1, , drop = FALSE]
+  for (i in seq_len(nrow(windows))[-1]) {
+    row <- windows[i, , drop = FALSE]
+    if (row$chromosome_norm == current$chromosome_norm && row$start <= current$end) {
+      current$end <- max(current$end, row$end)
+    } else {
+      merged[[length(merged) + 1]] <- current
+      current <- row
+    }
+  }
+  merged[[length(merged) + 1]] <- current
+  dplyr::bind_rows(merged)
+}
+
+prepareReusableGenotype <- function(phenotype_ids,
+                                    se,
+                                    genotype_file,
+                                    covariates,
+                                    cis_distance,
+                                    ancestry_data = NULL,
+                                    MAF = 0,
+                                    variant_list = NULL,
+                                    additional_genotypes = NULL) {
+  phenotype_ids <- unname(unlist(phenotype_ids))
+  if (!is.character(genotype_file)) {
+    message("Reusable genotype matrix requested but genotype input is already pre-loaded; using per-phenotype path")
+    return(NULL)
+  }
+  if (!is.null(additional_genotypes)) {
+    message("Reusable genotype matrix requested but additional genotypes are present; using per-phenotype path")
+    return(NULL)
+  }
+
+  phenotype_meta <- SummarizedExperiment::rowData(se) %>% as.data.frame()
+  merged_windows <- merge_phenotype_windows(phenotype_meta, phenotype_ids, cis_distance)
+  if (nrow(merged_windows) != 1) {
+    message(
+      "Reusable genotype matrix requested, but selected phenotype windows merged into ",
+      nrow(merged_windows),
+      " regions; using per-phenotype path"
+    )
+    return(NULL)
+  }
+
+  message(
+    "Preparing reusable genotype matrix for ",
+    merged_windows$chromosome,
+    ":",
+    merged_windows$start,
+    "-",
+    merged_windows$end
+  )
+  first_phenotype <- phenotype_ids[[1]]
+  gene_vector <- eQTLUtils::extractPhentypeFromSE(first_phenotype, se, "counts")
+  sample_ids <- gene_vector$genotype_id
+  covariates_matrix <- cbind(covariates[sample_ids, ], 1)
+  hat <- diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
+
+  genotype_matrix <- eQTLUtils::extractGenotypeMatrixFromDosage(
+    chr = merged_windows$chromosome,
+    start = merged_windows$start,
+    end = merged_windows$end,
+    dosage_file = genotype_file
+  ) %>%
+    filterMAF(ancestry_data, MAF_threshold = MAF, variant_list = variant_list)
+
+  message("Subsetting reusable genotype matrix to individuals in the molecular data")
+  gt_matrix <- genotype_matrix[, sample_ids]
+  rm(genotype_matrix)
+  gc()
+
+  nonzero_idx <- which(rowSums(round(gt_matrix, 0), na.rm = TRUE) != 0)
+  if (length(nonzero_idx) == 0) {
+    stop("No variant with alt alleles")
+  }
+  gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
+  gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
+  variant_names <- rownames(gt_matrix)
+
+  message("Standardizing reusable genotype matrix")
+  gt_std <- standardize_rows(gt_matrix)
+  rm(gt_matrix)
+  gc()
+
+  message("Computing reusable gt_hat")
+  gt_hat <- hat %*% t(gt_std)
+  rm(gt_std)
+  gc()
+
+  list(
+    gt_hat = gt_hat,
+    variant_names = variant_names,
+    variant_info = parse_variant_ids(variant_names),
+    sample_ids = sample_ids,
+    hat = hat
+  )
+}
+
 #MergeAdditionalGenotypes <- function(GenotypeMatrix,AdditionalGenotypes) {
 
 #GenotypeMatrixSampleList <- as.character(colnames(GenotypeMatrix))
@@ -137,7 +265,7 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
 
 # Fine-map one phenotype by loading local cis dosages, residualizing expression
 # and genotypes against covariates, then fitting susieR.
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL){
   message("Processing phenotype: ", phenotype_id)
   
   # Extract and rank-normalize the target phenotype from the SummarizedExperiment.
@@ -145,6 +273,44 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     dplyr::mutate(phenotype_value_std = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) / sum(!is.na(phenotype_value))))
   selected_phenotype = phenotype_id
   gene_meta = dplyr::filter(SummarizedExperiment::rowData(se) %>% as.data.frame(), phenotype_id == selected_phenotype)
+
+  if (!is.null(reusable_genotype)) {
+    message("Using reusable residualized genotype matrix")
+    sample_ids <- reusable_genotype$sample_ids
+    gene_vector <- gene_vector %>%
+      dplyr::filter(genotype_id %in% sample_ids)
+    sample_match <- match(sample_ids, gene_vector$genotype_id)
+    if (any(is.na(sample_match))) {
+      stop("Reusable genotype matrix sample set does not match phenotype samples")
+    }
+    gene_vector <- gene_vector[sample_match, , drop = FALSE]
+    expression_vector <- reusable_genotype$hat %*% gene_vector$phenotype_value_std
+    names(expression_vector) <- sample_ids
+
+    phenotype_chr <- normalize_chr(gene_meta$chromosome)
+    phenotype_start <- gene_meta$phenotype_pos - cis_distance
+    phenotype_end <- gene_meta$phenotype_pos + cis_distance
+    variant_idx <- reusable_genotype$variant_info$chromosome == phenotype_chr &
+      reusable_genotype$variant_info$position >= phenotype_start &
+      reusable_genotype$variant_info$position <= phenotype_end
+    variant_idx[is.na(variant_idx)] <- FALSE
+    if (!any(variant_idx, na.rm = TRUE)) {
+      stop("No variants in the reusable genotype matrix overlap the phenotype cis window")
+    }
+
+    gt_hat <- reusable_genotype$gt_hat[, variant_idx, drop = FALSE]
+    variant_names <- reusable_genotype$variant_names[variant_idx]
+    fitted <- susieR::susie(gt_hat, expression_vector,
+                            L = 10,
+                            estimate_residual_variance = TRUE,
+                            estimate_prior_variance = TRUE,
+                            scaled_prior_variance = 0.1,
+                            verbose = TRUE,
+                            compute_univariate_zscore = TRUE,
+                            min_abs_corr = 0.5)
+    fitted$variant_id = variant_names
+    return(fitted)
+  }
 
   # Align covariates to phenotype sample order and add an intercept column.
   covariates_matrix = cbind(covariates[gene_vector$genotype_id,], 1)

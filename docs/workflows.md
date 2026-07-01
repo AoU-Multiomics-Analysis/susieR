@@ -31,6 +31,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `CisDistance` | Int | Window size in bp added to each side of the TSS. |
 | `PhenotypeID` | String | Legacy single phenotype ID. When substring matching is used, this becomes the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
+| `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
 | `QTLCovariates` | File | Covariate table used in QTL calling. |
 | `SampleList` | File | Sample IDs used in fine-mapping. Requires a header. |
 | `susie_rscript` | File | Path to the `susie.R` script. |
@@ -57,6 +58,7 @@ Optional inputs in addition to the shared fine-mapping inputs:
 |---|---|---|
 | `MAF` | Float? | Minor allele frequency cutoff. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `OutputPrefix`. |
+| `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
 | `VariantList` | File? | Single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |
 | `AncestryFile` | File? | Ancestry metadata for per-population MAF filtering. |
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |

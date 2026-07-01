@@ -40,6 +40,66 @@ importQtlmapPermutedPvalues <- function(perm_path){
   return(tbl)
 }
 
+parseLeafCutterClusterId <- function(phenotype_ids) {
+  phenotype_ids <- as.character(phenotype_ids)
+  cluster_matches <- regexpr("clu_[^:]+", phenotype_ids, perl = TRUE)
+  cluster_match_lengths <- attr(cluster_matches, "match.length")
+  cluster_ids <- rep(NA_character_, length(phenotype_ids))
+  matched <- cluster_matches > 0
+  cluster_ids[matched] <- substring(
+    phenotype_ids[matched],
+    cluster_matches[matched],
+    cluster_matches[matched] + cluster_match_lengths[matched] - 1
+  )
+  cluster_ids[!matched] <- phenotype_ids[!matched]
+  cluster_ids
+}
+
+selectTopPhenotypePerCluster <- function(phenotype_table, preferred_pvalue_column = "pval_beta") {
+  pvalue_candidates <- unique(c(
+    preferred_pvalue_column,
+    "pval_beta",
+    "pval_perm",
+    "pval_nominal",
+    "pval_true_df",
+    "qval",
+    "p_fdr"
+  ))
+  pvalue_column <- pvalue_candidates[pvalue_candidates %in% colnames(phenotype_table)][1]
+
+  if (is.na(pvalue_column)) {
+    stop(
+      "No usable p-value column found for selecting top phenotype per cluster. Tried: ",
+      paste(pvalue_candidates, collapse = ", ")
+    )
+  }
+
+  message("Selecting strongest phenotype per LeafCutter cluster using column: ", pvalue_column)
+  ranked_table <- phenotype_table %>%
+    dplyr::mutate(
+      cluster_id = parseLeafCutterClusterId(phenotype_id),
+      cluster_pvalue = suppressWarnings(as.numeric(.data[[pvalue_column]])),
+      cluster_pvalue_missing = is.na(cluster_pvalue),
+      phenotype_tiebreak = as.character(phenotype_id)
+    ) %>%
+    dplyr::arrange(cluster_id, cluster_pvalue_missing, cluster_pvalue, phenotype_tiebreak) %>%
+    dplyr::group_by(cluster_id) %>%
+    dplyr::slice(1) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-cluster_pvalue, -cluster_pvalue_missing, -phenotype_tiebreak)
+
+  message(
+    "Selected ",
+    nrow(ranked_table),
+    " representative phenotypes across ",
+    dplyr::n_distinct(ranked_table$cluster_id),
+    " clusters from ",
+    nrow(phenotype_table),
+    " candidate phenotypes"
+  )
+  ranked_table
+}
+
 
 # Group samples by ancestry and create balanced cross-validation fold IDs.
 CreateCVFoldsMetadata <- function(SampleMetadataPath,AncestryDf,nFolds = 5) {
@@ -147,16 +207,25 @@ LoadData <- function(opt_list) {
     message('Loading QTL stats')
     
     
-    phenotype_table = importQtlmapPermutedPvalues(opt_list$phenotype_list)
+    phenotype_table = importQtlmapPermutedPvalues(opt_list$phenotype_list) %>%
+        dplyr::filter(phenotype_id %in% expression_matrix$phenotype_id)
 
-    filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05) 
-    phenotype_list = dplyr::semi_join(
-        phenotype_table %>% dplyr::select(group_id, phenotype_id) %>% dplyr::distinct(),
-        filtered_list %>% dplyr::select(group_id) %>% dplyr::distinct(),
-        by = "group_id"
-    )
-    # Keep only phenotypes that are present in the expression matrix.
-    phenotype_list = dplyr::filter(phenotype_list, phenotype_id %in% expression_matrix$phenotype_id)
+    filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05)
+    if (isTRUE(opt_list$select_top_phenotype_per_cluster)) {
+        filtered_list <- selectTopPhenotypePerCluster(
+            filtered_list,
+            preferred_pvalue_column = opt_list$top_phenotype_pvalue_column
+        )
+        phenotype_list = filtered_list %>%
+            dplyr::select(group_id, phenotype_id) %>%
+            dplyr::distinct()
+    } else {
+        phenotype_list = dplyr::semi_join(
+            phenotype_table %>% dplyr::select(group_id, phenotype_id) %>% dplyr::distinct(),
+            filtered_list %>% dplyr::select(group_id) %>% dplyr::distinct(),
+            by = "group_id"
+        )
+    }
     message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
     if (nrow(phenotype_list) == 0) {
         stop('No phenotypes found matching between phenotype table and expression matrix')

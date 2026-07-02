@@ -71,7 +71,7 @@ Outputs are `SusieParquet`, `SusielbfParquet`, and `FullSusieParquet`.
 
 ### `workflows/ExtractMultiPhenotypeInputs.wdl` - Phenotype Extraction Only
 
-Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenotype fine-mapping cases, without touching genotype dosages. Use this to materialize all splice-junction phenotypes for a gene before running fine-mapping against an already-prepared dosage file.
+Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenotype fine-mapping cases, without touching genotype dosages. Use this to materialize all splice-junction phenotypes for a gene before running fine-mapping against an already-prepared dosage file. Representative intron-per-cluster selection is handled by the fine-mapping workflows, not this extraction helper.
 
 | Input | Type | Description |
 |---|---|---|
@@ -79,8 +79,6 @@ Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenot
 | `TensorQTLPermutations` | File | TensorQTL permutation output. |
 | `PhenotypeID` | String | Legacy single phenotype ID, or gene/output prefix when selecting multiple embedded phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. |
-| `SelectTopPhenotypePerCluster` | Boolean | If `true`, output one representative FDR-passing intron per parsed LeafCutter `clu_*` cluster. |
-| `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. |
 | `AddSkipRow` | Boolean | Add the legacy `skip` row used by `susie.R` phenotype matrices. Defaults to `true`. |
 | `NumPrempt` | Int | Number of preemptible retries. |
 

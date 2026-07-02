@@ -78,7 +78,7 @@ standardize_rows <- function(mat) {
 }
 
 normalize_chr <- function(chr) {
-  stringr::str_remove(as.character(chr), "^chr")
+  stringr::str_remove(as.character(chr), "^(?i:chr)+")
 }
 
 parse_variant_ids <- function(variant_ids) {
@@ -295,21 +295,33 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
       reusable_genotype$variant_info$position <= phenotype_end
     variant_idx[is.na(variant_idx)] <- FALSE
     if (!any(variant_idx, na.rm = TRUE)) {
-      stop("No variants in the reusable genotype matrix overlap the phenotype cis window")
+      message(
+        "Reusable genotype matrix has no variants overlapping ",
+        phenotype_chr,
+        ":",
+        phenotype_start,
+        "-",
+        phenotype_end,
+        "; using per-phenotype genotype extraction"
+      )
+      message(
+        "Reusable genotype chromosomes: ",
+        paste(utils::head(unique(reusable_genotype$variant_info$chromosome), 10), collapse = ", ")
+      )
+    } else {
+      gt_hat <- reusable_genotype$gt_hat[, variant_idx, drop = FALSE]
+      variant_names <- reusable_genotype$variant_names[variant_idx]
+      fitted <- susieR::susie(gt_hat, expression_vector,
+                              L = 10,
+                              estimate_residual_variance = TRUE,
+                              estimate_prior_variance = TRUE,
+                              scaled_prior_variance = 0.1,
+                              verbose = TRUE,
+                              compute_univariate_zscore = TRUE,
+                              min_abs_corr = 0.5)
+      fitted$variant_id = variant_names
+      return(fitted)
     }
-
-    gt_hat <- reusable_genotype$gt_hat[, variant_idx, drop = FALSE]
-    variant_names <- reusable_genotype$variant_names[variant_idx]
-    fitted <- susieR::susie(gt_hat, expression_vector,
-                            L = 10,
-                            estimate_residual_variance = TRUE,
-                            estimate_prior_variance = TRUE,
-                            scaled_prior_variance = 0.1,
-                            verbose = TRUE,
-                            compute_univariate_zscore = TRUE,
-                            min_abs_corr = 0.5)
-    fitted$variant_id = variant_names
-    return(fitted)
   }
 
   # Align covariates to phenotype sample order and add an intercept column.

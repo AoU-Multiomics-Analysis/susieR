@@ -17,7 +17,7 @@ task susieR {
         Boolean MatchPhenotypeIDSubstring = false
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -90,7 +90,7 @@ workflow SusieROnlyWorkflow {
         Boolean MatchPhenotypeIDSubstring = false
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed

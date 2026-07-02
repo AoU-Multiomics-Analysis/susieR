@@ -55,7 +55,7 @@ parseLeafCutterClusterId <- function(phenotype_ids) {
   cluster_ids
 }
 
-selectTopPhenotypePerCluster <- function(phenotype_table, preferred_pvalue_column = "pval_beta") {
+selectTopPhenotypePerCluster <- function(phenotype_table, preferred_pvalue_column = "qval") {
   pvalue_candidates <- unique(c(
     preferred_pvalue_column,
     "pval_beta",

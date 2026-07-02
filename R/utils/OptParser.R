@@ -31,7 +31,7 @@ option_list <- list(
     help="If true, reuse one residualized genotype matrix when selected phenotype windows merge into one region [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--select_top_phenotype_per_cluster"), type="logical", default=FALSE,
     help="If true, fine-map only the strongest phenotype per LeafCutter cluster [default \"%default\"]", metavar="type"),
-  optparse::make_option(c("--top_phenotype_pvalue_column"), type="character", default="pval_beta",
+  optparse::make_option(c("--top_phenotype_pvalue_column"), type="character", default="qval",
     help="Preferred TensorQTL p-value column used to choose the strongest phenotype per LeafCutter cluster [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--chunk"), type="character", default="1 1",
     help="Chunking (e.g. '5 10' = 5th of 10 chunks) [default \"%default\"]", metavar="type"),

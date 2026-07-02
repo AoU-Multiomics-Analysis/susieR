@@ -7,7 +7,7 @@ task PrepInputs {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         File PhenotypeBed
         File TensorQTLPermutations
         Int NumPrempt
@@ -196,7 +196,7 @@ workflow PrepSusieRWorkflow {
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
         Boolean SelectTopPhenotypePerCluster = false
-        String TopPhenotypePerClusterPvalueColumn = "pval_beta"
+        String TopPhenotypePerClusterPvalueColumn = "qval"
         Int WindowSize = 1000000
 
     }

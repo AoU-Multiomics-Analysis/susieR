@@ -9,6 +9,9 @@ workflows:
   - subclass: WDL 
     primaryDescriptorPath: /workflows/susieRonly.wdl
     name: "SusieRonly"
+  - subclass: WDL
+    primaryDescriptorPath: /workflows/ExtractMultiPhenotypeInputs.wdl
+    name: "ExtractMultiPhenotypeInputs"
   - subclass: WDL 
     primaryDescriptorPath: /workflows/ComputeR2Susie.wdl
     name: "ComputeR2Susie"

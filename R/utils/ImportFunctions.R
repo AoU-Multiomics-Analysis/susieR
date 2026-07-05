@@ -142,6 +142,78 @@ AdditionalGenotypes <- fread(AdditionalGenotypesBed,header = TRUE) %>%
 AdditionalGenotypes
 }
 
+reportPhenotypeIdPreview <- function(phenotype_ids, label, max_ids = 20) {
+    phenotype_ids <- unique(as.character(phenotype_ids))
+    phenotype_ids <- phenotype_ids[!is.na(phenotype_ids) & phenotype_ids != ""]
+    message(label, ": ", length(phenotype_ids), " unique ID(s)")
+    if (length(phenotype_ids) > 0) {
+        message("First ", min(max_ids, length(phenotype_ids)), " ", label, ":")
+        for (phenotype_id in utils::head(phenotype_ids, max_ids)) {
+            message("  ", phenotype_id)
+        }
+        if (length(phenotype_ids) > max_ids) {
+            message("  ... (", length(phenotype_ids) - max_ids, " additional ID(s) not shown)")
+        }
+    }
+    invisible(phenotype_ids)
+}
+
+reportPhenotypeMatchDiagnostics <- function(requested_phenotype_id,
+                                            phenotype_bed_ids,
+                                            tensorqtl_ids,
+                                            max_ids = 20) {
+    requested_phenotype_id <- as.character(requested_phenotype_id)
+    if (length(requested_phenotype_id) == 0 ||
+        is.na(requested_phenotype_id[[1]]) ||
+        requested_phenotype_id[[1]] == "") {
+        requested_phenotype_id <- "<not supplied>"
+    }
+
+    message("Requested phenotype ID(s): ", requested_phenotype_id[[1]])
+    phenotype_bed_ids <- reportPhenotypeIdPreview(
+        phenotype_bed_ids,
+        "available phenotype IDs in phenotype BED",
+        max_ids = max_ids
+    )
+    tensorqtl_ids <- reportPhenotypeIdPreview(
+        tensorqtl_ids,
+        "available phenotype IDs in TensorQTL permutations",
+        max_ids = max_ids
+    )
+    shared_ids <- intersect(phenotype_bed_ids, tensorqtl_ids)
+    reportPhenotypeIdPreview(
+        shared_ids,
+        "phenotype IDs shared between phenotype BED and TensorQTL permutations",
+        max_ids = max_ids
+    )
+
+    if (requested_phenotype_id[[1]] != "<not supplied>") {
+        bed_substring_matches <- phenotype_bed_ids[
+            grepl(requested_phenotype_id[[1]], phenotype_bed_ids, fixed = TRUE)
+        ]
+        tensorqtl_substring_matches <- tensorqtl_ids[
+            grepl(requested_phenotype_id[[1]], tensorqtl_ids, fixed = TRUE)
+        ]
+
+        reportPhenotypeIdPreview(
+            bed_substring_matches,
+            "phenotype BED substring fallback matches",
+            max_ids = max_ids
+        )
+        reportPhenotypeIdPreview(
+            tensorqtl_substring_matches,
+            "TensorQTL substring fallback matches",
+            max_ids = max_ids
+        )
+
+        if (length(bed_substring_matches) > 0 || length(tensorqtl_substring_matches) > 0) {
+            message("If the substring fallback matches are intended, rerun with MatchPhenotypeIDSubstring=true.")
+        }
+    }
+
+    invisible(NULL)
+}
+
 # Main data loader used by susie.R and ComputeR2Susie.R. It validates required
 # inputs, loads molecular/covariate/QTL data, and returns a named list that is
 # injected into the caller environment.
@@ -207,10 +279,18 @@ LoadData <- function(opt_list) {
     message('Loading QTL stats')
     
     
-    phenotype_table = importQtlmapPermutedPvalues(opt_list$phenotype_list) %>%
+    phenotype_table_all <- importQtlmapPermutedPvalues(opt_list$phenotype_list)
+    phenotype_table = phenotype_table_all %>%
         dplyr::filter(phenotype_id %in% expression_matrix$phenotype_id)
 
     filtered_list = dplyr::filter(phenotype_table, p_fdr < 0.05)
+    if (nrow(phenotype_table) == 0 || nrow(filtered_list) == 0) {
+        reportPhenotypeMatchDiagnostics(
+            requested_phenotype_id = opt_list$out_prefix,
+            phenotype_bed_ids = expression_matrix$phenotype_id,
+            tensorqtl_ids = phenotype_table_all$phenotype_id
+        )
+    }
     if (isTRUE(opt_list$select_top_phenotype_per_cluster)) {
         filtered_list <- selectTopPhenotypePerCluster(
             filtered_list,
@@ -228,7 +308,7 @@ LoadData <- function(opt_list) {
     }
     message("Number of phenotypes included for analysis: ", nrow(phenotype_list))
     if (nrow(phenotype_list) == 0) {
-        stop('No phenotypes found matching between phenotype table and expression matrix')
+        stop('No phenotypes found matching between phenotype table and expression matrix after filtering')
     }
 
     if (!is.null(opt_list$AncestryMetadata)) {

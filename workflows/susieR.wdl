@@ -174,6 +174,7 @@ task susieR {
         File SusieParquet = "${OutputPrefix}.parquet"
         File lbfParquet = "${OutputPrefix}.lbf_variable.parquet"
         File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
+        File VariantPositionSummary = "${OutputPrefix}.variant_position_summary.tsv"
     }
 }
 
@@ -273,6 +274,7 @@ workflow SusieRWorkflow {
         File SusieParquet = susieR.SusieParquet
         File SusielbfParquet = susieR.lbfParquet
         File FullSusieParquet = susieR.FullSusieParquet
+        File VariantPositionSummary = susieR.VariantPositionSummary
         File SubsetBed = PrepInputs.SubsetBed
         #File SubsetBedIndex = PrepInputs.SubsetBedIndex
         File SubsetDosages = PrepInputs.SubsetDosages

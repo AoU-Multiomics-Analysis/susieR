@@ -6,13 +6,14 @@ The workflow entrypoint scripts live in `R/scripts/`. Shared helper functions li
 
 The main fine-mapping script. It loads genotype dosages, expression or phenotype data, covariates, and a list of phenotypes to fine-map, then runs susieR on each phenotype in the provided cis window.
 
-Results are written to three Parquet files:
+Results are written to three Parquet files plus one variant-position diagnostic TSV:
 
 | Output | Description |
 |---|---|
 | `<out_prefix>.parquet` | Variants belonging to credible sets. Corresponds to the `SusieParquet` WDL output. |
 | `<out_prefix>.lbf_variable.parquet` | Log-Bayes factors per credible set. Corresponds to `SusielbfParquet`. |
 | `<out_prefix>.full_susie.parquet` | Fine-mapping statistics for all tested variants. Corresponds to `FullSusieParquet`. |
+| `<out_prefix>.variant_position_summary.tsv` | Per-phenotype summary of tested variant counts, upstream/downstream counts, min/max variant distance from the feature, and requested cis-window size. Corresponds to `VariantPositionSummary`. |
 
 Key command-line arguments:
 

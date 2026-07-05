@@ -46,6 +46,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `SusieParquet` | Variants in credible sets. |
 | `SusielbfParquet` | Log-Bayes factors per credible set. |
 | `FullSusieParquet` | Fine-mapping statistics for all tested variants. |
+| `VariantPositionSummary` | TSV summary of tested variant counts, upstream/downstream counts, min/max variant distance from the feature, and requested cis-window size. |
 | `SubsetBed` | Subsetted BED file for the phenotype region. |
 | `SubsetDosages` | Subsetted genotype dosage file. |
 | `SubsetDosagesIndex` | Index for the subsetted dosage file. |
@@ -67,7 +68,7 @@ Optional inputs in addition to the shared fine-mapping inputs:
 | `AncestryFile` | File? | Ancestry metadata for per-population MAF filtering. |
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |
 
-Outputs are `SusieParquet`, `SusielbfParquet`, and `FullSusieParquet`.
+Outputs are `SusieParquet`, `SusielbfParquet`, `FullSusieParquet`, and `VariantPositionSummary`.
 
 ### `workflows/ExtractMultiPhenotypeInputs.wdl` - Phenotype Extraction Only
 

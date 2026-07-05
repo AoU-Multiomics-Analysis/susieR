@@ -91,7 +91,30 @@ parse_variant_ids <- function(variant_ids) {
   )
 }
 
-reportVariantDirectionCounts <- function(variant_ids, feature_meta, context = "genotype matrix") {
+writeVariantPositionSummary <- function(summary_df, output_file) {
+  if (is.null(output_file)) {
+    return(invisible(NULL))
+  }
+
+  write_header <- !file.exists(output_file)
+  utils::write.table(
+    summary_df,
+    file = output_file,
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = write_header,
+    append = !write_header
+  )
+  invisible(NULL)
+}
+
+reportVariantDirectionCounts <- function(variant_ids,
+                                         feature_meta,
+                                         context = "genotype matrix",
+                                         output_file = NULL,
+                                         requested_window_start = NA_real_,
+                                         requested_window_end = NA_real_) {
   variant_info <- parse_variant_ids(variant_ids)
   feature_meta <- feature_meta[seq_len(min(nrow(feature_meta), 1)), , drop = FALSE]
 
@@ -114,10 +137,44 @@ reportVariantDirectionCounts <- function(variant_ids, feature_meta, context = "g
   }
 
   same_chr <- variant_info$chromosome == feature_chr & !is.na(variant_info$position)
+  signed_distances <- variant_info$position[same_chr] - feature_pos
+  abs_distances <- abs(signed_distances)
   upstream_count <- sum(same_chr & variant_info$position < feature_pos)
   downstream_count <- sum(same_chr & variant_info$position > feature_pos)
   at_feature_count <- sum(same_chr & variant_info$position == feature_pos)
   uncounted_count <- sum(!same_chr | is.na(variant_info$position))
+  min_signed_distance <- if (length(signed_distances) > 0) min(signed_distances) else NA_real_
+  max_signed_distance <- if (length(signed_distances) > 0) max(signed_distances) else NA_real_
+  min_abs_distance <- if (length(abs_distances) > 0) min(abs_distances) else NA_real_
+  max_abs_distance <- if (length(abs_distances) > 0) max(abs_distances) else NA_real_
+  requested_window_size <- if (
+    !is.na(requested_window_start) &&
+      !is.na(requested_window_end)
+  ) {
+    requested_window_end - requested_window_start + 1
+  } else {
+    NA_real_
+  }
+  summary_df <- data.frame(
+    phenotype_id = feature_id,
+    context = context,
+    feature_chromosome = feature_chr,
+    feature_position = feature_pos,
+    requested_window_start = requested_window_start,
+    requested_window_end = requested_window_end,
+    requested_window_size_bp = requested_window_size,
+    total_variants_tested = length(variant_ids),
+    same_chromosome_parseable_variants = sum(same_chr),
+    upstream_variants = upstream_count,
+    downstream_variants = downstream_count,
+    variants_at_feature_coordinate = at_feature_count,
+    uncounted_variants = uncounted_count,
+    min_abs_distance_bp = min_abs_distance,
+    max_abs_distance_bp = max_abs_distance,
+    min_signed_distance_bp = min_signed_distance,
+    max_signed_distance_bp = max_signed_distance,
+    stringsAsFactors = FALSE
+  )
 
   message(
     "Variant position summary for ",
@@ -129,6 +186,8 @@ reportVariantDirectionCounts <- function(variant_ids, feature_meta, context = "g
     " after loading ",
     context,
     ": ",
+    length(variant_ids),
+    " total variants tested, ",
     upstream_count,
     " upstream, ",
     downstream_count,
@@ -136,8 +195,20 @@ reportVariantDirectionCounts <- function(variant_ids, feature_meta, context = "g
     at_feature_count,
     " at the feature coordinate, ",
     uncounted_count,
-    " uncounted due to chromosome mismatch or unparsable position"
+    " uncounted due to chromosome mismatch or unparsable position, ",
+    "min abs distance ",
+    min_abs_distance,
+    " bp, max abs distance ",
+    max_abs_distance,
+    " bp, requested window ",
+    requested_window_start,
+    "-",
+    requested_window_end,
+    " (",
+    requested_window_size,
+    " bp)"
   )
+  writeVariantPositionSummary(summary_df, output_file)
   invisible(NULL)
 }
 
@@ -315,7 +386,7 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
 
 # Fine-map one phenotype by loading local cis dosages, residualizing expression
 # and genotypes against covariates, then fitting susieR.
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL){
   message("Processing phenotype: ", phenotype_id)
   
   # Extract and rank-normalize the target phenotype from the SummarizedExperiment.
@@ -364,7 +435,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
       reportVariantDirectionCounts(
         variant_names,
         gene_meta,
-        context = "reusable genotype matrix subset"
+        context = "reusable genotype matrix subset",
+        output_file = variant_report_file,
+        requested_window_start = phenotype_start,
+        requested_window_end = phenotype_end
       )
       fitted <- susieR::susie(gt_hat, expression_vector,
                               L = 10,
@@ -381,25 +455,21 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
 
   # Align covariates to phenotype sample order and add an intercept column.
   covariates_matrix = cbind(covariates[gene_vector$genotype_id,], 1)
+  phenotype_start <- gene_meta$phenotype_pos - cis_distance
+  phenotype_end <- gene_meta$phenotype_pos + cis_distance
   
   if (is.character(genotype_file)) {
   #Import genotype matrix
   message('Loading Genotype Matrix')
   genotype_matrix = eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = gene_meta$chromosome, 
-    start = gene_meta$phenotype_pos - cis_distance, 
-    end = gene_meta$phenotype_pos + cis_distance, 
+    start = phenotype_start,
+    end = phenotype_end,
     dosage_file = genotype_file) %>% 
     filterMAF(ancestry_data,MAF_threshold = MAF,variant_list = variant_list) 
-    reportVariantDirectionCounts(rownames(genotype_matrix), gene_meta)
    } else {
     message('Using pre-loaded genotype matrix')
     genotype_matrix <- genotype_file
-    reportVariantDirectionCounts(
-      rownames(genotype_matrix),
-      gene_meta,
-      context = "pre-loaded genotype matrix"
-    )
     }
   # Residualize expression against covariates using a hat matrix.
   message('Residualizing gene expression')
@@ -455,6 +525,14 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   # operations drop or reorder row names.
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
   variant_names <- rownames(gt_matrix)
+  reportVariantDirectionCounts(
+    variant_names,
+    gene_meta,
+    context = "fine-mapping genotype matrix",
+    output_file = variant_report_file,
+    requested_window_start = phenotype_start,
+    requested_window_end = phenotype_end
+  )
   # Standardize genotypes (subtract row means)
 
   message('Standardizing genotypes')

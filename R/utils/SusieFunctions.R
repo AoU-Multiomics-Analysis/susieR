@@ -91,6 +91,56 @@ parse_variant_ids <- function(variant_ids) {
   )
 }
 
+reportVariantDirectionCounts <- function(variant_ids, feature_meta, context = "genotype matrix") {
+  variant_info <- parse_variant_ids(variant_ids)
+  feature_meta <- feature_meta[seq_len(min(nrow(feature_meta), 1)), , drop = FALSE]
+
+  if (nrow(feature_meta) == 0) {
+    message("Variant position summary skipped: no feature metadata available")
+    return(invisible(NULL))
+  }
+
+  feature_chr <- normalize_chr(feature_meta$chromosome[[1]])
+  feature_pos <- suppressWarnings(as.numeric(feature_meta$phenotype_pos[[1]]))
+  feature_id <- feature_meta$phenotype_id[[1]]
+
+  if (is.na(feature_pos)) {
+    message(
+      "Variant position summary skipped for ",
+      feature_id,
+      ": feature position is missing or non-numeric"
+    )
+    return(invisible(NULL))
+  }
+
+  same_chr <- variant_info$chromosome == feature_chr & !is.na(variant_info$position)
+  upstream_count <- sum(same_chr & variant_info$position < feature_pos)
+  downstream_count <- sum(same_chr & variant_info$position > feature_pos)
+  at_feature_count <- sum(same_chr & variant_info$position == feature_pos)
+  uncounted_count <- sum(!same_chr | is.na(variant_info$position))
+
+  message(
+    "Variant position summary for ",
+    feature_id,
+    " at ",
+    feature_chr,
+    ":",
+    feature_pos,
+    " after loading ",
+    context,
+    ": ",
+    upstream_count,
+    " upstream, ",
+    downstream_count,
+    " downstream, ",
+    at_feature_count,
+    " at the feature coordinate, ",
+    uncounted_count,
+    " uncounted due to chromosome mismatch or unparsable position"
+  )
+  invisible(NULL)
+}
+
 merge_phenotype_windows <- function(phenotype_meta, phenotype_ids, cis_distance) {
   windows <- phenotype_meta %>%
     dplyr::filter(phenotype_id %in% phenotype_ids) %>%
@@ -311,6 +361,11 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     } else {
       gt_hat <- reusable_genotype$gt_hat[, variant_idx, drop = FALSE]
       variant_names <- reusable_genotype$variant_names[variant_idx]
+      reportVariantDirectionCounts(
+        variant_names,
+        gene_meta,
+        context = "reusable genotype matrix subset"
+      )
       fitted <- susieR::susie(gt_hat, expression_vector,
                               L = 10,
                               estimate_residual_variance = TRUE,
@@ -336,9 +391,15 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     end = gene_meta$phenotype_pos + cis_distance, 
     dosage_file = genotype_file) %>% 
     filterMAF(ancestry_data,MAF_threshold = MAF,variant_list = variant_list) 
+    reportVariantDirectionCounts(rownames(genotype_matrix), gene_meta)
    } else {
     message('Using pre-loaded genotype matrix')
     genotype_matrix <- genotype_file
+    reportVariantDirectionCounts(
+      rownames(genotype_matrix),
+      gene_meta,
+      context = "pre-loaded genotype matrix"
+    )
     }
   # Residualize expression against covariates using a hat matrix.
   message('Residualizing gene expression')

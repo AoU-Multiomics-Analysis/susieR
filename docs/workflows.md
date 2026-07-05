@@ -50,6 +50,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `SubsetBed` | Subsetted BED file for the phenotype region. |
 | `SubsetDosages` | Subsetted genotype dosage file. |
 | `SubsetDosagesIndex` | Index for the subsetted dosage file. |
+| `PrepVariantPositionSummary` | TSV summary of de-duplicated dosage variants extracted during prep, with per-feature upstream/downstream counts and requested prep-window size. |
 
 ### `workflows/susieRonly.wdl` - Fine-Mapping Only
 
@@ -99,6 +100,7 @@ Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation resu
 | `SubsetBed` | Subsetted BED file for the phenotype region. |
 | `SubsetDosages` | Subsetted genotype dosage file. |
 | `SubsetDosagesIndex` | Tabix index for the subsetted dosage file. |
+| `PrepVariantPositionSummary` | TSV summary of de-duplicated dosage variants extracted during prep, with per-feature upstream/downstream counts and requested prep-window size. |
 
 ### `workflows/ComputeR2Susie.wdl` - Cross-Validation R2
 

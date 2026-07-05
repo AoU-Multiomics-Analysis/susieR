@@ -20,7 +20,7 @@ Template input JSONs live in [`../examples/inputs/`](../examples/inputs/). They 
 
 ### `workflows/susieR.wdl` - Full Pipeline
 
-Runs both input preparation and fine-mapping in a single workflow. First calls `PrepInputs` to subset all input files to the region around the target phenotype, then calls `susieR` to perform fine-mapping on those subsetted files.
+Runs both input preparation and fine-mapping in a single workflow. First calls `PrepInputs` to subset all input files to the region around the target phenotype, then calls `susieR` to perform fine-mapping on those subsetted files. Representative intron-per-cluster selection is applied inside `susie.R` during fine-mapping, not by the WDL prep shell code.
 
 | Input | Type | Description |
 |---|---|---|
@@ -91,7 +91,7 @@ Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenot
 
 ### `workflows/prepInputsSusieR.wdl` - Input Preparation Only
 
-Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation results to the region surrounding `PhenotypeID`, or all phenotype IDs containing `PhenotypeID` when `MatchPhenotypeIDSubstring` is true. This is the first step of `workflows/susieR.wdl` exposed as a standalone workflow, useful for preparing inputs once before running fine-mapping multiple times.
+Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation results to the region surrounding `PhenotypeID`, or all phenotype IDs containing `PhenotypeID` when `MatchPhenotypeIDSubstring` is true. This is the first step of `workflows/susieR.wdl` exposed as a standalone workflow, useful for preparing inputs once before running fine-mapping multiple times. It always prepares all matched rows; representative intron-per-cluster selection happens later in fine-mapping.
 
 | Output | Description |
 |---|---|

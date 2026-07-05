@@ -31,13 +31,14 @@ task PrepInputs {
         zcat "~{GenotypeDosages}" |  awk 'NR==1 {print $0; exit }'  > dosage_header.txt
 
         echo "Subsetting bed file"
+        : > feature_sites.tsv
         if [ "~{phenotype_match_mode}" = "contains" ]; then
             zcat "~{PhenotypeBed}" \
-                | awk -v needle="~{PhenotypeID}" 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0 {$2=$2-~{WindowSize}; $3=$3+~{WindowSize}; if($2<1) $2=1; print}' \
+                | awk -v needle="~{PhenotypeID}" -v window_size=~{WindowSize} 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0 {feature_pos=$2; window_start=$2-window_size; window_end=$3+window_size; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
                 > feature.bed
         else
             zcat "~{PhenotypeBed}" \
-                | awk -v phenotype_id="~{PhenotypeID}" 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {$2=$2-~{WindowSize}; $3=$3+~{WindowSize}; if($2<1) $2=1; print}' \
+                | awk -v phenotype_id="~{PhenotypeID}" -v window_size=~{WindowSize} 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {feature_pos=$2; window_start=$2-window_size; window_end=$3+window_size; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
                 > feature.bed
         fi
         if [ ! -s feature.bed ]; then
@@ -84,9 +85,11 @@ task PrepInputs {
 
         #(head -n 1 dose.tmp.tsv && tail -n +2 dose.tmp.tsv | sort -k1,1V -k2,2n) \
         #| bgzip -c > ~{PhenotypeID}.dose.tsv.gz    
-        (cat dosage_header.txt && sort -k1,1V -k2,2n dose.tmp.tsv | awk '!seen[$0]++') \
-            | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
-        echo "Extracted dosage rows after de-duplication: $(zcat ~{PhenotypeID}.dose.tsv.gz | tail -n +2 | wc -l)"
+        sort -k1,1V -k2,2n dose.tmp.tsv | awk '!seen[$0]++' > dose.sorted.tsv
+        echo "Extracted dosage rows after de-duplication: $(wc -l < dose.sorted.tsv)"
+        printf "phenotype_id\tfeature_chromosome\tfeature_position\trequested_window_start\trequested_window_end\trequested_window_size_bp\ttotal_variants_extracted\tupstream_variants\tdownstream_variants\tvariants_at_feature_coordinate\tmin_abs_distance_bp\tmax_abs_distance_bp\tmin_signed_distance_bp\tmax_signed_distance_bp\n" > "~{PhenotypeID}.prep_variant_position_summary.tsv"
+        awk 'BEGIN{FS=OFS="\t"} NR==FNR {variant_count++; variant_chr[variant_count]=$1; variant_pos[variant_count]=$2+0; next} {phenotype_id=$1; feature_chr=$2; feature_pos=$3+0; window_start=$4+0; window_end=$5+0; window_size=$6+0; total=0; upstream=0; downstream=0; at_feature=0; min_abs="NA"; max_abs="NA"; min_signed="NA"; max_signed="NA"; for (i=1; i<=variant_count; i++) {if (variant_chr[i] != feature_chr || variant_pos[i] < window_start || variant_pos[i] > window_end) next; distance=variant_pos[i]-feature_pos; abs_distance=distance < 0 ? -distance : distance; total++; if (distance < 0) upstream++; else if (distance > 0) downstream++; else at_feature++; if (min_abs == "NA" || abs_distance < min_abs) min_abs=abs_distance; if (max_abs == "NA" || abs_distance > max_abs) max_abs=abs_distance; if (min_signed == "NA" || distance < min_signed) min_signed=distance; if (max_signed == "NA" || distance > max_signed) max_signed=distance} print phenotype_id,feature_chr,feature_pos,window_start,window_end,window_size,total,upstream,downstream,at_feature,min_abs,max_abs,min_signed,max_signed}' dose.sorted.tsv feature_sites.tsv >> "~{PhenotypeID}.prep_variant_position_summary.tsv"
+        (cat dosage_header.txt && cat dose.sorted.tsv) | bgzip -c > ~{PhenotypeID}.dose.tsv.gz
         #tabix  ~{GenotypeDosages} -R ~{PhenotypeID}.bed.bgz | bgzip -c - > ~{PhenotypeID}.dose.tsv.gz
         tabix -s1 -b2 -e2 -S1 "~{PhenotypeID}.dose.tsv.gz"
     >>>
@@ -106,6 +109,7 @@ task PrepInputs {
         File SubsetPermutationPvals = "~{PhenotypeID}.tensorqtl.txt"
         File SubsetDosages = "~{PhenotypeID}.dose.tsv.gz"
         File SubsetDosagesIndex = "~{PhenotypeID}.dose.tsv.gz.tbi"
+        File PrepVariantPositionSummary = "~{PhenotypeID}.prep_variant_position_summary.tsv"
     }
 
 }
@@ -148,5 +152,6 @@ workflow PrepSusieRWorkflow {
         File SubsetDosages = PrepInputs.SubsetDosages
         File SubsetPermutationPvals = PrepInputs.SubsetPermutationPvals
         File SubsetDosagesIndex = PrepInputs.SubsetDosagesIndex
+        File PrepVariantPositionSummary = PrepInputs.PrepVariantPositionSummary
     }
 }

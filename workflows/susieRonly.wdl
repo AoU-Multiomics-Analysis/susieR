@@ -69,6 +69,7 @@ task susieR {
         File SusieParquet = "${OutputPrefix}.parquet"
         File lbfParquet = "${OutputPrefix}.lbf_variable.parquet"
         File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
+        File VariantPositionSummary = "${OutputPrefix}.variant_position_summary.tsv"
         File SusieObject = "${OutputPrefix}_susie.rds"
     }
 }
@@ -120,6 +121,7 @@ workflow SusieROnlyWorkflow {
             File SusieParquet = susieR.SusieParquet
             File SusielbfParquet = susieR.lbfParquet
             File FullSusieParquet = susieR.FullSusieParquet
+            File VariantPositionSummary = susieR.VariantPositionSummary
             File SusieObject = susieR.SusieObject
         }
 }

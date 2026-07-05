@@ -72,6 +72,10 @@ selected_phenotypes = phenotype_list %>%
   dplyr::filter(group_id %in% selected_group_ids) %>%
   dplyr::pull(phenotype_id) %>%
   setNames(as.list(.), .) 
+variant_position_report_file <- paste0(opt$out_prefix, ".variant_position_summary.tsv")
+if (file.exists(variant_position_report_file)) {
+  file.remove(variant_position_report_file)
+}
 reuse_genotype_matrix <- isTRUE(opt$reuse_genotype_matrix)
 reusable_genotype <- NULL
 if (reuse_genotype_matrix && length(selected_phenotypes) > 1) {
@@ -99,7 +103,8 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
                                                               MAF = MAF_threshold,
                                                               variant_list =variant_list,
                                                               additional_genotypes = additional_genotypes,
-                                                              reusable_genotype = reusable_genotype
+                                                              reusable_genotype = reusable_genotype,
+                                                              variant_report_file = variant_position_report_file
                                                               ))
 saveRDS(results,file = paste0(opt$out_prefix,'_susie.rds') )
 

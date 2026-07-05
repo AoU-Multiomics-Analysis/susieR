@@ -8,6 +8,8 @@ ENV PATH=/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
 
 
 ## Create a new environment and install packages
+RUN micromamba install -y -n base -c conda-forge conda-forge::jq
+
 RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-tidyverse \
     conda-forge::r-data.table \
@@ -23,6 +25,7 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
     conda-forge::r-remotes \
     conda-forge::r-arrow \
     bioconda::bioconductor-genomicranges=1.58.0 \
+    bioconda::bioconductor-genomeinfodbdata \
     bioconda::bioconductor-rsamtools \
     bioconda::bioconductor-edger \
     bioconda::bioconductor-summarizedexperiment \

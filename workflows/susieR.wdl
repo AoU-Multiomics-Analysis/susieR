@@ -55,11 +55,11 @@ task PrepInputs {
         : > feature_sites.tsv
         if [ "~{phenotype_match_mode}" = "contains" ]; then
             zcat "~{PhenotypeBed}" \
-                | awk -v needle="~{PhenotypeID}" -v window_size=1000000 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0 {feature_pos=$2; window_start=$2-window_size; window_end=$3+window_size; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
+                | awk -v needle="~{PhenotypeID}" -v window_size=1000000 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0 {feature_pos=int((($2+0)+($3+0))/2); window_start=feature_pos-window_size; window_end=feature_pos+window_size+1; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
                 > feature.bed
         else
             zcat "~{PhenotypeBed}" \
-                | awk -v phenotype_id="~{PhenotypeID}" -v window_size=1000000 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {feature_pos=$2; window_start=$2-window_size; window_end=$3+window_size; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
+                | awk -v phenotype_id="~{PhenotypeID}" -v window_size=1000000 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {feature_pos=int((($2+0)+($3+0))/2); window_start=feature_pos-window_size; window_end=feature_pos+window_size+1; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
                 > feature.bed
         fi
         if [ ! -s feature.bed ]; then

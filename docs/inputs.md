@@ -7,8 +7,8 @@ These inputs are shared across the main fine-mapping workflows.
 | `GenotypeDosages` | Genotype dosage file. Can be generated from a VCF using `bcftools dose`. |
 | `GenotypeDosageIndex` | Tabix `.tbi` index for the dosage file. |
 | `TensorQTLPermutations` | Permutation p-values output from tensorQTL. |
-| `PhenotypeBed` | BED file for the gene or phenotype to be fine-mapped. |
-| `CisDistance` | Window in bp added to each side of the TSS for fine-mapping. |
+| `PhenotypeBed` | BED file for the gene or phenotype to be fine-mapped. The fine-mapping scripts use the midpoint of columns 2-3 as the feature coordinate. |
+| `CisDistance` | Window in bp added to each side of the phenotype BED interval midpoint for fine-mapping. |
 | `PhenotypeID` | Legacy single phenotype ID. When substring matching is used, this is used as the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | If `true`, select all phenotype IDs containing `PhenotypeID`. Use for splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |

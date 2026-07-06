@@ -4,7 +4,7 @@ The workflow entrypoint scripts live in `R/scripts/`. Shared helper functions li
 
 ## `R/scripts/susie.R`
 
-The main fine-mapping script. It loads genotype dosages, expression or phenotype data, covariates, and a list of phenotypes to fine-map, then runs susieR on each phenotype in the provided cis window.
+The main fine-mapping script. It loads genotype dosages, expression or phenotype data, covariates, and a list of phenotypes to fine-map, then runs susieR on each phenotype in the provided cis window. The feature coordinate is the midpoint of the phenotype BED interval, so 1 bp site/TSS intervals and already-expanded phenotype windows are centered consistently.
 
 Results are written to three Parquet files plus one variant-position diagnostic TSV:
 
@@ -20,12 +20,12 @@ Key command-line arguments:
 | Argument | Description |
 |---|---|
 | `--genotype_matrix` | Tabix-indexed genotype dosage file. |
-| `--expression_matrix` | BED-format phenotype or expression file. |
+| `--expression_matrix` | BED-format phenotype or expression file. Columns 2-3 are converted to a midpoint feature coordinate before cis-window expansion. |
 | `--phenotype_list` | TensorQTL permutation output that defines phenotypes to fine-map. |
 | `--covariates` | Covariate matrix used in QTL calling. |
 | `--sample_meta` | List of sample IDs to include. |
 | `--out_prefix` | Output file prefix. |
-| `--cisdistance` | Cis window in bp added to each side of the TSS. |
+| `--cisdistance` | Cis window in bp added to each side of the phenotype BED interval midpoint. |
 | `--reuse_genotype_matrix` | Reuse one residualized genotype matrix when selected phenotype windows merge into one region. |
 | `--select_top_phenotype_per_cluster` | Fine-map only the strongest FDR-passing phenotype per parsed LeafCutter `clu_*` cluster. |
 | `--top_phenotype_pvalue_column` | Preferred TensorQTL p-value column for choosing the representative phenotype per cluster. Defaults to `qval`. |

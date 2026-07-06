@@ -27,8 +27,8 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `GenotypeDosages` | File | Tabix-indexed genotype dosage file, which can be generated from VCF using `bcftools dose`. |
 | `GenotypeDosageIndex` | File | Tabix `.tbi` index for the dosage file. |
 | `TensorQTLPermutations` | File | Permutation p-values output from tensorQTL. |
-| `PhenotypeBed` | File | BED file for the gene or phenotype to be fine-mapped. |
-| `CisDistance` | Int | Window size in bp added to each side of the TSS. |
+| `PhenotypeBed` | File | BED file for the gene or phenotype to be fine-mapped. Prep and fine-mapping center windows on the midpoint of columns 2-3. |
+| `CisDistance` | Int | Window size in bp added to each side of the phenotype BED interval midpoint. |
 | `PhenotypeID` | String | Legacy single phenotype ID. When substring matching is used, this becomes the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
@@ -93,7 +93,7 @@ Extracts phenotype rows and matching TensorQTL permutation rows for multi-phenot
 
 ### `workflows/prepInputsSusieR.wdl` - Input Preparation Only
 
-Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation results to the region surrounding `PhenotypeID`, or all phenotype IDs containing `PhenotypeID` when `MatchPhenotypeIDSubstring` is true. This is the first step of `workflows/susieR.wdl` exposed as a standalone workflow, useful for preparing inputs once before running fine-mapping multiple times. It always prepares all matched rows; representative intron-per-cluster selection happens later in fine-mapping.
+Subsets genotype dosages, the phenotype BED file, and TensorQTL permutation results to the region surrounding `PhenotypeID`, or all phenotype IDs containing `PhenotypeID` when `MatchPhenotypeIDSubstring` is true. Prep windows are centered on the midpoint of each matched phenotype BED interval before adding `WindowSize` on each side. This is the first step of `workflows/susieR.wdl` exposed as a standalone workflow, useful for preparing inputs once before running fine-mapping multiple times. It always prepares all matched rows; representative intron-per-cluster selection happens later in fine-mapping.
 
 | Output | Description |
 |---|---|

@@ -248,12 +248,35 @@ LoadData <- function(opt_list) {
     covariates_matrix = covariates_matrix[,exclude_cov]
 
     # Convert BED columns into phenotype metadata required by eQTLUtils.
+    # Use the interval midpoint so 1 bp site/TSS intervals and already-expanded
+    # phenotype windows both fine-map around the feature center.
     phenotype_meta<- expression_matrix %>% 
         select(1,2,3,4) %>% 
-        dplyr::rename('chromosome' = 1,'phenotype_pos' = 2) %>% 
+        dplyr::rename('chromosome' = 1,'phenotype_start' = 2,'phenotype_end' = 3) %>%
+        mutate(
+            phenotype_start = suppressWarnings(as.numeric(phenotype_start)),
+            phenotype_end = suppressWarnings(as.numeric(phenotype_end)),
+            phenotype_pos = dplyr::if_else(
+                !is.na(phenotype_start) & !is.na(phenotype_end),
+                floor((phenotype_start + phenotype_end) / 2),
+                phenotype_start
+            )
+        ) %>%
         mutate(strand  = 1) %>% 
         mutate(gene_id = phenotype_id,group_id = phenotype_id) %>%
-        select(phenotype_id,group_id,gene_id,chromosome,phenotype_pos,strand)
+        select(phenotype_id,group_id,gene_id,chromosome,phenotype_pos,phenotype_start,phenotype_end,strand)
+    expanded_interval_count <- sum(
+        !is.na(phenotype_meta$phenotype_start) &
+        !is.na(phenotype_meta$phenotype_end) &
+        (phenotype_meta$phenotype_end - phenotype_meta$phenotype_start) > 1
+    )
+    if (expanded_interval_count > 0) {
+        message(
+            "Detected ",
+            expanded_interval_count,
+            " phenotype BED intervals wider than 1 bp; using interval midpoint as the feature coordinate"
+        )
+    }
     # Convert the sample list into the sample metadata shape required by
     # eQTLUtils; CV workflows can omit this because metadata is stored in CV RDS.
     message('Loading sample metadata')

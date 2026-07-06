@@ -29,6 +29,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `TensorQTLPermutations` | File | Permutation p-values output from tensorQTL. |
 | `PhenotypeBed` | File | BED file for the gene or phenotype to be fine-mapped. Prep and fine-mapping center windows on the midpoint of columns 2-3. |
 | `CisDistance` | Int | Window size in bp added to each side of the phenotype BED interval midpoint. |
+| `WindowSize` | Int | Prep extraction window in bp added to each side of the phenotype BED interval midpoint. Defaults to `1000000`; the workflow fails if `CisDistance > WindowSize`. |
 | `PhenotypeID` | String | Legacy single phenotype ID. When substring matching is used, this becomes the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
@@ -65,6 +66,7 @@ Optional inputs in addition to the shared fine-mapping inputs:
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
 | `SelectTopPhenotypePerCluster` | Boolean | If `true`, reduce selected phenotypes to the strongest FDR-passing intron per parsed LeafCutter `clu_*` cluster. |
 | `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. |
+| `PreparedWindowSize` | Int | Optional guard for pre-subset dosage inputs. Set to the prep `WindowSize`; values below `CisDistance` stop the task before fine-mapping. Defaults to `-1`, which disables the shell guard. |
 | `VariantList` | File? | Single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |
 | `AncestryFile` | File? | Ancestry metadata for per-population MAF filtering. |
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |

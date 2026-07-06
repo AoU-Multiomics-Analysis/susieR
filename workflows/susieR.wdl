@@ -146,7 +146,7 @@ task susieR {
         String OutputPrefix
         Int memory
         Int NumPrempt
-        Float MAF
+        Float MAF = 0.0
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
@@ -230,7 +230,7 @@ workflow SusieRWorkflow {
         Int NumPrempt
         String PhenotypeID
         Boolean MatchPhenotypeIDSubstring = false
-        Float MAF
+        Float MAF = 0.0
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"

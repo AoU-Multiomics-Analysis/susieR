@@ -8,6 +8,5 @@
   "SusieRWorkflow.CisDistance": 1000000,
   "SusieRWorkflow.memory": 16,
   "SusieRWorkflow.NumPrempt": 2,
-  "SusieRWorkflow.PhenotypeID": "phenotype_id",
-  "SusieRWorkflow.MAF": 0.01
+  "SusieRWorkflow.PhenotypeID": "phenotype_id"
 }

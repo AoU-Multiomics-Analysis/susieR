@@ -23,6 +23,6 @@ These inputs are shared across the main fine-mapping workflows.
 
 | Input | Description |
 |---|---|
-| `MAF` | Float MAF cutoff for variants. Requires `AncestryMetadata`. MAF is calculated per population and a variant must pass the cutoff in at least one population. Individuals not assigned to any population are excluded from the MAF calculation. |
+| `MAF` | Optional float MAF cutoff for variants. Defaults to `0`. Requires `AncestryMetadata` when greater than `0`. MAF is calculated per population and a variant must pass the cutoff in at least one population. Individuals not assigned to any population are excluded from the MAF calculation. |
 | `AncestryMetadata` | Ancestry metadata file. Requires a column named `ancestry_pred_oth` for population assignment. |
 | `VariantList` | Single-column file of variants formatted as `chr_pos_ref_alt`. Restricts analysis to listed variants and takes precedence over `MAF` filtering. |

@@ -38,7 +38,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `SampleList` | File | Sample IDs used in fine-mapping. Requires a header. |
 | `memory` | Int | Memory in GB for the fine-mapping task. |
 | `NumPrempt` | Int | Number of preemptible retries. |
-| `MAF` | Float | Minor allele frequency cutoff. Pass `0` to include all variants. |
+| `MAF` | Float | Optional minor allele frequency cutoff. Defaults to `0`, which includes all variants. |
 
 | Output | Description |
 |---|---|

@@ -214,60 +214,6 @@ reportPhenotypeMatchDiagnostics <- function(requested_phenotype_id,
     invisible(NULL)
 }
 
-validatePreparedWindowCoverage <- function(phenotype_meta, cis_distance, max_examples = 5) {
-    if (is.null(cis_distance) || is.na(cis_distance) || cis_distance <= 0) {
-        return(invisible(NULL))
-    }
-
-    windowed_meta <- phenotype_meta %>%
-        dplyr::filter(
-            phenotype_id != "skip",
-            !is.na(phenotype_start),
-            !is.na(phenotype_end),
-            (phenotype_end - phenotype_start) > 1
-        ) %>%
-        dplyr::mutate(
-            requested_start = pmax(1, phenotype_pos - cis_distance),
-            requested_end = phenotype_pos + cis_distance + 1,
-            missing_requested_window = phenotype_start > requested_start | phenotype_end < requested_end
-        ) %>%
-        dplyr::filter(missing_requested_window)
-
-    if (nrow(windowed_meta) == 0) {
-        return(invisible(NULL))
-    }
-
-    examples <- windowed_meta %>%
-        utils::head(max_examples) %>%
-        dplyr::transmute(
-            detail = paste0(
-                phenotype_id,
-                " available ",
-                chromosome,
-                ":",
-                phenotype_start,
-                "-",
-                phenotype_end,
-                ", requested ",
-                chromosome,
-                ":",
-                requested_start,
-                "-",
-                requested_end,
-                ", feature midpoint ",
-                phenotype_pos
-            )
-        ) %>%
-        dplyr::pull(detail)
-
-    stop(
-        "Requested CisDistance is larger than at least one prepared phenotype BED interval. ",
-        "This can drop variants from pre-subset dosage files. ",
-        "Re-run PrepInputs with WindowSize >= CisDistance or reduce CisDistance. Examples: ",
-        paste(examples, collapse = " | ")
-    )
-}
-
 # Main data loader used by susie.R and ComputeR2Susie.R. It validates required
 # inputs, loads molecular/covariate/QTL data, and returns a named list that is
 # injected into the caller environment.
@@ -288,7 +234,6 @@ LoadData <- function(opt_list) {
         stop('Genotype file is missing')
     }
      
-    cis_distance <- as.numeric(opt_list$cisdistance)
     expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 4)
     subset_matrix <- expression_matrix %>% select(1,2,3,4)
     print(colnames(subset_matrix))
@@ -333,7 +278,6 @@ LoadData <- function(opt_list) {
             " phenotype BED intervals wider than 1 bp; using interval midpoint as the feature coordinate"
         )
     }
-    validatePreparedWindowCoverage(phenotype_meta, cis_distance)
     # Convert the sample list into the sample metadata shape required by
     # eQTLUtils; CV workflows can omit this because metadata is stored in CV RDS.
     message('Loading sample metadata')
@@ -405,6 +349,7 @@ LoadData <- function(opt_list) {
     # Collect scalar inputs and optional filters in a single output list for the
     # entrypoint scripts.
     genotype_file <- opt_list$genotype_matrix
+    cis_distance <- as.numeric(opt_list$cisdistance)
     output_prefix <- opt_list$out_prefix
     n_folds <- opt_list$n_folds
     variant_list <- opt_list$VariantList

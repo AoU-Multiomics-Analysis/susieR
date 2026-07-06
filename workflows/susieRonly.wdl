@@ -18,6 +18,7 @@ task susieR {
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
+        Int PreparedWindowSize = -1
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -44,6 +45,12 @@ task susieR {
         fi
         head -n 1 input_gene.txt | awk -F'\t' 'BEGIN{OFS="\t"} {$4="skip"; print}' > skip.txt        
         cat header.txt input_gene.txt skip.txt > input_gene.bed  
+
+        if [ ~{PreparedWindowSize} -ge 0 ] && [ ~{CisDistance} -gt ~{PreparedWindowSize} ]; then
+            echo "CisDistance (~{CisDistance}) is larger than the prepared dosage WindowSize (~{PreparedWindowSize}); prepared dosages may not contain all requested variants." >&2
+            echo "Re-run PrepInputs with WindowSize >= CisDistance or reduce CisDistance." >&2
+            exit 1
+        fi
 
         Rscript /tmp/susie.R ~{if defined(MAF) then "--MAF ~{MAF}  " else ""} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true  " else ""} ~{if SelectTopPhenotypePerCluster then "--select_top_phenotype_per_cluster true --top_phenotype_pvalue_column " else ""}~{if SelectTopPhenotypePerCluster then TopPhenotypePerClusterPvalueColumn else ""} ~{if defined(AncestryFile) then "--AncestryMetadata ~{AncestryFile}  "  else ""} ~{if defined(VariantList) then "--VariantList ~{VariantList}  "  else ""}  ~{if defined(AdditionalGenotypesBed) then "--AdditionalGenotypesBed ~{AdditionalGenotypesBed}  "  else ""} \
             --genotype_matrix ~{GenotypeDosages} \
@@ -92,6 +99,7 @@ workflow SusieROnlyWorkflow {
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
+        Int PreparedWindowSize = -1
         File? VariantList
         File? AncestryFile
         File? AdditionalGenotypesBed
@@ -113,6 +121,7 @@ workflow SusieROnlyWorkflow {
             ReuseGenotypeMatrix = ReuseGenotypeMatrix,
             SelectTopPhenotypePerCluster = SelectTopPhenotypePerCluster,
             TopPhenotypePerClusterPvalueColumn = TopPhenotypePerClusterPvalueColumn,
+            PreparedWindowSize = PreparedWindowSize,
             VariantList = VariantList,
             AncestryFile = AncestryFile,
             AdditionalGenotypesBed = AdditionalGenotypesBed

@@ -32,6 +32,7 @@ task PrepInputs {
         File PhenotypeBed
         File TensorQTLPermutations
         Int NumPrempt
+        Int WindowSize = 1000000
     }
     String phenotype_match_mode = if MatchPhenotypeIDSubstring then "contains" else "exact"
 
@@ -55,11 +56,11 @@ task PrepInputs {
         : > feature_sites.tsv
         if [ "~{phenotype_match_mode}" = "contains" ]; then
             zcat "~{PhenotypeBed}" \
-                | awk -v needle="~{PhenotypeID}" -v window_size=1000000 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0 {feature_pos=$2; window_start=$2-window_size; window_end=$3+window_size; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
+                | awk -v needle="~{PhenotypeID}" -v window_size=~{WindowSize} 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} index($4, needle) > 0 {feature_pos=int((($2+0)+($3+0))/2); window_start=feature_pos-window_size; window_end=feature_pos+window_size+1; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
                 > feature.bed
         else
             zcat "~{PhenotypeBed}" \
-                | awk -v phenotype_id="~{PhenotypeID}" -v window_size=1000000 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {feature_pos=$2; window_start=$2-window_size; window_end=$3+window_size; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
+                | awk -v phenotype_id="~{PhenotypeID}" -v window_size=~{WindowSize} 'BEGIN{OFS="\t"} FNR == 1 && $4 == "phenotype_id" {next} $4 == phenotype_id {feature_pos=int((($2+0)+($3+0))/2); window_start=feature_pos-window_size; window_end=feature_pos+window_size+1; if(window_start<1) window_start=1; print $4,$1,feature_pos,window_start,window_end,window_end-window_start+1 >> "feature_sites.tsv"; $2=window_start; $3=window_end; print}' \
                 > feature.bed
         fi
         if [ ! -s feature.bed ]; then
@@ -147,12 +148,19 @@ task susieR {
         Int memory
         Int NumPrempt
         Float MAF
+        Int PreparedWindowSize = -1
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
     }
 
     command <<<
+        if [ ~{PreparedWindowSize} -ge 0 ] && [ ~{CisDistance} -gt ~{PreparedWindowSize} ]; then
+            echo "CisDistance (~{CisDistance}) is larger than the prepared dosage WindowSize (~{PreparedWindowSize}); prepared dosages may not contain all requested variants." >&2
+            echo "Re-run PrepInputs with WindowSize >= CisDistance or reduce CisDistance." >&2
+            exit 1
+        fi
+
         Rscript ~{susie_rscript} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true" else ""} ~{if SelectTopPhenotypePerCluster then "--select_top_phenotype_per_cluster true --top_phenotype_pvalue_column " else ""}~{if SelectTopPhenotypePerCluster then TopPhenotypePerClusterPvalueColumn else ""} \
             --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
@@ -235,6 +243,7 @@ workflow SusieRWorkflow {
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
+        Int WindowSize = 1000000
     }
 
     call PrepInputs {
@@ -245,7 +254,8 @@ workflow SusieRWorkflow {
             GenotypeDosages = GenotypeDosages,
             GenotypeDosageIndex = GenotypeDosageIndex,
             PhenotypeBed = PhenotypeBed,
-            NumPrempt = NumPrempt
+            NumPrempt = NumPrempt,
+            WindowSize = WindowSize
     }
 
     call susieR {
@@ -262,6 +272,7 @@ workflow SusieRWorkflow {
             memory = memory,
             NumPrempt = NumPrempt,
             MAF = MAF,
+            PreparedWindowSize = WindowSize,
             ReuseGenotypeMatrix = ReuseGenotypeMatrix,
             SelectTopPhenotypePerCluster = SelectTopPhenotypePerCluster,
             TopPhenotypePerClusterPvalueColumn = TopPhenotypePerClusterPvalueColumn

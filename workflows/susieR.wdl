@@ -144,24 +144,16 @@ task susieR {
         File PhenotypeBed
         Int CisDistance
         String OutputPrefix
-        File susie_rscript
         Int memory
         Int NumPrempt
         Float MAF
-        Int PreparedWindowSize = -1
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
     }
 
     command <<<
-        if [ ~{PreparedWindowSize} -ge 0 ] && [ ~{CisDistance} -gt ~{PreparedWindowSize} ]; then
-            echo "CisDistance (~{CisDistance}) is larger than the prepared dosage WindowSize (~{PreparedWindowSize}); prepared dosages may not contain all requested variants." >&2
-            echo "Re-run PrepInputs with WindowSize >= CisDistance or reduce CisDistance." >&2
-            exit 1
-        fi
-
-        Rscript ~{susie_rscript} ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true" else ""} ~{if SelectTopPhenotypePerCluster then "--select_top_phenotype_per_cluster true --top_phenotype_pvalue_column " else ""}~{if SelectTopPhenotypePerCluster then TopPhenotypePerClusterPvalueColumn else ""} \
+        Rscript /tmp/susie.R ~{if ReuseGenotypeMatrix then "--reuse_genotype_matrix true" else ""} ~{if SelectTopPhenotypePerCluster then "--select_top_phenotype_per_cluster true --top_phenotype_pvalue_column " else ""}~{if SelectTopPhenotypePerCluster then TopPhenotypePerClusterPvalueColumn else ""} \
             --MAF ~{MAF} \
             --genotype_matrix ~{GenotypeDosages} \
             --sample_meta ~{SampleList} \
@@ -234,7 +226,6 @@ workflow SusieRWorkflow {
         File SampleList
         File PhenotypeBed
         Int CisDistance
-        File susie_rscript
         Int memory
         Int NumPrempt
         String PhenotypeID
@@ -243,7 +234,6 @@ workflow SusieRWorkflow {
         Boolean ReuseGenotypeMatrix = false
         Boolean SelectTopPhenotypePerCluster = false
         String TopPhenotypePerClusterPvalueColumn = "qval"
-        Int WindowSize = 1000000
     }
 
     call PrepInputs {
@@ -255,7 +245,7 @@ workflow SusieRWorkflow {
             GenotypeDosageIndex = GenotypeDosageIndex,
             PhenotypeBed = PhenotypeBed,
             NumPrempt = NumPrempt,
-            WindowSize = WindowSize
+            WindowSize = CisDistance
     }
 
     call susieR {
@@ -268,11 +258,9 @@ workflow SusieRWorkflow {
             PhenotypeBed = PhenotypeBed ,
             CisDistance = CisDistance,
             OutputPrefix = PhenotypeID,
-            susie_rscript = susie_rscript,
             memory = memory,
             NumPrempt = NumPrempt,
             MAF = MAF,
-            PreparedWindowSize = WindowSize,
             ReuseGenotypeMatrix = ReuseGenotypeMatrix,
             SelectTopPhenotypePerCluster = SelectTopPhenotypePerCluster,
             TopPhenotypePerClusterPvalueColumn = TopPhenotypePerClusterPvalueColumn

@@ -8,8 +8,8 @@ These inputs are shared across the main fine-mapping workflows.
 | `GenotypeDosageIndex` | Tabix `.tbi` index for the dosage file. |
 | `TensorQTLPermutations` | Permutation p-values output from tensorQTL. |
 | `PhenotypeBed` | BED file for the gene or phenotype to be fine-mapped. The fine-mapping scripts use the midpoint of columns 2-3 as the feature coordinate. |
-| `CisDistance` | Window in bp added to each side of the phenotype BED interval midpoint for fine-mapping. |
-| `WindowSize` | Window in bp added to each side of the phenotype BED interval midpoint during prep input extraction. Use `WindowSize >= CisDistance` when running fine-mapping from prepared dosages. |
+| `CisDistance` | Window in bp added to each side of the phenotype BED interval midpoint for fine-mapping. In the full workflow, this same value is used for prep extraction. |
+| `WindowSize` | Standalone prep-only window in bp added to each side of the phenotype BED interval midpoint. |
 | `PreparedWindowSize` | Optional fine-mapping-only guard for pre-subset dosage inputs. Set this to the prep `WindowSize` to fail early when `CisDistance` asks for variants outside the prepared dosage window. |
 | `PhenotypeID` | Legacy single phenotype ID. When substring matching is used, this is used as the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | If `true`, select all phenotype IDs containing `PhenotypeID`. Use for splice-junction IDs that embed the gene ID. |

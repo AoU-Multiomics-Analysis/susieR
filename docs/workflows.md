@@ -20,7 +20,7 @@ Template input JSONs live in [`../examples/inputs/`](../examples/inputs/). They 
 
 ### `workflows/susieR.wdl` - Full Pipeline
 
-Runs both input preparation and fine-mapping in a single workflow. First calls `PrepInputs` to subset all input files to the region around the target phenotype, then calls `susieR` to perform fine-mapping on those subsetted files. Representative intron-per-cluster selection is applied inside `susie.R` during fine-mapping, not by the WDL prep shell code.
+Runs both input preparation and fine-mapping in a single workflow. First calls `PrepInputs` to subset all input files to the `CisDistance` region around the target phenotype, then calls `susieR` to perform fine-mapping on those subsetted files. Representative intron-per-cluster selection is applied inside `susie.R` during fine-mapping, not by the WDL prep shell code.
 
 | Input | Type | Description |
 |---|---|---|
@@ -28,8 +28,7 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `GenotypeDosageIndex` | File | Tabix `.tbi` index for the dosage file. |
 | `TensorQTLPermutations` | File | Permutation p-values output from tensorQTL. |
 | `PhenotypeBed` | File | BED file for the gene or phenotype to be fine-mapped. Prep and fine-mapping center windows on the midpoint of columns 2-3. |
-| `CisDistance` | Int | Window size in bp added to each side of the phenotype BED interval midpoint. |
-| `WindowSize` | Int | Prep extraction window in bp added to each side of the phenotype BED interval midpoint. Defaults to `1000000`; the workflow fails if `CisDistance > WindowSize`. |
+| `CisDistance` | Int | Window size in bp added to each side of the phenotype BED interval midpoint for both prep extraction and fine-mapping. |
 | `PhenotypeID` | String | Legacy single phenotype ID. When substring matching is used, this becomes the output prefix and gene ID to match within splice-junction phenotype IDs. |
 | `MatchPhenotypeIDSubstring` | Boolean | If `true`, select all phenotype IDs containing `PhenotypeID`. This supports splice-junction IDs that embed the gene ID. |
 | `ReuseGenotypeMatrix` | Boolean | If `true`, reuse one residualized genotype matrix when selected phenotype windows merge into a single region. |
@@ -37,7 +36,6 @@ Runs both input preparation and fine-mapping in a single workflow. First calls `
 | `TopPhenotypePerClusterPvalueColumn` | String | Preferred TensorQTL p-value column used to choose the representative intron. Defaults to `qval`. |
 | `QTLCovariates` | File | Covariate table used in QTL calling. |
 | `SampleList` | File | Sample IDs used in fine-mapping. Requires a header. |
-| `susie_rscript` | File | Path to the `susie.R` script. |
 | `memory` | Int | Memory in GB for the fine-mapping task. |
 | `NumPrempt` | Int | Number of preemptible retries. |
 | `MAF` | Float | Minor allele frequency cutoff. Pass `0` to include all variants. |

@@ -6,7 +6,6 @@
   "SusieRWorkflow.SampleList": "gs://bucket/path/sample_list.tsv",
   "SusieRWorkflow.PhenotypeBed": "gs://bucket/path/phenotypes.bed.gz",
   "SusieRWorkflow.CisDistance": 1000000,
-  "SusieRWorkflow.susie_rscript": "gs://bucket/path/susie.R",
   "SusieRWorkflow.memory": 16,
   "SusieRWorkflow.NumPrempt": 2,
   "SusieRWorkflow.PhenotypeID": "phenotype_id",

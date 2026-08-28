@@ -74,7 +74,7 @@ jobs:
           docker run --rm \
             -v "$PWD/tests/fixtures/checkpointed_window:/fixtures:ro" \
             susier-checkpointed-window:smoke-test \
-            bash -lc '
+            bash -c '
               set -euo pipefail
               export CHECKPOINTED_SUSIE_RUNTIME_IMAGE="local-smoke@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
               Rscript /opt/r/scripts/run_checkpointed_window_susie.R \

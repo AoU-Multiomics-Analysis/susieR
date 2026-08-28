@@ -409,6 +409,8 @@ for smoke_command in \
 done
 
 require_literal 'Run installed end-to-end smoke test' "$workflow"
+require_literal "            bash -c '" "$workflow"
+require_absent "bash -lc" "$workflow"
 require_literal 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' "$workflow"
 require_literal 'diff /tmp/first/window_fit_index.tsv /tmp/resumed/window_fit_index.tsv' "$workflow"
 

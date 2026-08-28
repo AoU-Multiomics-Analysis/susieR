@@ -365,6 +365,7 @@ run_named_test("window manifest helpers advance and record a failure", {
     phenotype_key = ordered$phenotype_key[[1L]],
     modality = ordered$modality[[1L]],
     processing_index = 0L,
+    p_value = ordered$p_value[[1L]],
     status = "CONVERGED",
     fit_manifest_path = phenotype_checkpoint_paths(
       "analysis-1",
@@ -461,6 +462,49 @@ run_named_test("fractional committed index invalidates the cursor boundary", {
   expect_identical_value(resume$last_committed_index, 0L, "recovered fixed boundary")
   expect_identical_value(resume$next_index, 1L, "recovered fixed next index")
   expect_identical_value(resume$window_manifest, NULL, "fractional cursor fallback")
+})
+
+run_named_test("ordered manifest rejects coordinated cursor identity corruption", {
+  ordered <- make_ordered_manifest(1L)
+  store <- new_checkpoint_store(tempfile("checkpoint-coordinated-corruption-"))
+  commit_inputs <- make_commit_inputs(ordered[1L, ])
+  committed <- commit_phenotype_checkpoint(
+    store,
+    commit_inputs$paths,
+    commit_inputs$local_artifacts,
+    commit_inputs$fit_manifest
+  )
+  window_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = "dosage-hash"),
+    checkpointed_susie_settings()
+  )
+  window_manifest <- advance_window_run_manifest(window_manifest, committed)
+  identity_corruption <- window_manifest
+  identity_corruption$phenotypes[[1L]]$phenotype_id <- "coordinated-corrupt-id"
+  identity_corruption$phenotypes[[1L]]$modality <- "coordinated-corrupt-modality"
+  identity_corruption$committed[[1L]]$phenotype_id <- "coordinated-corrupt-id"
+  identity_corruption$committed[[1L]]$modality <- "coordinated-corrupt-modality"
+  p_value_corruption <- window_manifest
+  p_value_corruption$phenotypes[[1L]]$p_value <- 0.75
+  p_value_corruption$committed[[1L]]$p_value <- 0.75
+
+  corrupt_cursors <- list(
+    coordinated_identity = identity_corruption,
+    coordinated_p_value = p_value_corruption
+  )
+  purrr::iwalk(corrupt_cursors, function(corrupt_cursor, label) {
+    resume <- resolve_resume_boundary(store, ordered, corrupt_cursor)
+    expect_identical_value(
+      resume$last_committed_index,
+      0L,
+      paste(label, "recovered boundary")
+    )
+    expect_identical_value(resume$next_index, 1L, paste(label, "recovered next index"))
+    expect_identical_value(resume$window_manifest, NULL, paste(label, "fallback cursor"))
+  })
 })
 
 run_named_test("GCS download failure propagates from resume", {
@@ -655,6 +699,7 @@ run_named_test("resume adopts one valid commit after the saved cursor", {
         phenotype_key = record$phenotype_key[[1L]],
         modality = record$modality[[1L]],
         processing_index = record$processing_index[[1L]],
+        p_value = record$p_value[[1L]],
         status = "CONVERGED",
         fit_manifest_path = phenotype_checkpoint_paths(
           record$analysis_id[[1L]],

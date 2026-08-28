@@ -316,6 +316,10 @@ validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
     if (!identical(processing_index, expected_index)) {
       stop("Checkpoint processing index does not match the ordered manifest.", call. = FALSE)
     }
+    expected_p_value <- as.numeric(record$p_value[[1L]])
+    if (!checkpoint_p_value_matches(fit_manifest$p_value, expected_p_value)) {
+      stop("Checkpoint p_value does not match the ordered manifest.", call. = FALSE)
+    }
   }
 
   if (!is.list(fit_manifest$payloads)) {
@@ -471,14 +475,21 @@ commit_phenotype_checkpoint <- function(store, paths, local_artifacts, fit_manif
     local_manifest,
     auto_unbox = TRUE,
     pretty = TRUE,
-    null = "null"
+    null = "null",
+    digits = NA
   )
   store$upload(local_manifest, paths$fit_manifest)
   fit_manifest
 }
 
 window_manifest_phenotypes <- function(ordered_manifest) {
-  required <- c("processing_index", "phenotype_id", "phenotype_key", "modality")
+  required <- c(
+    "processing_index",
+    "phenotype_id",
+    "phenotype_key",
+    "modality",
+    "p_value"
+  )
   missing <- setdiff(required, names(ordered_manifest))
   if (length(missing) > 0L) {
     stop(
@@ -490,12 +501,16 @@ window_manifest_phenotypes <- function(ordered_manifest) {
 
   ordered_manifest |>
     dplyr::select(dplyr::all_of(required)) |>
-    purrr::pmap(function(processing_index, phenotype_id, phenotype_key, modality) {
+    purrr::pmap(function(processing_index, phenotype_id, phenotype_key, modality, p_value) {
       list(
-        processing_index = as.integer(processing_index),
+        processing_index = checkpoint_scalar_index(
+          processing_index,
+          "Ordered manifest processing index"
+        ),
         phenotype_id = as.character(phenotype_id),
         phenotype_key = as.character(phenotype_key),
-        modality = as.character(modality)
+        modality = as.character(modality),
+        p_value = as.numeric(p_value)
       )
     })
 }
@@ -542,6 +557,11 @@ advance_window_run_manifest <- function(window_manifest, fit_manifest) {
   if (!fit_manifest$status %in% checkpoint_terminal_statuses) {
     stop("Checkpoint status is not terminal.", call. = FALSE)
   }
+  p_value <- fit_manifest$p_value
+  if (!is.numeric(p_value) || length(p_value) != 1L || is.na(p_value) ||
+      !is.finite(p_value) || p_value < 0 || p_value > 1) {
+    stop("Checkpoint p_value must be finite and between zero and one.", call. = FALSE)
+  }
 
   fit_manifest_path <- fit_manifest$fit_manifest_path
   if (is.null(fit_manifest_path)) {
@@ -556,6 +576,7 @@ advance_window_run_manifest <- function(window_manifest, fit_manifest) {
     phenotype_id = fit_manifest$phenotype_id,
     phenotype_key = fit_manifest$phenotype_key,
     modality = fit_manifest$modality,
+    p_value = p_value,
     status = fit_manifest$status,
     fit_manifest_path = fit_manifest_path
   )
@@ -715,27 +736,59 @@ try_read_valid_boundary_manifest <- function(store, record) {
   )
 }
 
-window_manifest_keys <- function(window_manifest) {
-  phenotypes <- window_manifest$phenotypes
-  if (!is.list(phenotypes)) {
-    return(NULL)
+checkpoint_cursor_character_matches <- function(value, expected) {
+  is.character(value) && length(value) == 1L && !is.na(value) &&
+    identical(value, as.character(expected))
+}
+
+checkpoint_p_value_matches <- function(value, expected) {
+  if (!is.numeric(value) || length(value) != 1L || is.na(value) ||
+      !is.finite(value) || !is.numeric(expected) || length(expected) != 1L ||
+      is.na(expected) || !is.finite(expected)) {
+    return(FALSE)
   }
-  keys <- character(length(phenotypes))
-  for (index in seq_along(phenotypes)) {
-    record <- phenotypes[[index]]
-    if (!is.list(record) || !is.character(record$phenotype_key) ||
-        length(record$phenotype_key) != 1L || is.na(record$phenotype_key) ||
-        !nzchar(record$phenotype_key)) {
-      return(NULL)
+  value <- as.numeric(value)
+  expected <- as.numeric(expected)
+  if (identical(expected, 0)) {
+    return(identical(value, 0))
+  }
+  abs(value - expected) <= abs(expected) * 8 * .Machine$double.eps
+}
+
+window_manifest_phenotypes_are_valid <- function(phenotypes, ordered_manifest) {
+  if (!is.list(phenotypes) || length(phenotypes) != nrow(ordered_manifest)) {
+    return(FALSE)
+  }
+
+  for (list_index in seq_len(nrow(ordered_manifest))) {
+    record <- phenotypes[[list_index]]
+    expected <- ordered_manifest[list_index, , drop = FALSE]
+    record_index <- if (is.list(record)) {
+      checkpoint_optional_index(record$processing_index)
+    } else {
+      NULL
     }
-    keys[[index]] <- record$phenotype_key
+    if (is.null(record_index) ||
+        !identical(record_index, expected$processing_index[[1L]]) ||
+        !checkpoint_cursor_character_matches(
+          record$phenotype_key,
+          expected$phenotype_key[[1L]]
+        ) ||
+        !checkpoint_cursor_character_matches(
+          record$phenotype_id,
+          expected$phenotype_id[[1L]]
+        ) ||
+        !checkpoint_cursor_character_matches(record$modality, expected$modality[[1L]]) ||
+        !checkpoint_p_value_matches(record$p_value, expected$p_value[[1L]])) {
+      return(FALSE)
+    }
   }
-  keys
+  TRUE
 }
 
 window_manifest_commits_are_valid <- function(
     committed,
-    phenotypes,
+    ordered_manifest,
     last_committed_index,
     analysis_id,
     window_id
@@ -750,19 +803,24 @@ window_manifest_commits_are_valid <- function(
 
   for (list_index in seq_len(expected_count)) {
     record <- committed[[list_index]]
-    phenotype <- phenotypes[[list_index]]
+    expected <- ordered_manifest[list_index, , drop = FALSE]
     record_index <- if (is.list(record)) {
       checkpoint_optional_index(record$processing_index)
     } else {
       NULL
     }
-    if (is.null(record_index) || !identical(record_index, list_index - 1L) ||
-        !is.character(record$phenotype_id) || length(record$phenotype_id) != 1L ||
-        !identical(record$phenotype_id, phenotype$phenotype_id) ||
-        !is.character(record$phenotype_key) || length(record$phenotype_key) != 1L ||
-        !identical(record$phenotype_key, phenotype$phenotype_key) ||
-        !is.character(record$modality) || length(record$modality) != 1L ||
-        !identical(record$modality, phenotype$modality) ||
+    if (is.null(record_index) ||
+        !identical(record_index, expected$processing_index[[1L]]) ||
+        !checkpoint_cursor_character_matches(
+          record$phenotype_key,
+          expected$phenotype_key[[1L]]
+        ) ||
+        !checkpoint_cursor_character_matches(
+          record$phenotype_id,
+          expected$phenotype_id[[1L]]
+        ) ||
+        !checkpoint_cursor_character_matches(record$modality, expected$modality[[1L]]) ||
+        !checkpoint_p_value_matches(record$p_value, expected$p_value[[1L]]) ||
         !is.character(record$status) || length(record$status) != 1L ||
         !record$status %in% checkpoint_terminal_statuses ||
         !is.character(record$fit_manifest_path) ||
@@ -772,7 +830,7 @@ window_manifest_commits_are_valid <- function(
           phenotype_checkpoint_paths(
             analysis_id,
             window_id,
-            phenotype$phenotype_key
+            expected$phenotype_key[[1L]]
           )$fit_manifest
         )) {
       return(FALSE)
@@ -787,8 +845,6 @@ is_usable_window_manifest <- function(window_manifest, ordered_manifest, context
   }
   schema_version <- checkpoint_optional_index(window_manifest$schema_version)
   last_index <- checkpoint_optional_index(window_manifest$last_committed_index)
-  expected_keys <- as.character(ordered_manifest$phenotype_key)
-  actual_keys <- window_manifest_keys(window_manifest)
   committed <- window_manifest$committed
   if (is.null(committed)) {
     committed <- list()
@@ -799,10 +855,13 @@ is_usable_window_manifest <- function(window_manifest, ordered_manifest, context
     identical(window_manifest$window_id, context$window_id) &&
     !is.null(last_index) &&
     last_index >= -1L && last_index < nrow(ordered_manifest) &&
-    !is.null(actual_keys) && identical(actual_keys, expected_keys) &&
+    window_manifest_phenotypes_are_valid(
+      window_manifest$phenotypes,
+      ordered_manifest
+    ) &&
     window_manifest_commits_are_valid(
       committed,
-      window_manifest$phenotypes,
+      ordered_manifest,
       last_index,
       context$analysis_id,
       context$window_id
@@ -826,6 +885,12 @@ cursor_record_matches_boundary <- function(cursor_record, boundary_manifest, exp
   !is.null(cursor_index) && !is.null(boundary_index) &&
     identical(cursor_index, boundary_index) &&
     identical(cursor_record$phenotype_key, boundary_manifest$phenotype_key) &&
+    identical(cursor_record$phenotype_id, boundary_manifest$phenotype_id) &&
+    identical(cursor_record$modality, boundary_manifest$modality) &&
+    checkpoint_p_value_matches(
+      cursor_record$p_value,
+      boundary_manifest$p_value
+    ) &&
     identical(cursor_record$status, boundary_manifest$status) &&
     identical(cursor_record$fit_manifest_path, expected_path)
 }

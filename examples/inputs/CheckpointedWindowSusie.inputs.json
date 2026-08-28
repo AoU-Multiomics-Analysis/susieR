@@ -1,0 +1,21 @@
+{
+  "CheckpointedWindowSusieWorkflow.window_id": "chr1_0_2000000",
+  "CheckpointedWindowSusieWorkflow.window_dosage": "gs://example-bucket/prepared/chr1_0_2000000/window_dosage.tsv",
+  "CheckpointedWindowSusieWorkflow.window_phenotypes": "gs://example-bucket/prepared/chr1_0_2000000/window_phenotypes.tsv",
+  "CheckpointedWindowSusieWorkflow.phenotype_data": "gs://example-bucket/prepared/chr1_0_2000000/phenotype_data.tsv",
+  "CheckpointedWindowSusieWorkflow.covariate_files": [
+    "gs://example-bucket/prepared/chr1_0_2000000/shared_covariates.tsv",
+    "gs://example-bucket/prepared/chr1_0_2000000/expression_covariates.tsv"
+  ],
+  "CheckpointedWindowSusieWorkflow.covariate_modalities": [
+    "shared",
+    "expression"
+  ],
+  "CheckpointedWindowSusieWorkflow.keep_samples": "gs://example-bucket/prepared/chr1_0_2000000/keep_samples.tsv",
+  "CheckpointedWindowSusieWorkflow.checkpoint_root": "gs://example-bucket/checkpoints/window-susie",
+  "CheckpointedWindowSusieWorkflow.runner_image": "ghcr.io/aou-multiomics-analysis/susier/checkpointed-window:main",
+  "CheckpointedWindowSusieWorkflow.memory_gb": 16,
+  "CheckpointedWindowSusieWorkflow.cpu": 1,
+  "CheckpointedWindowSusieWorkflow.disk_gb": 500,
+  "CheckpointedWindowSusieWorkflow.preemptible_attempts": 3
+}

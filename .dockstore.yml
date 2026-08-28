@@ -27,3 +27,6 @@ workflows:
   - subclass: WDL
     primaryDescriptorPath: /workflows/ComputeAncestrySkew.wdl
     name: "ComputeAncestrySkew"
+  - subclass: WDL
+    primaryDescriptorPath: /workflows/CheckpointedWindowSusie.wdl
+    name: "CheckpointedWindowSusie"

@@ -11,6 +11,8 @@ checkpointed_susie_settings <- function() {
   )
 }
 
+checkpointed_qr_tolerance <- 1e-7
+
 checkpoint_phenotype_key <- function(window_id, modality, phenotype_id) {
   digest::digest(
     paste(window_id, modality, phenotype_id, sep = "\n"),
@@ -402,8 +404,13 @@ applicable_covariate_matrix <- function(covariates, modality, sample_ids) {
   if (ncol(candidate) > 0L) {
     for (column_index in seq_len(ncol(candidate))) {
       trial <- candidate[, c(retained, column_index), drop = FALSE]
-      trial_rank <- qr(trial, tol = 1e-10, LAPACK = FALSE)$rank
-      if (trial_rank > length(retained)) {
+      trial_design <- cbind(intercept = 1, trial)
+      trial_rank <- qr(
+        trial_design,
+        tol = checkpointed_qr_tolerance,
+        LAPACK = FALSE
+      )$rank
+      if (trial_rank > 1L + length(retained)) {
         retained <- c(retained, column_index)
       }
     }
@@ -519,6 +526,23 @@ rank_inverse_normal <- function(values) {
   )
 }
 
+checkpointed_has_numerical_variation <- function(values, reference_values) {
+  values <- as.numeric(values)
+  reference_values <- as.numeric(reference_values)
+  if (length(values) < 2L || length(values) != length(reference_values) ||
+      any(!is.finite(values)) || any(!is.finite(reference_values))) {
+    return(FALSE)
+  }
+  centered_values <- values - mean(values)
+  centered_reference <- reference_values - mean(reference_values)
+  residual_norm <- sqrt(sum(centered_values^2))
+  reference_norm <- sqrt(sum(centered_reference^2))
+  numerical_error_bound <-
+    100 * length(values) * .Machine$double.eps * reference_norm
+  is.finite(residual_norm) && is.finite(reference_norm) &&
+    reference_norm > 0 && residual_norm > numerical_error_bound
+}
+
 checkpointed_skipped_fit <- function(reason, qc) {
   list(status = "SKIPPED", fit = NULL, reason = reason, qc = qc)
 }
@@ -566,7 +590,11 @@ fit_checkpointed_window_phenotype <- function(
   )
 
   design <- cbind(intercept = 1, covariates)
-  design_qr <- qr(design)
+  design_qr <- qr(
+    design,
+    tol = checkpointed_qr_tolerance,
+    LAPACK = FALSE
+  )
   if (retained_samples <= design_qr$rank) {
     return(checkpointed_skipped_fit("TOO_FEW_ALIGNED_SAMPLES", qc))
   }
@@ -605,19 +633,27 @@ fit_checkpointed_window_phenotype <- function(
   genotype <- genotype[variable_variants, , drop = FALSE]
   retained_variant_ids <- retained_variant_ids[variable_variants]
 
-  phenotype_residual <- qr.resid(
-    design_qr,
-    rank_inverse_normal(phenotype)
-  )
-  if (!is.finite(stats::var(phenotype_residual)) ||
-      stats::var(phenotype_residual) <= 0) {
+  transformed_phenotype <- rank_inverse_normal(phenotype)
+  phenotype_residual <- qr.resid(design_qr, transformed_phenotype)
+  if (!checkpointed_has_numerical_variation(
+    phenotype_residual,
+    transformed_phenotype
+  )) {
     return(checkpointed_skipped_fit("ZERO_PHENOTYPE_VARIANCE", qc))
   }
   genotype_samples_by_variants <- t(genotype)
   colnames(genotype_samples_by_variants) <- retained_variant_ids
   genotype_residual <- qr.resid(design_qr, genotype_samples_by_variants)
-  residual_variance <- apply(genotype_residual, 2L, stats::var)
-  residual_variable <- is.finite(residual_variance) & residual_variance > 0
+  residual_variable <- vapply(
+    seq_len(ncol(genotype_residual)),
+    function(column_index) {
+      checkpointed_has_numerical_variation(
+        genotype_residual[, column_index],
+        genotype_samples_by_variants[, column_index]
+      )
+    },
+    logical(1L)
+  )
   if (!any(residual_variable)) {
     qc$removed_variant_ids <- variant_ids
     return(checkpointed_skipped_fit("NO_USABLE_VARIANTS", qc))

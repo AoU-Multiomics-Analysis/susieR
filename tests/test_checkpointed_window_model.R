@@ -135,6 +135,31 @@ run_named_test("covariate selection removes constant and dependent columns", {
   )
 })
 
+run_named_test("covariate selection includes the intercept in rank reduction", {
+  sample_ids <- sprintf("sample_%02d", seq_len(40L))
+  x <- seq(0, 1, length.out = length(sample_ids))
+  complement_path <- tempfile(fileext = ".tsv")
+  on.exit(unlink(complement_path), add = TRUE)
+  complement_covariates <- tibble::tibble(
+    covariate_id = c("x", "one_minus_x")
+  ) |>
+    dplyr::bind_cols(
+      tibble::as_tibble(
+        rbind(x, 1 - x),
+        .name_repair = ~ sample_ids
+      )
+    )
+  readr::write_tsv(complement_covariates, complement_path)
+  covariates <- read_checkpointed_covariates(complement_path, "shared")
+  matrix <- applicable_covariate_matrix(covariates, "expression", sample_ids)
+  expect_identical_value(colnames(matrix), "x", "intercept-aware basis")
+  expect_identical_value(
+    attr(matrix, "removed_covariates"),
+    "one_minus_x",
+    "intercept-dependent covariate"
+  )
+})
+
 run_named_test("covariate selection rejects duplicate covariate IDs", {
   duplicate_path <- tempfile(fileext = ".tsv")
   on.exit(unlink(duplicate_path), add = TRUE)
@@ -260,6 +285,65 @@ empty_covariates <- matrix(
   nrow = 36L,
   dimnames = list(model_inputs$sample_ids, character())
 )
+
+run_named_test("fit adapter rejects a phenotype in the covariate span", {
+  sample_count <- length(model_inputs$sample_ids)
+  phenotype <- seq_len(sample_count)
+  rank_normal_scores <- stats::qnorm(
+    (seq_len(sample_count) - 0.5) / sample_count
+  )
+  covariates <- matrix(
+    rank_normal_scores,
+    ncol = 1L,
+    dimnames = list(model_inputs$sample_ids, "rank_normal_score")
+  )
+  result <- fit_checkpointed_window_phenotype(
+    model_inputs$genotype,
+    phenotype,
+    covariates,
+    model_inputs$variant_info$variant_id,
+    checkpointed_susie_settings()
+  )
+  expect_identical_value(result$status, "SKIPPED", "span-phenotype status")
+  expect_identical_value(
+    result$reason,
+    "ZERO_PHENOTYPE_VARIANCE",
+    "span-phenotype reason"
+  )
+})
+
+run_named_test("fit adapter rejects variants in the covariate span", {
+  sample_count <- length(model_inputs$sample_ids)
+  x <- seq(0, 1, length.out = sample_count)
+  covariates <- matrix(
+    x,
+    ncol = 1L,
+    dimnames = list(model_inputs$sample_ids, "x")
+  )
+  genotype <- rbind(
+    in_span_1 = 0.25 + x,
+    in_span_2 = 1.75 - x
+  )
+  result <- fit_checkpointed_window_phenotype(
+    genotype,
+    model_inputs$phenotypes$linked_expression,
+    covariates,
+    rownames(genotype),
+    checkpointed_susie_settings()
+  )
+  expect_identical_value(result$status, "SKIPPED", "span-variant status")
+  expect_identical_value(
+    result$reason,
+    "NO_USABLE_VARIANTS",
+    "span-variant reason"
+  )
+  expect_identical_value(result$qc$retained_variants, 0L, "span variants retained")
+  expect_identical_value(
+    result$qc$removed_variant_ids,
+    c("in_span_1", "in_span_2"),
+    "span variants removed"
+  )
+})
 
 run_named_test("fit adapter returns exact expected exclusion reasons", {
   zero_variance <- fit_checkpointed_window_phenotype(

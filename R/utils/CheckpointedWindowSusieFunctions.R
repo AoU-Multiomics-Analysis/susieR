@@ -1716,6 +1716,38 @@ stop_checkpoint_payload_corruption <- function(
   ))
 }
 
+checkpointed_preserve_recovery_payload <- function(
+    store,
+    analysis_id,
+    window_id,
+    attempt,
+    corruption
+) {
+  payload_path <- corruption$payload_path
+  if (!store$object_exists(payload_path)) {
+    return(list(
+      payload_path = payload_path,
+      payload_missing = TRUE,
+      evidence_path = NULL,
+      evidence_uri = NULL
+    ))
+  }
+  evidence_path <- checkpoint_recovery_evidence_path(
+    analysis_id,
+    window_id,
+    attempt,
+    corruption$processing_index,
+    payload_path
+  )
+  store$copy_object(payload_path, evidence_path)
+  list(
+    payload_path = payload_path,
+    payload_missing = FALSE,
+    evidence_path = evidence_path,
+    evidence_uri = store$object_uri(evidence_path)
+  )
+}
+
 hydrate_checkpointed_fit_manifests <- function(
     store,
     ordered_manifest,
@@ -2152,6 +2184,13 @@ run_checkpointed_window <- function(
       if (invalid_index %in% recovered_payload_indexes) {
         stop(corruption)
       }
+      evidence <- checkpointed_preserve_recovery_payload(
+        store,
+        analysis_id,
+        config$window_id,
+        window_state$attempt,
+        corruption
+      )
       recovered_payload_indexes <- c(
         recovered_payload_indexes,
         invalid_index
@@ -2162,7 +2201,11 @@ run_checkpointed_window <- function(
         invalid_record,
         corruption$fit_manifest_path,
         conditionMessage(corruption),
-        attempt = window_state$attempt
+        attempt = window_state$attempt,
+        payload_path = evidence$payload_path,
+        payload_missing = evidence$payload_missing,
+        evidence_path = evidence$evidence_path,
+        evidence_uri = evidence$evidence_uri
       )
       window_state <<- trim_window_manifest_boundary(
         window_state,

@@ -179,6 +179,37 @@ run_named_test("local checkpoint store copies exact paths", {
   expect_identical_value(store$root, store_root, "clean store root")
 })
 
+run_named_test("checkpoint object copy preserves bytes and reports local failure", {
+  store_root <- tempfile("checkpoint-copy-")
+  store <- new_checkpoint_store(store_root)
+  source_path <- file.path("analysis", "window", "payload.bin")
+  evidence_path <- file.path("analysis", "window", "recovery", "payload.bin")
+  source_bytes <- as.raw(c(0L, 1L, 2L, 127L, 255L))
+  local_source <- tempfile(fileext = ".bin")
+  writeBin(source_bytes, local_source)
+  store$upload(local_source, source_path)
+
+  store$copy_object(source_path, evidence_path)
+  copied_bytes <- readBin(
+    file.path(store_root, evidence_path),
+    what = "raw",
+    n = length(source_bytes)
+  )
+  expect_identical_value(copied_bytes, source_bytes, "copied object bytes")
+
+  condition <- tryCatch(
+    {
+      store$copy_object("analysis/window/missing.bin", evidence_path)
+      NULL
+    },
+    error = identity
+  )
+  expect_true_value(
+    inherits(condition, "checkpoint_store_error"),
+    "local copy error class"
+  )
+})
+
 run_named_test("checkpoint paths follow the fixed layout", {
   expect_identical_value(
     window_checkpoint_paths("analysis", "window"),
@@ -292,6 +323,59 @@ run_named_test("GCS object existence distinguishes not found from operational fa
   expect_true_value(
     grepl(expected_uri, conditionMessage(condition), fixed = TRUE),
     "GCS stat error URI"
+  )
+})
+
+run_named_test("GCS object copy uses server-side URIs and reports operational failure", {
+  copy_log <- tempfile("fake-gsutil-copy-log-")
+  successful_gsutil <- tempfile("fake-gsutil-copy-")
+  failed_gsutil <- tempfile("fake-gsutil-copy-failed-")
+  on.exit(unlink(c(copy_log, successful_gsutil, failed_gsutil)), add = TRUE)
+  writeLines(
+    c(
+      "#!/bin/sh",
+      paste0("printf '%s\\n' \"$@\" > ", shQuote(copy_log)),
+      "exit 0"
+    ),
+    successful_gsutil
+  )
+  writeLines(c("#!/bin/sh", "exit 17"), failed_gsutil)
+  Sys.chmod(c(successful_gsutil, failed_gsutil), mode = "0755")
+  source_path <- "analysis/window/full_susie.parquet"
+  evidence_path <- "analysis/window/recovery/full_susie.parquet.invalid"
+  source_uri <- paste0("gs://test-bucket/checkpoints/", source_path)
+  evidence_uri <- paste0("gs://test-bucket/checkpoints/", evidence_path)
+
+  successful_store <- new_checkpoint_store(
+    "gs://test-bucket/checkpoints",
+    gsutil = successful_gsutil
+  )
+  successful_store$copy_object(source_path, evidence_path)
+  expect_identical_value(
+    readLines(copy_log),
+    c("-q", "cp", source_uri, evidence_uri),
+    "GCS server-side copy arguments"
+  )
+
+  failed_store <- new_checkpoint_store(
+    "gs://test-bucket/checkpoints",
+    gsutil = failed_gsutil
+  )
+  condition <- tryCatch(
+    {
+      failed_store$copy_object(source_path, evidence_path)
+      NULL
+    },
+    error = identity
+  )
+  expect_true_value(
+    inherits(condition, "checkpoint_store_error"),
+    "GCS copy error class"
+  )
+  expect_true_value(
+    grepl(source_uri, conditionMessage(condition), fixed = TRUE) &&
+      grepl(evidence_uri, conditionMessage(condition), fixed = TRUE),
+    "GCS copy error URIs"
   )
 })
 

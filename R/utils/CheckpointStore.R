@@ -110,6 +110,44 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
       }
       invisible(TRUE)
     },
+    copy_object = function(source_relative_path, destination_relative_path) {
+      if (is_gcs) {
+        source_uri <- object_uri(source_relative_path)
+        destination_uri <- object_uri(destination_relative_path)
+        copy_context <- paste(source_uri, destination_uri, sep = " -> ")
+        return(run_gsutil(
+          c("-q", "cp", source_uri, destination_uri),
+          "copy",
+          copy_context
+        ))
+      }
+      source_path <- file.path(clean_root, source_relative_path)
+      destination_path <- file.path(clean_root, destination_relative_path)
+      setup_succeeded <- tryCatch(
+        {
+          dir.create(
+            dirname(destination_path),
+            recursive = TRUE,
+            showWarnings = FALSE
+          )
+          TRUE
+        },
+        error = function(condition) FALSE
+      )
+      copy_succeeded <- setup_succeeded && tryCatch(
+        file.copy(source_path, destination_path, overwrite = FALSE),
+        error = function(condition) FALSE
+      )
+      if (!copy_succeeded) {
+        stop_checkpoint_store_error(paste0(
+          "Filesystem copy failed for: ",
+          source_path,
+          " -> ",
+          destination_path
+        ))
+      }
+      invisible(TRUE)
+    },
     object_uri = object_uri
   )
 }
@@ -156,6 +194,47 @@ window_checkpoint_paths <- function(analysis_id, window_id) {
     credible_sets = file.path(analysis_id, window_id, "results", "credible_sets.parquet"),
     lbf_variable = file.path(analysis_id, window_id, "results", "lbf_variable.parquet"),
     full_susie = file.path(analysis_id, window_id, "results", "full_susie.parquet")
+  )
+}
+
+checkpoint_recovery_evidence_path <- function(
+    analysis_id,
+    window_id,
+    attempt,
+    processing_index,
+    payload_path
+) {
+  analysis_id <- checkpoint_scalar_character(analysis_id, "Checkpoint analysis ID")
+  window_id <- checkpoint_scalar_character(window_id, "Checkpoint window ID")
+  attempt <- checkpoint_scalar_index(attempt, "Checkpoint recovery attempt")
+  processing_index <- checkpoint_scalar_index(
+    processing_index,
+    "Checkpoint recovery processing index"
+  )
+  payload_path <- checkpoint_scalar_character(
+    payload_path,
+    "Checkpoint recovery payload path"
+  )
+  event_identity <- paste(
+    analysis_id,
+    window_id,
+    attempt,
+    processing_index,
+    payload_path,
+    sep = "\n"
+  )
+  event_digest <- digest::digest(
+    event_identity,
+    algo = "sha256",
+    serialize = FALSE
+  )
+  file.path(
+    analysis_id,
+    window_id,
+    "recovery_evidence",
+    sprintf("attempt-%08d", attempt),
+    sprintf("index-%08d", processing_index),
+    paste0(basename(payload_path), ".", event_digest, ".invalid")
   )
 }
 
@@ -1229,7 +1308,11 @@ checkpoint_recovery_entry <- function(
     record,
     fit_manifest_path,
     reason,
-    attempt = NULL
+    attempt = NULL,
+    payload_path = NULL,
+    payload_missing = NULL,
+    evidence_path = NULL,
+    evidence_uri = NULL
 ) {
   concise_reason <- gsub("[[:space:]]+", " ", trimws(as.character(reason)))
   if (nchar(concise_reason) > 500L) {
@@ -1242,7 +1325,11 @@ checkpoint_recovery_entry <- function(
     fit_manifest_path = fit_manifest_path,
     reason = concise_reason,
     recorded_at = checkpointed_timestamp(),
-    attempt = attempt
+    attempt = attempt,
+    payload_path = payload_path,
+    payload_missing = payload_missing,
+    evidence_path = evidence_path,
+    evidence_uri = evidence_uri
   )
 }
 

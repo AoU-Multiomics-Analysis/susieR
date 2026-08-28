@@ -547,8 +547,9 @@ run_named_test("final assembly recomputes a corrupt interior Parquet and suffix"
   )
   first_manifest <- read_controller_fit_manifest(config, 0L, store)
   corrupt_path <- first_manifest$payloads$full_susie$path
+  corrupt_bytes <- charToRaw("corrupt interior Parquet")
   writeBin(
-    charToRaw("corrupt interior Parquet"),
+    corrupt_bytes,
     file.path(config$checkpoint_root, corrupt_path)
   )
 
@@ -574,6 +575,47 @@ run_named_test("final assembly recomputes a corrupt interior Parquet and suffix"
   expect_true_value(
     grepl(corrupt_path, completed$recovery_history[[1L]]$reason, fixed = TRUE),
     "corrupt Parquet audit path"
+  )
+  recovery <- completed$recovery_history[[1L]]
+  expect_identical_value(recovery$payload_path, corrupt_path, "recovery source path")
+  expect_identical_value(recovery$payload_missing, FALSE, "recovery source presence")
+  expect_true_value(nzchar(recovery$evidence_path), "recovery evidence path")
+  expected_evidence_directory <- file.path(
+    first_manifest$analysis_id,
+    config$window_id,
+    "recovery_evidence",
+    "attempt-00000002",
+    "index-00000000"
+  )
+  expect_identical_value(
+    dirname(recovery$evidence_path),
+    expected_evidence_directory,
+    "recovery evidence directory"
+  )
+  expect_true_value(
+    grepl(
+      "^full_susie\\.parquet\\.[0-9a-f]{64}\\.invalid$",
+      basename(recovery$evidence_path)
+    ),
+    "recovery evidence basename"
+  )
+  expect_identical_value(
+    recovery$evidence_uri,
+    store$object_uri(recovery$evidence_path),
+    "recovery evidence URI"
+  )
+  evidence_file <- file.path(config$checkpoint_root, recovery$evidence_path)
+  evidence_bytes <- readBin(
+    evidence_file,
+    what = "raw",
+    n = unname(file.info(evidence_file)$size)
+  )
+  expect_identical_value(evidence_bytes, corrupt_bytes, "preserved corrupt bytes")
+  repaired_manifest <- read_controller_fit_manifest(config, 0L, store)
+  expect_identical_value(
+    sha256_file(file.path(config$checkpoint_root, corrupt_path)),
+    repaired_manifest$payloads$full_susie$sha256,
+    "repaired fixed payload"
   )
   expect_true_value(
     all(file.exists(unlist(paths))),
@@ -613,7 +655,77 @@ run_named_test("final hydration recomputes a missing interior saved fit", {
     0L,
     "missing saved-fit audit index"
   )
+  expect_identical_value(
+    completed$recovery_history[[1L]]$payload_path,
+    missing_path,
+    "missing saved-fit source path"
+  )
+  expect_identical_value(
+    completed$recovery_history[[1L]]$payload_missing,
+    TRUE,
+    "missing saved-fit evidence state"
+  )
+  expect_identical_value(
+    completed$recovery_history[[1L]]$evidence_path,
+    NULL,
+    "missing saved-fit evidence path"
+  )
+  expect_identical_value(
+    completed$recovery_history[[1L]]$evidence_uri,
+    NULL,
+    "missing saved-fit evidence URI"
+  )
+  expect_true_value(
+    !dir.exists(file.path(
+      config$checkpoint_root,
+      first_manifest$analysis_id,
+      config$window_id,
+      "recovery_evidence"
+    )),
+    "missing saved-fit evidence directory"
+  )
   expect_true_value(store$object_exists(missing_path), "recomputed saved fit")
+})
+
+run_named_test("evidence copy failure stops before payload recomputation", {
+  config <- make_controller_config("failed-evidence-copy")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = new_counting_fit_function(new_fit_counts())
+  )
+  first_manifest <- read_controller_fit_manifest(config, 0L, store)
+  corrupt_path <- first_manifest$payloads$full_susie$path
+  corrupt_bytes <- charToRaw("corrupt payload before copy failure")
+  writeBin(corrupt_bytes, file.path(config$checkpoint_root, corrupt_path))
+
+  failing_store <- store
+  failing_store$copy_object <- function(source_path, destination_path) {
+    stop_checkpoint_store_error("Synthetic recovery evidence copy failure.")
+  }
+  retry_counts <- new_fit_counts()
+  expect_error_condition(
+    run_checkpointed_window(
+      config,
+      store = failing_store,
+      fit_function = new_counting_fit_function(retry_counts)
+    ),
+    "checkpoint_store_error",
+    "Synthetic recovery evidence copy failure."
+  )
+  expect_identical_value(
+    retry_counts$by_phenotype,
+    c(linked_expression = 0L, linked_splicing = 0L),
+    "copy failure recomputation counts"
+  )
+  fixed_bytes <- readBin(
+    file.path(config$checkpoint_root, corrupt_path),
+    what = "raw",
+    n = length(corrupt_bytes)
+  )
+  expect_identical_value(fixed_bytes, corrupt_bytes, "copy failure fixed payload")
 })
 
 run_named_test("mid-window resume downloads only the latest saved fit RDS", {

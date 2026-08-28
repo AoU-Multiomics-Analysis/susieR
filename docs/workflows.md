@@ -136,10 +136,14 @@ phenotype. Later attempts preserve this history.
 
 Final assembly validates the checksum, byte count, and table schema of all
 three phenotype Parquet payloads. If a deterministic interior payload error is
-found, the controller records it in `recovery_history` and recomputes that
-phenotype and its suffix in the same invocation. It does not delete the
-invalid object. GCS authentication, DNS, quota, and service errors stop the
-task; they do not cause recomputation.
+found, the controller copies the exact invalid object to a deterministic
+`recovery_evidence` path before it changes the cursor or recomputes a fit. The
+recovery record contains the source path, evidence path, and evidence URI. If
+the source object is missing, the record marks it as missing and does not
+create evidence. The controller then recomputes that phenotype and its suffix
+in the same invocation. It does not delete the source or evidence object. GCS
+authentication, DNS, quota, copy, and service errors stop the task; they do
+not cause recomputation.
 
 The WDL returns `window_manifest.json`, `window_fit_index.tsv`, and three
 Parquet tables. `window_fit_index.tsv` identifies each fitted RDS.

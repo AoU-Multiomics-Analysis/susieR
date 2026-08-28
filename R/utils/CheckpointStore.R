@@ -11,14 +11,32 @@ checkpoint_skip_reasons <- c(
   "TOO_FEW_ALIGNED_SAMPLES"
 )
 
+new_checkpoint_store_error <- function(message) {
+  structure(
+    list(message = message, call = NULL),
+    class = c("checkpoint_store_error", "error", "condition")
+  )
+}
+
+stop_checkpoint_store_error <- function(message) {
+  stop(new_checkpoint_store_error(message))
+}
+
 new_checkpoint_store <- function(root, gsutil = "gsutil") {
   is_gcs <- startsWith(root, "gs://")
   clean_root <- sub("/+$", "", root)
   object_uri <- function(relative_path) paste0(clean_root, "/", relative_path)
   run_gsutil <- function(arguments, operation, uri) {
-    status <- system2(gsutil, arguments)
+    status <- tryCatch(
+      system2(gsutil, arguments),
+      error = function(condition) {
+        stop_checkpoint_store_error(
+          paste0("GCS ", operation, " failed for: ", uri)
+        )
+      }
+    )
     if (!identical(status, 0L)) {
-      stop("GCS ", operation, " failed for: ", uri, call. = FALSE)
+      stop_checkpoint_store_error(paste0("GCS ", operation, " failed for: ", uri))
     }
     invisible(TRUE)
   }
@@ -39,18 +57,29 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
       destination <- file.path(clean_root, relative_path)
       dir.create(dirname(destination), recursive = TRUE, showWarnings = FALSE)
       if (!file.copy(local_path, destination, overwrite = TRUE)) {
-        stop("Filesystem upload failed for: ", destination, call. = FALSE)
+        stop_checkpoint_store_error(paste0("Filesystem upload failed for: ", destination))
       }
       invisible(TRUE)
     },
     download = function(relative_path, local_path) {
-      dir.create(dirname(local_path), recursive = TRUE, showWarnings = FALSE)
+      tryCatch(
+        dir.create(dirname(local_path), recursive = TRUE, showWarnings = FALSE),
+        error = function(condition) {
+          stop_checkpoint_store_error(
+            paste0("Checkpoint download setup failed for: ", local_path)
+          )
+        }
+      )
       if (is_gcs) {
         return(run_gsutil(c("-q", "cp", object_uri(relative_path), local_path), "download", object_uri(relative_path)))
       }
       source_path <- file.path(clean_root, relative_path)
-      if (!file.copy(source_path, local_path, overwrite = TRUE)) {
-        stop("Filesystem download failed for: ", source_path, call. = FALSE)
+      copy_succeeded <- tryCatch(
+        file.copy(source_path, local_path, overwrite = TRUE),
+        error = function(condition) FALSE
+      )
+      if (!copy_succeeded) {
+        stop_checkpoint_store_error(paste0("Filesystem download failed for: ", source_path))
       }
       invisible(TRUE)
     },
@@ -103,12 +132,65 @@ checkpoint_scalar_character <- function(value, label) {
 }
 
 checkpoint_scalar_index <- function(value, label) {
-  numeric_value <- suppressWarnings(as.numeric(value))
-  if (length(numeric_value) != 1L || is.na(numeric_value) ||
-      !is.finite(numeric_value) || numeric_value != floor(numeric_value)) {
+  if (!is.numeric(value) || length(value) != 1L || is.na(value) ||
+      !is.finite(value) || value != floor(value) ||
+      value < -.Machine$integer.max || value > .Machine$integer.max) {
     stop(label, " must be one integer.", call. = FALSE)
   }
-  as.integer(numeric_value)
+  as.integer(value)
+}
+
+checkpoint_optional_index <- function(value) {
+  tryCatch(
+    checkpoint_scalar_index(value, "Checkpoint index"),
+    error = function(condition) NULL
+  )
+}
+
+validate_checkpoint_named_strings <- function(value, label, pattern = NULL) {
+  if (!is.list(value) || length(value) == 0L || is.null(names(value)) ||
+      anyNA(names(value)) || any(!nzchar(names(value))) || anyDuplicated(names(value))) {
+    stop(label, " must be a nonempty named object.", call. = FALSE)
+  }
+  purrr::iwalk(value, function(item, name) {
+    checkpoint_scalar_character(item, paste0(label, " ", name))
+    if (!is.null(pattern) && !grepl(pattern, item)) {
+      stop(label, " ", name, " is invalid.", call. = FALSE)
+    }
+  })
+  invisible(TRUE)
+}
+
+validate_checkpoint_counts <- function(counts) {
+  required_counts <- c(
+    "input_samples",
+    "retained_samples",
+    "input_variants",
+    "retained_variants"
+  )
+  if (!is.list(counts)) {
+    stop("Checkpoint counts must be an object.", call. = FALSE)
+  }
+  missing_counts <- setdiff(required_counts, names(counts))
+  if (length(missing_counts) > 0L) {
+    stop(
+      "Checkpoint counts are missing required fields: ",
+      paste(missing_counts, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  validated_counts <- purrr::map(
+    counts[required_counts],
+    ~ checkpoint_scalar_index(.x, "Checkpoint count")
+  )
+  if (any(unlist(validated_counts, use.names = FALSE) < 0L)) {
+    stop("Checkpoint counts cannot be negative.", call. = FALSE)
+  }
+  if (validated_counts$retained_samples > validated_counts$input_samples ||
+      validated_counts$retained_variants > validated_counts$input_variants) {
+    stop("Checkpoint retained counts cannot exceed input counts.", call. = FALSE)
+  }
+  invisible(TRUE)
 }
 
 validate_checkpoint_payload_record <- function(payload, label) {
@@ -134,6 +216,35 @@ validate_checkpoint_payload_record <- function(payload, label) {
 validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
   if (!is.list(fit_manifest)) {
     stop("Checkpoint fit manifest must be a JSON object.", call. = FALSE)
+  }
+  required_fields <- c(
+    "schema_version",
+    "analysis_id",
+    "window_id",
+    "phenotype_id",
+    "phenotype_key",
+    "modality",
+    "processing_index",
+    "p_value",
+    "status",
+    "converged",
+    "exclusion_reason",
+    "input_hashes",
+    "settings",
+    "container_digest",
+    "package_versions",
+    "counts",
+    "started_at",
+    "completed_at",
+    "payloads"
+  )
+  missing_fields <- setdiff(required_fields, names(fit_manifest))
+  if (length(missing_fields) > 0L) {
+    stop(
+      "Checkpoint fit manifest is missing required fields: ",
+      paste(missing_fields, collapse = ", "),
+      call. = FALSE
+    )
   }
   schema_version <- checkpoint_scalar_index(
     fit_manifest$schema_version,
@@ -161,6 +272,31 @@ validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
     fit_manifest$processing_index,
     "Checkpoint processing index"
   )
+  p_value <- fit_manifest$p_value
+  if (!is.numeric(p_value) || length(p_value) != 1L || is.na(p_value) ||
+      !is.finite(p_value) || p_value < 0 || p_value > 1) {
+    stop("Checkpoint p_value must be finite and between zero and one.", call. = FALSE)
+  }
+  validate_checkpoint_named_strings(
+    fit_manifest$input_hashes,
+    "Checkpoint input hashes",
+    "^[0-9a-f]{64}$"
+  )
+  if (!is.list(fit_manifest$settings) || length(fit_manifest$settings) == 0L ||
+      is.null(names(fit_manifest$settings)) || any(!nzchar(names(fit_manifest$settings)))) {
+    stop("Checkpoint settings must be a nonempty named object.", call. = FALSE)
+  }
+  checkpoint_scalar_character(
+    fit_manifest$container_digest,
+    "Checkpoint container digest"
+  )
+  validate_checkpoint_named_strings(
+    fit_manifest$package_versions,
+    "Checkpoint package versions"
+  )
+  validate_checkpoint_counts(fit_manifest$counts)
+  checkpoint_scalar_character(fit_manifest$started_at, "Checkpoint start timestamp")
+  checkpoint_scalar_character(fit_manifest$completed_at, "Checkpoint completion timestamp")
   status <- checkpoint_scalar_character(fit_manifest$status, "Checkpoint status")
   if (!status %in% checkpoint_terminal_statuses) {
     stop("Checkpoint status is not terminal.", call. = FALSE)
@@ -173,11 +309,23 @@ validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
         stop("Checkpoint ", field, " does not match the ordered manifest.", call. = FALSE)
       }
     })
-    expected_index <- as.integer(record$processing_index[[1L]])
+    expected_index <- checkpoint_scalar_index(
+      record$processing_index[[1L]],
+      "Ordered manifest processing index"
+    )
     if (!identical(processing_index, expected_index)) {
       stop("Checkpoint processing index does not match the ordered manifest.", call. = FALSE)
     }
   }
+
+  if (!is.list(fit_manifest$payloads)) {
+    stop("Checkpoint payloads must be an object.", call. = FALSE)
+  }
+  parquet_payloads <- c("credible_sets", "lbf_variable", "full_susie")
+  purrr::walk(
+    parquet_payloads,
+    ~ validate_checkpoint_payload_record(fit_manifest$payloads[[.x]], .x)
+  )
 
   if (identical(status, "SKIPPED")) {
     reason <- checkpoint_scalar_character(
@@ -190,22 +338,39 @@ validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
     if (!is.null(fit_manifest$payloads$susie_fit)) {
       stop("A skipped checkpoint cannot contain an RDS payload.", call. = FALSE)
     }
-    return(invisible(TRUE))
+  } else {
+    if (!is.logical(fit_manifest$converged) ||
+        length(fit_manifest$converged) != 1L || is.na(fit_manifest$converged)) {
+      stop("Checkpoint convergence must be one logical value.", call. = FALSE)
+    }
+    expected_convergence <- identical(status, "CONVERGED")
+    if (!identical(fit_manifest$converged, expected_convergence)) {
+      stop("Checkpoint status and convergence do not match.", call. = FALSE)
+    }
+    validate_checkpoint_payload_record(fit_manifest$payloads$susie_fit, "susie_fit")
   }
 
-  if (!is.logical(fit_manifest$converged) ||
-      length(fit_manifest$converged) != 1L || is.na(fit_manifest$converged)) {
-    stop("Checkpoint convergence must be one logical value.", call. = FALSE)
+  fit_sha256 <- if (identical(status, "SKIPPED")) {
+    NULL
+  } else {
+    fit_manifest$payloads$susie_fit$sha256
   }
-  expected_convergence <- identical(status, "CONVERGED")
-  if (!identical(fit_manifest$converged, expected_convergence)) {
-    stop("Checkpoint status and convergence do not match.", call. = FALSE)
-  }
-  required_payloads <- c("susie_fit", "credible_sets", "lbf_variable", "full_susie")
-  purrr::walk(
-    required_payloads,
-    ~ validate_checkpoint_payload_record(fit_manifest$payloads[[.x]], .x)
+  canonical_paths <- phenotype_checkpoint_paths(
+    fit_manifest$analysis_id,
+    fit_manifest$window_id,
+    fit_manifest$phenotype_key,
+    fit_sha256
   )
+  payload_mappings <- checkpoint_artifact_mappings(status)
+  purrr::iwalk(payload_mappings, function(payload_name, artifact_name) {
+    if (!identical(fit_manifest$payloads[[payload_name]]$path, canonical_paths[[artifact_name]])) {
+      stop(
+        "Checkpoint payload does not use the canonical checkpoint path: ",
+        artifact_name,
+        call. = FALSE
+      )
+    }
+  })
   invisible(TRUE)
 }
 
@@ -227,6 +392,26 @@ commit_phenotype_checkpoint <- function(store, paths, local_artifacts, fit_manif
   validate_fit_manifest_structure(fit_manifest)
   status <- fit_manifest$status
   artifact_mappings <- checkpoint_artifact_mappings(status)
+  fit_sha256 <- if (identical(status, "SKIPPED")) {
+    NULL
+  } else {
+    fit_manifest$payloads$susie_fit$sha256
+  }
+  canonical_paths <- phenotype_checkpoint_paths(
+    fit_manifest$analysis_id,
+    fit_manifest$window_id,
+    fit_manifest$phenotype_key,
+    fit_sha256
+  )
+  purrr::walk(names(canonical_paths), function(path_name) {
+    if (!identical(paths[[path_name]], canonical_paths[[path_name]])) {
+      stop(
+        "Path is not the canonical checkpoint path: ",
+        path_name,
+        call. = FALSE
+      )
+    }
+  })
 
   purrr::iwalk(artifact_mappings, function(payload_name, artifact_name) {
     local_path <- local_artifacts[[artifact_name]]
@@ -343,7 +528,10 @@ advance_window_run_manifest <- function(window_manifest, fit_manifest) {
     fit_manifest$processing_index,
     "Checkpoint processing index"
   )
-  expected_index <- as.integer(window_manifest$last_committed_index) + 1L
+  expected_index <- checkpoint_scalar_index(
+    window_manifest$last_committed_index,
+    "Window last committed index"
+  ) + 1L
   if (!identical(processing_index, expected_index)) {
     stop("Checkpoint index is not the next window index.", call. = FALSE)
   }
@@ -387,7 +575,28 @@ fail_window_run_manifest <- function(window_manifest, condition) {
       list(window_manifest$failure)
     )
   }
+  next_index <- checkpoint_scalar_index(
+    window_manifest$last_committed_index,
+    "Window last committed index"
+  ) + 1L
+  failing_phenotype <- if (next_index >= 0L &&
+      next_index < length(window_manifest$phenotypes)) {
+    window_manifest$phenotypes[[next_index + 1L]]
+  } else {
+    NULL
+  }
+  failure_index <- if (is.null(failing_phenotype)) NULL else next_index
+  failure_phenotype_id <- if (is.null(failing_phenotype) ||
+      !is.list(failing_phenotype) ||
+      !is.character(failing_phenotype$phenotype_id) ||
+      length(failing_phenotype$phenotype_id) != 1L) {
+    NULL
+  } else {
+    failing_phenotype$phenotype_id
+  }
   window_manifest$failure <- list(
+    processing_index = failure_index,
+    phenotype_id = failure_phenotype_id,
     class = class(condition)[[1L]],
     message = conditionMessage(condition)
   )
@@ -424,7 +633,13 @@ checkpoint_order_context <- function(ordered_manifest) {
   if (length(window_ids) != 1L || is.na(window_ids) || !nzchar(window_ids)) {
     stop("Ordered manifest must contain one nonempty window_id.", call. = FALSE)
   }
-  indexes <- suppressWarnings(as.integer(ordered_manifest$processing_index))
+  indexes <- tryCatch(
+    purrr::map_int(
+      ordered_manifest$processing_index,
+      ~ checkpoint_scalar_index(.x, "Ordered manifest processing index")
+    ),
+    error = function(condition) integer()
+  )
   if (!identical(indexes, seq_len(nrow(ordered_manifest)) - 1L)) {
     stop("Ordered manifest processing indexes must be gap-free and zero-based.", call. = FALSE)
   }
@@ -468,6 +683,9 @@ read_valid_boundary_manifest <- function(store, record) {
 
     local_rds <- tempfile("resume-fit-", fileext = ".rds")
     on.exit(unlink(local_rds), add = TRUE)
+    if (!store$object_exists(payload$path)) {
+      stop("Checkpoint RDS payload is absent.", call. = FALSE)
+    }
     store$download(payload$path, local_rds)
     if (!identical(sha256_file(local_rds), payload$sha256)) {
       stop("Checkpoint RDS checksum does not match its manifest.", call. = FALSE)
@@ -489,6 +707,9 @@ try_read_valid_boundary_manifest <- function(store, record) {
   tryCatch(
     list(valid = TRUE, manifest = read_valid_boundary_manifest(store, record), error = NULL),
     error = function(condition) {
+      if (inherits(condition, "checkpoint_store_error")) {
+        stop(condition)
+      }
       list(valid = FALSE, manifest = NULL, error = conditionMessage(condition))
     }
   )
@@ -497,36 +718,95 @@ try_read_valid_boundary_manifest <- function(store, record) {
 window_manifest_keys <- function(window_manifest) {
   phenotypes <- window_manifest$phenotypes
   if (!is.list(phenotypes)) {
-    return(character())
+    return(NULL)
   }
-  purrr::map_chr(phenotypes, function(record) {
-    if (!is.list(record) || is.null(record$phenotype_key)) {
-      return(NA_character_)
+  keys <- character(length(phenotypes))
+  for (index in seq_along(phenotypes)) {
+    record <- phenotypes[[index]]
+    if (!is.list(record) || !is.character(record$phenotype_key) ||
+        length(record$phenotype_key) != 1L || is.na(record$phenotype_key) ||
+        !nzchar(record$phenotype_key)) {
+      return(NULL)
     }
-    as.character(record$phenotype_key)
-  })
+    keys[[index]] <- record$phenotype_key
+  }
+  keys
+}
+
+window_manifest_commits_are_valid <- function(
+    committed,
+    phenotypes,
+    last_committed_index,
+    analysis_id,
+    window_id
+) {
+  expected_count <- last_committed_index + 1L
+  if (!is.list(committed) || length(committed) != expected_count) {
+    return(FALSE)
+  }
+  if (expected_count == 0L) {
+    return(TRUE)
+  }
+
+  for (list_index in seq_len(expected_count)) {
+    record <- committed[[list_index]]
+    phenotype <- phenotypes[[list_index]]
+    record_index <- if (is.list(record)) {
+      checkpoint_optional_index(record$processing_index)
+    } else {
+      NULL
+    }
+    if (is.null(record_index) || !identical(record_index, list_index - 1L) ||
+        !is.character(record$phenotype_id) || length(record$phenotype_id) != 1L ||
+        !identical(record$phenotype_id, phenotype$phenotype_id) ||
+        !is.character(record$phenotype_key) || length(record$phenotype_key) != 1L ||
+        !identical(record$phenotype_key, phenotype$phenotype_key) ||
+        !is.character(record$modality) || length(record$modality) != 1L ||
+        !identical(record$modality, phenotype$modality) ||
+        !is.character(record$status) || length(record$status) != 1L ||
+        !record$status %in% checkpoint_terminal_statuses ||
+        !is.character(record$fit_manifest_path) ||
+        length(record$fit_manifest_path) != 1L ||
+        !identical(
+          record$fit_manifest_path,
+          phenotype_checkpoint_paths(
+            analysis_id,
+            window_id,
+            phenotype$phenotype_key
+          )$fit_manifest
+        )) {
+      return(FALSE)
+    }
+  }
+  TRUE
 }
 
 is_usable_window_manifest <- function(window_manifest, ordered_manifest, context) {
   if (!is.list(window_manifest)) {
     return(FALSE)
   }
-  schema_version <- suppressWarnings(as.integer(window_manifest$schema_version))
-  last_index <- suppressWarnings(as.integer(window_manifest$last_committed_index))
+  schema_version <- checkpoint_optional_index(window_manifest$schema_version)
+  last_index <- checkpoint_optional_index(window_manifest$last_committed_index)
   expected_keys <- as.character(ordered_manifest$phenotype_key)
+  actual_keys <- window_manifest_keys(window_manifest)
   committed <- window_manifest$committed
   if (is.null(committed)) {
     committed <- list()
   }
 
-  length(schema_version) == 1L && !is.na(schema_version) &&
-    identical(schema_version, checkpoint_schema_version) &&
+  !is.null(schema_version) && identical(schema_version, checkpoint_schema_version) &&
     identical(window_manifest$analysis_id, context$analysis_id) &&
     identical(window_manifest$window_id, context$window_id) &&
-    length(last_index) == 1L && !is.na(last_index) &&
+    !is.null(last_index) &&
     last_index >= -1L && last_index < nrow(ordered_manifest) &&
-    identical(window_manifest_keys(window_manifest), expected_keys) &&
-    length(committed) >= last_index + 1L
+    !is.null(actual_keys) && identical(actual_keys, expected_keys) &&
+    window_manifest_commits_are_valid(
+      committed,
+      window_manifest$phenotypes,
+      last_index,
+      context$analysis_id,
+      context$window_id
+    )
 }
 
 trim_window_manifest_boundary <- function(window_manifest, invalid_index) {
@@ -541,7 +821,10 @@ cursor_record_matches_boundary <- function(cursor_record, boundary_manifest, exp
   if (!is.list(cursor_record)) {
     return(FALSE)
   }
-  identical(as.integer(cursor_record$processing_index), as.integer(boundary_manifest$processing_index)) &&
+  cursor_index <- checkpoint_optional_index(cursor_record$processing_index)
+  boundary_index <- checkpoint_optional_index(boundary_manifest$processing_index)
+  !is.null(cursor_index) && !is.null(boundary_index) &&
+    identical(cursor_index, boundary_index) &&
     identical(cursor_record$phenotype_key, boundary_manifest$phenotype_key) &&
     identical(cursor_record$status, boundary_manifest$status) &&
     identical(cursor_record$fit_manifest_path, expected_path)
@@ -552,11 +835,18 @@ resolve_resume_boundary <- function(store, ordered_manifest, window_manifest = N
   phenotype_count <- nrow(ordered_manifest)
 
   if (is_usable_window_manifest(window_manifest, ordered_manifest, context)) {
-    last_index <- as.integer(window_manifest$last_committed_index)
+    last_index <- checkpoint_scalar_index(
+      window_manifest$last_committed_index,
+      "Window last committed index"
+    )
     if (last_index >= 0L) {
       record <- ordered_manifest[last_index + 1L, , drop = FALSE]
-      boundary <- try_read_valid_boundary_manifest(store, record)
       expected_path <- checkpoint_fixed_manifest_path(record)
+      boundary <- if (store$object_exists(expected_path)) {
+        try_read_valid_boundary_manifest(store, record)
+      } else {
+        list(valid = FALSE, manifest = NULL, error = "Checkpoint manifest is absent.")
+      }
       cursor_record <- window_manifest$committed[[last_index + 1L]]
       if (!boundary$valid ||
           !cursor_record_matches_boundary(cursor_record, boundary$manifest, expected_path)) {

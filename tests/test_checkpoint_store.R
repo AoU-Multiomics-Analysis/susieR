@@ -68,15 +68,61 @@ make_fit_manifest <- function(record, local_artifacts, paths, fit = fake_fit) {
     phenotype_key = record$phenotype_key[[1L]],
     modality = record$modality[[1L]],
     processing_index = record$processing_index[[1L]],
+    p_value = record$p_value[[1L]],
     status = if (isTRUE(fit$converged)) "CONVERGED" else "NONCONVERGED",
     converged = fit$converged,
     exclusion_reason = NULL,
+    input_hashes = list(
+      dosage = paste(rep("a", 64L), collapse = ""),
+      phenotypes = paste(rep("b", 64L), collapse = "")
+    ),
+    settings = checkpointed_susie_settings(),
+    container_digest = "sha256:checkpointed-window-susie",
+    package_versions = list(R = "4.5.1", susieR = "0.12.35"),
+    counts = list(
+      input_samples = 40L,
+      retained_samples = 38L,
+      input_variants = length(fit$variant_id),
+      retained_variants = length(fit$variant_id)
+    ),
+    started_at = "2026-08-27T12:00:00Z",
+    completed_at = "2026-08-27T12:01:00Z",
     payloads = list(
       susie_fit = payload_record(local_artifacts$fit_rds, paths$fit_rds),
       credible_sets = payload_record(local_artifacts$credible_sets, paths$credible_sets),
       lbf_variable = payload_record(local_artifacts$lbf_variable, paths$lbf_variable),
       full_susie = payload_record(local_artifacts$full_susie, paths$full_susie)
     )
+  )
+}
+
+make_skipped_commit_inputs <- function(record, reason = "NO_USABLE_VARIANTS") {
+  local_artifacts <- make_local_artifacts()
+  fitted_paths <- phenotype_checkpoint_paths(
+    record$analysis_id[[1L]],
+    record$window_id[[1L]],
+    record$phenotype_key[[1L]],
+    sha256_file(local_artifacts$fit_rds)
+  )
+  fit_manifest <- make_fit_manifest(record, local_artifacts, fitted_paths)
+  local_artifacts$fit_rds <- NULL
+  paths <- phenotype_checkpoint_paths(
+    record$analysis_id[[1L]],
+    record$window_id[[1L]],
+    record$phenotype_key[[1L]]
+  )
+  fit_manifest$status <- "SKIPPED"
+  fit_manifest["converged"] <- list(NULL)
+  fit_manifest$exclusion_reason <- reason
+  fit_manifest$payloads <- list(
+    credible_sets = payload_record(local_artifacts$credible_sets, paths$credible_sets),
+    lbf_variable = payload_record(local_artifacts$lbf_variable, paths$lbf_variable),
+    full_susie = payload_record(local_artifacts$full_susie, paths$full_susie)
+  )
+  list(
+    local_artifacts = local_artifacts,
+    paths = paths,
+    fit_manifest = fit_manifest
   )
 }
 
@@ -215,7 +261,9 @@ run_named_test("phenotype commit uploads all payloads before its manifest", {
 run_named_test("phenotype commit rejects a checksum mismatch", {
   record <- make_ordered_manifest(1L)[1L, ]
   commit_inputs <- make_commit_inputs(record)
-  commit_inputs$fit_manifest$payloads$susie_fit$sha256 <- paste(rep("0", 64L), collapse = "")
+  changed_fit <- fake_fit
+  changed_fit$mutation_marker <- TRUE
+  saveRDS(changed_fit, commit_inputs$local_artifacts$fit_rds)
   calls <- new.env(parent = emptyenv())
   calls$count <- 0L
   mock_store <- list(
@@ -236,6 +284,66 @@ run_named_test("phenotype commit rejects a checksum mismatch", {
     "Checksum mismatch"
   )
   expect_identical_value(calls$count, 0L, "uploads after checksum mismatch")
+})
+
+run_named_test("phenotype commit enforces every canonical fixed path", {
+  record <- make_ordered_manifest(1L)[1L, ]
+  path_fields <- c("fit_manifest", "credible_sets", "lbf_variable", "full_susie")
+
+  purrr::walk(path_fields, function(path_field) {
+    commit_inputs <- make_commit_inputs(record)
+    wrong_path <- file.path("wrong-prefix", basename(commit_inputs$paths[[path_field]]))
+    commit_inputs$paths[[path_field]] <- wrong_path
+    if (!identical(path_field, "fit_manifest")) {
+      commit_inputs$fit_manifest$payloads[[path_field]]$path <- wrong_path
+    }
+    mock_store <- list(
+      upload = function(local_path, relative_path) invisible(TRUE),
+      object_uri = function(relative_path) paste0("gs://test-root/", relative_path)
+    )
+
+    expect_error_message(
+      commit_phenotype_checkpoint(
+        mock_store,
+        commit_inputs$paths,
+        commit_inputs$local_artifacts,
+        commit_inputs$fit_manifest
+      ),
+      "canonical checkpoint path"
+    )
+  })
+})
+
+run_named_test("fit manifest requires the full scientific provenance schema", {
+  record <- make_ordered_manifest(1L)[1L, ]
+  required_fields <- c(
+    "p_value",
+    "input_hashes",
+    "settings",
+    "container_digest",
+    "package_versions",
+    "counts",
+    "started_at",
+    "completed_at"
+  )
+
+  purrr::walk(required_fields, function(required_field) {
+    commit_inputs <- make_commit_inputs(record)
+    commit_inputs$fit_manifest[[required_field]] <- NULL
+    mock_store <- list(
+      upload = function(local_path, relative_path) invisible(TRUE),
+      object_uri = function(relative_path) paste0("gs://test-root/", relative_path)
+    )
+    expect_error_message(
+      commit_phenotype_checkpoint(
+        mock_store,
+        commit_inputs$paths,
+        commit_inputs$local_artifacts,
+        commit_inputs$fit_manifest
+      ),
+      paste0("missing required fields: ", required_field)
+    )
+  })
 })
 
 run_named_test("window manifest helpers advance and record a failure", {
@@ -272,6 +380,113 @@ run_named_test("window manifest helpers advance and record a failure", {
   failed <- fail_window_run_manifest(advanced, simpleError("synthetic failure"))
   expect_identical_value(failed$status, "FAILED", "failed status")
   expect_identical_value(failed$failure$message, "synthetic failure", "failure message")
+  expect_identical_value(failed$failure$processing_index, 1L, "failure processing index")
+  expect_identical_value(
+    failed$failure$phenotype_id,
+    ordered$phenotype_id[[2L]],
+    "failure phenotype ID"
+  )
+})
+
+run_named_test("failure manifest uses null identity after the phenotype inventory", {
+  ordered <- make_ordered_manifest(1L)
+  window_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = "dosage-hash"),
+    checkpointed_susie_settings()
+  )
+  window_manifest$last_committed_index <- 0L
+  failed <- fail_window_run_manifest(window_manifest, simpleError("finalization failure"))
+  expect_identical_value(failed$failure$processing_index, NULL, "out-of-range failure index")
+  expect_identical_value(failed$failure$phenotype_id, NULL, "out-of-range phenotype ID")
+})
+
+run_named_test("corrupt window cursor JSON enters fallback recovery", {
+  ordered <- make_ordered_manifest(1L)
+  store <- new_checkpoint_store(tempfile("checkpoint-cursor-json-"))
+  base_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = "dosage-hash"),
+    checkpointed_susie_settings()
+  )
+
+  malformed_key <- base_manifest
+  malformed_key$phenotypes[[1L]]$phenotype_key <- c("key_0001", "extra")
+  extra_commit <- base_manifest
+  extra_commit$committed <- list(list(processing_index = 0L))
+  fractional_schema <- base_manifest
+  fractional_schema$schema_version <- 1.5
+  fractional_index <- base_manifest
+  fractional_index$last_committed_index <- -0.5
+  fractional_index$committed <- list(list(processing_index = 0L))
+
+  corrupt_manifests <- list(
+    malformed_key = malformed_key,
+    extra_commit = extra_commit,
+    fractional_schema = fractional_schema,
+    fractional_index = fractional_index
+  )
+  purrr::iwalk(corrupt_manifests, function(corrupt_manifest, label) {
+    resume <- resolve_resume_boundary(store, ordered, corrupt_manifest)
+    expect_identical_value(resume$window_manifest, NULL, paste(label, "fallback cursor"))
+    expect_identical_value(resume$next_index, 0L, paste(label, "fallback index"))
+  })
+})
+
+run_named_test("fractional committed index invalidates the cursor boundary", {
+  ordered <- make_ordered_manifest(1L)
+  store <- new_checkpoint_store(tempfile("checkpoint-fractional-commit-"))
+  commit_inputs <- make_commit_inputs(ordered[1L, ])
+  committed <- commit_phenotype_checkpoint(
+    store,
+    commit_inputs$paths,
+    commit_inputs$local_artifacts,
+    commit_inputs$fit_manifest
+  )
+  window_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = "dosage-hash"),
+    checkpointed_susie_settings()
+  )
+  window_manifest <- advance_window_run_manifest(window_manifest, committed)
+  window_manifest$committed[[1L]]$processing_index <- 0.5
+
+  resume <- resolve_resume_boundary(store, ordered, window_manifest)
+  expect_identical_value(resume$last_committed_index, 0L, "recovered fixed boundary")
+  expect_identical_value(resume$next_index, 1L, "recovered fixed next index")
+  expect_identical_value(resume$window_manifest, NULL, "fractional cursor fallback")
+})
+
+run_named_test("GCS download failure propagates from resume", {
+  ordered <- make_ordered_manifest(1L)
+  fake_gsutil <- tempfile("fake-gsutil-")
+  writeLines(
+    c(
+      "#!/bin/sh",
+      "if [ \"$2\" = \"stat\" ]; then",
+      "  exit 0",
+      "fi",
+      "exit 17"
+    ),
+    fake_gsutil
+  )
+  Sys.chmod(fake_gsutil, mode = "0755")
+  store <- new_checkpoint_store("gs://test-bucket/checkpoints", gsutil = fake_gsutil)
+  expected_uri <- paste0(
+    "gs://test-bucket/checkpoints/",
+    "analysis-1/chr1_0_2000000/phenotypes/key_0001/fit_manifest.json"
+  )
+
+  expect_error_message(
+    resolve_resume_boundary(store, ordered),
+    paste0("GCS download failed for: ", expected_uri)
+  )
 })
 
 run_named_test("fallback recovery uses logarithmic exact existence checks", {
@@ -292,29 +507,12 @@ run_named_test("fallback recovery uses logarithmic exact existence checks", {
   })
 
   boundary_record <- ordered[731L, ]
-  boundary_path <- phenotype_checkpoint_paths(
-    boundary_record$analysis_id[[1L]],
-    boundary_record$window_id[[1L]],
-    boundary_record$phenotype_key[[1L]]
-  )$fit_manifest
-  jsonlite::write_json(
-    list(
-      schema_version = 1L,
-      analysis_id = boundary_record$analysis_id[[1L]],
-      window_id = boundary_record$window_id[[1L]],
-      phenotype_id = boundary_record$phenotype_id[[1L]],
-      phenotype_key = boundary_record$phenotype_key[[1L]],
-      modality = boundary_record$modality[[1L]],
-      processing_index = boundary_record$processing_index[[1L]],
-      status = "SKIPPED",
-      exclusion_reason = "NO_USABLE_VARIANTS",
-      converged = NULL,
-      payloads = list()
-    ),
-    file.path(store_root, boundary_path),
-    auto_unbox = TRUE,
-    pretty = TRUE,
-    null = "null"
+  skipped_inputs <- make_skipped_commit_inputs(boundary_record)
+  commit_phenotype_checkpoint(
+    store,
+    skipped_inputs$paths,
+    skipped_inputs$local_artifacts,
+    skipped_inputs$fit_manifest
   )
 
   check_counter <- new.env(parent = emptyenv())
@@ -398,28 +596,17 @@ run_named_test("fallback rejects an unexpected skipped reason", {
   store_root <- tempfile("checkpoint-skipped-reason-")
   store <- new_checkpoint_store(store_root)
   record <- ordered[1L, ]
-  manifest_path <- phenotype_checkpoint_paths(
-    record$analysis_id[[1L]],
-    record$window_id[[1L]],
-    record$phenotype_key[[1L]]
-  )$fit_manifest
-  destination <- file.path(store_root, manifest_path)
-  dir.create(dirname(destination), recursive = TRUE, showWarnings = FALSE)
+  skipped_inputs <- make_skipped_commit_inputs(record)
+  committed <- commit_phenotype_checkpoint(
+    store,
+    skipped_inputs$paths,
+    skipped_inputs$local_artifacts,
+    skipped_inputs$fit_manifest
+  )
+  committed$exclusion_reason <- "UNEXPECTED_REASON"
   jsonlite::write_json(
-    list(
-      schema_version = 1L,
-      analysis_id = record$analysis_id[[1L]],
-      window_id = record$window_id[[1L]],
-      phenotype_id = record$phenotype_id[[1L]],
-      phenotype_key = record$phenotype_key[[1L]],
-      modality = record$modality[[1L]],
-      processing_index = record$processing_index[[1L]],
-      status = "SKIPPED",
-      exclusion_reason = "UNEXPECTED_REASON",
-      converged = NULL,
-      payloads = list()
-    ),
-    destination,
+    committed,
+    file.path(store_root, skipped_inputs$paths$fit_manifest),
     auto_unbox = TRUE,
     pretty = TRUE,
     null = "null"

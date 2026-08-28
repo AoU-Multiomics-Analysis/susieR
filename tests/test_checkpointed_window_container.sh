@@ -30,6 +30,8 @@ require_absent() {
   fi
 }
 
+# Permitted Dockerfile RUN syntax is shell form or unescaped exec form with optional BuildKit RUN flags.
+# Unknown or escaped exec syntax fails closed.
 docker_run_invokes_install() {
   awk '
     function tokenize(command, tokens,    key, i, character, token, quote, escaped, count) {
@@ -101,7 +103,7 @@ docker_run_invokes_install() {
       return 0
     }
 
-    function exec_form_installs(command, tokens,    key, i, character, token, in_string, escaped, count, closed, trailing) {
+    function exec_form_installs(command, tokens,    key, i, character, token, in_string, count, closed, trailing) {
       for (key in tokens) {
         delete tokens[key]
       }
@@ -111,19 +113,13 @@ docker_run_invokes_install() {
       }
       token = ""
       in_string = 0
-      escaped = 0
       count = 0
       closed = 0
       for (i = 2; i <= length(command); i++) {
         character = substr(command, i, 1)
-        if (escaped) {
-          token = token character
-          escaped = 0
-          continue
-        }
         if (in_string) {
           if (character == "\\") {
-            escaped = 1
+            return 1
           } else if (character == "\"") {
             tokens[++count] = token
             token = ""
@@ -138,16 +134,16 @@ docker_run_invokes_install() {
         } else if (character == "]") {
           trailing = substr(command, i + 1)
           if (trailing !~ /^[[:space:]]*$/) {
-            return 0
+            return 1
           }
           closed = 1
           break
         } else if (character != "," && character !~ /[[:space:]]/) {
-          return 0
+          return 1
         }
       }
       if (in_string || !closed || count == 0) {
-        return 0
+        return 1
       }
       return tokens_invoke_install(tokens, count)
     }
@@ -155,10 +151,16 @@ docker_run_invokes_install() {
     function simple_command_installs(command, tokens,    count, trimmed) {
       trimmed = command
       sub(/^[[:space:]]*/, "", trimmed)
-      if (substr(trimmed, 1, 1) == "[") {
+      while (trimmed ~ /^--/) {
+        if (trimmed !~ /^--[[:alnum:]][[:alnum:]-]*=[^[:space:]]+[[:space:]]+/) {
+          return 1
+        }
+        sub(/^--[[:alnum:]][[:alnum:]-]*=[^[:space:]]+[[:space:]]+/, "", trimmed)
+      }
+      if (trimmed ~ /^\[[[:space:]]*\"/) {
         return exec_form_installs(trimmed, tokens)
       }
-      count = tokenize(command, tokens)
+      count = tokenize(trimmed, tokens)
       return tokens_invoke_install(tokens, count)
     }
 
@@ -341,6 +343,14 @@ for prohibited_exec_install_fixture in \
   'RUN ["mamba", "--rc-file", "/tmp/condarc", "install", "r-base"]' \
   'RUN ["micromamba", "--rc-file", "/tmp/condarc", "install", "r-base"]'; do
   require_prohibited_install_fixture "$prohibited_exec_install_fixture"
+done
+
+for prohibited_buildkit_exec_install_fixture in \
+  'RUN --mount=type=cache ["pip3", "install", "requests"]' \
+  'RUN --network=none ["conda", "--rc-file", "/tmp/condarc", "install", "r-base"]' \
+  'RUN ["pip3", install, "requests"]' \
+  'RUN ["pip3", "\u0069nstall", "requests"]'; do
+  require_prohibited_install_fixture "$prohibited_buildkit_exec_install_fixture"
 done
 
 for allowed_install_text_fixture in \

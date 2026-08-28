@@ -30,6 +30,43 @@ require_absent() {
   fi
 }
 
+step_block() {
+  local step_name="$1"
+  awk -v step_name="$step_name" '
+    $0 == "      - name: " step_name { in_step = 1; next }
+    in_step && /^      - name: / { exit }
+    in_step { print }
+  ' "$workflow"
+}
+
+require_publish_condition() {
+  local step_name="$1"
+  local block
+  block="$(step_block "$step_name")"
+  if [ -z "$block" ]; then
+    printf 'Required workflow step is missing: %s\n' "$step_name" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$block" | rg -Fqx "        if: github.event_name == 'push' && github.ref == 'refs/heads/main'"; then
+    printf 'Publish-sensitive workflow step lacks the push-to-main condition: %s\n' "$step_name" >&2
+    exit 1
+  fi
+}
+
+require_unconditional_step() {
+  local step_name="$1"
+  local block
+  block="$(step_block "$step_name")"
+  if [ -z "$block" ]; then
+    printf 'Required workflow step is missing: %s\n' "$step_name" >&2
+    exit 1
+  fi
+  if printf '%s\n' "$block" | rg -q '^        if:'; then
+    printf 'Workflow step must run for pull requests, manual runs, and main pushes: %s\n' "$step_name" >&2
+    exit 1
+  fi
+}
+
 require_file "$dockerfile"
 require_file "$workflow"
 
@@ -42,7 +79,7 @@ require_literal 'RUN ln -sf /opt/r/scripts/run_checkpointed_window_susie.R /tmp/
 require_literal 'USER root' "$dockerfile"
 require_literal 'USER $MAMBA_USER' "$dockerfile"
 require_literal 'CMD ["bash"]' "$dockerfile"
-require_absent 'micromamba[[:space:]]+install|install\.packages\(|remotes::install|git[[:space:]]+clone' "$dockerfile"
+require_absent '(^|[;&|[:space:]])(apt-get|apt|conda|mamba|micromamba|pip|pip3)[[:space:]]+install([[:space:]]|$)|(^|[;&|[:space:]])(python|python3)[[:space:]]+-m[[:space:]]+pip[[:space:]]+install([[:space:]]|$)|install\.packages\(|remotes::install|git[[:space:]]+clone' "$dockerfile"
 
 require_literal '.github/workflows/checkpointed-window-susie-image.yml' "$workflow"
 require_literal 'containers/CheckpointedWindowSusie/Dockerfile' "$workflow"
@@ -63,6 +100,18 @@ require_literal 'tags: susier-checkpointed-window:smoke-test' "$workflow"
 require_literal "if: github.event_name == 'push' && github.ref == 'refs/heads/main'" "$workflow"
 require_literal 'push: true' "$workflow"
 require_literal 'set -euo pipefail' "$workflow"
+require_literal 'uses: docker/login-action@v4' "$workflow"
+require_literal 'password: ${{ secrets.GITHUB_TOKEN }}' "$workflow"
+
+login_line="$(rg -n -F '      - name: Log in to ghcr.io with docker' "$workflow" | cut -d: -f1)"
+smoke_build_line="$(rg -n -F '      - name: Build docker image for smoke tests' "$workflow" | cut -d: -f1)"
+if [ -z "$login_line" ] || [ -z "$smoke_build_line" ] || [ "$login_line" -ge "$smoke_build_line" ]; then
+  printf 'GHCR login must occur before the smoke-image build.\n' >&2
+  exit 1
+fi
+require_unconditional_step 'Log in to ghcr.io with docker'
+require_publish_condition 'Extract Docker metadata'
+require_publish_condition 'Build and push docker image'
 
 for smoke_command in \
   'docker run --rm susier-checkpointed-window:smoke-test test -f /opt/r/scripts/run_checkpointed_window_susie.R' \

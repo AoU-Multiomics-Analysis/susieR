@@ -60,11 +60,41 @@ task RunCheckpointedWindowSusie {
     Int preemptible_attempts
   }
 
+  File window_id_values = write_lines([window_id])
+  File checkpoint_root_values = write_lines([checkpoint_root])
+  File covariate_files_values = write_lines(covariate_files)
+  File covariate_modalities_values = write_lines(covariate_modalities)
+  File keep_samples_values = write_lines(select_all([keep_samples]))
+
   command <<<
     set -euo pipefail
 
-    checkpoint_root="~{checkpoint_root}"
-    echo "START window ~{window_id}"
+    IFS= read -r window_id < "~{window_id_values}"
+    IFS= read -r checkpoint_root < "~{checkpoint_root_values}"
+
+    covariate_files=()
+    while IFS= read -r covariate_file; do
+      covariate_files+=("$covariate_file")
+    done < "~{covariate_files_values}"
+
+    covariate_modalities=()
+    while IFS= read -r covariate_modality; do
+      covariate_modalities+=("$covariate_modality")
+    done < "~{covariate_modalities_values}"
+
+    comma_join() {
+      local IFS=,
+      printf '%s' "$*"
+    }
+    covariate_files_csv="$(comma_join "${covariate_files[@]}")"
+    covariate_modalities_csv="$(comma_join "${covariate_modalities[@]}")"
+
+    keep_samples_args=()
+    if IFS= read -r keep_samples < "~{keep_samples_values}"; then
+      keep_samples_args=(--keep-samples "$keep_samples")
+    fi
+
+    echo "START window ${window_id}"
     echo "VALIDATE checkpoint root ${checkpoint_root}"
     case "$checkpoint_root" in
       gs://*) ;;
@@ -76,30 +106,25 @@ task RunCheckpointedWindowSusie {
 
     mkdir -p window_outputs
 
-    keep_samples_args=()
-    if ~{if defined(keep_samples) then "true" else "false"}; then
-      keep_samples_args=(--keep-samples "~{keep_samples}")
-    fi
-
-    echo "RUN runner ~{window_id}"
+    echo "RUN runner ${window_id}"
     Rscript /opt/r/scripts/run_checkpointed_window_susie.R \
-      --window-id "~{window_id}" \
+      --window-id "$window_id" \
       --window-dosage "~{window_dosage}" \
       --window-phenotypes "~{window_phenotypes}" \
       --phenotype-data "~{phenotype_data}" \
-      --covariate-files "~{sep="," covariate_files}" \
-      --covariate-modalities "~{sep="," covariate_modalities}" \
+      --covariate-files "$covariate_files_csv" \
+      --covariate-modalities "$covariate_modalities_csv" \
       "${keep_samples_args[@]}" \
       --checkpoint-root "$checkpoint_root" \
       --output-dir window_outputs
 
-    echo "CHECK outputs ~{window_id}"
+    echo "CHECK outputs ${window_id}"
     test -s window_outputs/window_manifest.json
     test -s window_outputs/window_fit_index.tsv
     test -s window_outputs/credible_sets.parquet
     test -s window_outputs/lbf_variable.parquet
     test -s window_outputs/full_susie.parquet
-    echo "COMPLETE window ~{window_id}"
+    echo "COMPLETE window ${window_id}"
   >>>
 
   runtime {

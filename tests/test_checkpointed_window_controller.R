@@ -536,6 +536,152 @@ run_named_test("resume recomputes a corrupt boundary RDS", {
   )
 })
 
+run_named_test("final assembly recomputes a corrupt interior Parquet and suffix", {
+  config <- make_controller_config("corrupt-interior-parquet")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = new_counting_fit_function(new_fit_counts())
+  )
+  first_manifest <- read_controller_fit_manifest(config, 0L, store)
+  corrupt_path <- first_manifest$payloads$full_susie$path
+  writeBin(
+    charToRaw("corrupt interior Parquet"),
+    file.path(config$checkpoint_root, corrupt_path)
+  )
+
+  retry_counts <- new_fit_counts()
+  paths <- run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = new_counting_fit_function(retry_counts)
+  )
+  expect_identical_value(
+    retry_counts$by_phenotype,
+    c(linked_expression = 1L, linked_splicing = 1L),
+    "corrupt interior recomputation counts"
+  )
+  completed <- jsonlite::read_json(paths$window_manifest, simplifyVector = FALSE)
+  expect_identical_value(completed$status, "COMPLETE", "corruption recovery status")
+  expect_identical_value(length(completed$recovery_history), 1L, "corruption audit count")
+  expect_identical_value(
+    completed$recovery_history[[1L]]$processing_index,
+    0L,
+    "corrupt Parquet audit index"
+  )
+  expect_true_value(
+    grepl(corrupt_path, completed$recovery_history[[1L]]$reason, fixed = TRUE),
+    "corrupt Parquet audit path"
+  )
+  expect_true_value(
+    all(file.exists(unlist(paths))),
+    "outputs after corruption recovery"
+  )
+})
+
+run_named_test("final hydration recomputes a missing interior saved fit", {
+  config <- make_controller_config("missing-interior-rds")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = new_counting_fit_function(new_fit_counts())
+  )
+  first_manifest <- read_controller_fit_manifest(config, 0L, store)
+  missing_path <- first_manifest$payloads$susie_fit$path
+  unlink(file.path(config$checkpoint_root, missing_path))
+  expect_true_value(!store$object_exists(missing_path), "missing saved fit setup")
+
+  retry_counts <- new_fit_counts()
+  paths <- run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = new_counting_fit_function(retry_counts)
+  )
+  expect_identical_value(
+    retry_counts$by_phenotype,
+    c(linked_expression = 1L, linked_splicing = 1L),
+    "missing saved-fit recomputation counts"
+  )
+  completed <- jsonlite::read_json(paths$window_manifest, simplifyVector = FALSE)
+  expect_identical_value(completed$status, "COMPLETE", "missing saved-fit recovery status")
+  expect_identical_value(
+    completed$recovery_history[[1L]]$processing_index,
+    0L,
+    "missing saved-fit audit index"
+  )
+  expect_true_value(store$object_exists(missing_path), "recomputed saved fit")
+})
+
+run_named_test("mid-window resume downloads only the latest saved fit RDS", {
+  config <- make_three_phenotype_config("resume-rds-download-count")
+  on.exit(
+    unlink(
+      c(config$checkpoint_root, config$output_dir, config$test_input_dir),
+      recursive = TRUE
+    ),
+    add = TRUE
+  )
+  case <- prepare_three_phenotype_case(config)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  initial_counts <- new_fit_counts(names(case$inputs$phenotypes))
+  expect_error_condition(
+    run_checkpointed_window(
+      config,
+      store = store,
+      fit_function = new_counting_fit_function(
+        initial_counts,
+        results = case$results,
+        phenotype_values = case$inputs$phenotypes
+      ),
+      interrupt_after_commits = 2L
+    ),
+    "checkpoint_test_interrupt"
+  )
+  latest_manifest <- read_controller_fit_manifest(config, 1L, store)
+
+  downloads <- new.env(parent = emptyenv())
+  downloads$paths <- character()
+  recording_store <- store
+  recording_store$download <- function(relative_path, local_path) {
+    downloads$paths <- c(downloads$paths, relative_path)
+    store$download(relative_path, local_path)
+  }
+  rds_before_fit <- character()
+  retry_counts <- new_fit_counts(names(case$inputs$phenotypes))
+  run_checkpointed_window(
+    config,
+    store = recording_store,
+    fit_function = new_counting_fit_function(
+      retry_counts,
+      results = case$results,
+      phenotype_values = case$inputs$phenotypes,
+      before_fit = function(phenotype_id) {
+        if (identical(phenotype_id, "linked_expression_replica")) {
+          rds_before_fit <<- downloads$paths[endsWith(downloads$paths, ".rds")]
+        }
+      }
+    )
+  )
+  expect_identical_value(
+    rds_before_fit,
+    latest_manifest$payloads$susie_fit$path,
+    "latest RDS before resumed fit"
+  )
+  expect_identical_value(
+    downloads$paths[endsWith(downloads$paths, ".rds")],
+    latest_manifest$payloads$susie_fit$path,
+    "total RDS downloads during resume"
+  )
+  expect_true_value(
+    sum(endsWith(downloads$paths, ".parquet")) >= 9L,
+    "final Parquet downloads"
+  )
+})
+
 run_named_test("phenotype manifests contain cache QC and runtime provenance", {
   config <- make_controller_config("manifest-readiness")
   on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)

@@ -99,10 +99,13 @@ analysis ID changes when one of these source files changes. Window and
 phenotype manifests record these hashes, the runner-image identity, and the
 pinned base-image identity.
 
-The controller aligns dosage, applicable covariates, and the optional sample
-allowlist once. It applies finite-value masks to each phenotype separately. It
-uses an exact cache for each retained-sample mask and covariate design. The
-cache identity covers ordered sample IDs, retained variants, retained
+The controller first aligns dosage, phenotype headers, and the optional sample
+allowlist. For each phenotype, it then aligns shared covariates and covariates
+for that phenotype's modality. It applies the finite-value phenotype mask
+after this alignment. A gap in one modality-specific covariate file does not
+remove a sample from other modalities. The controller uses an exact cache for
+each retained-sample mask and covariate design. The cache identity covers
+ordered overlap and retained sample IDs, retained variants, retained
 covariate columns, and design values. The controller imputes, filters,
 transposes, and residualizes genotype once for each cache. It then transforms
 and residualizes only the phenotype before each SuSiE fit.
@@ -121,13 +124,22 @@ GB. This result is evidence from one input. It is not a resource guarantee.
 Each committed phenotype has an RDS with the full fitted `susie` object. GCS
 payloads upload before the phenotype manifest. The task uploads
 `window_manifest.json` last. Normal resume reads only the window cursor and
-the latest fit. If the cursor is missing, the task probes fixed manifest paths.
-It does not list the full GCS prefix.
+the latest fit RDS. Light hydration validates every phenotype manifest and
+checks that each saved fit exists, but it does not download every prior RDS.
+If the cursor is missing, the task probes fixed manifest paths. It does not
+list the full GCS prefix.
 
 If boundary validation fails, the task does not delete the corrupt object. It
 records the index, phenotype ID, phenotype key, fixed manifest path, concise
 reason, timestamp, and attempt in `recovery_history`. It then recomputes that
 phenotype. Later attempts preserve this history.
+
+Final assembly validates the checksum, byte count, and table schema of all
+three phenotype Parquet payloads. If a deterministic interior payload error is
+found, the controller records it in `recovery_history` and recomputes that
+phenotype and its suffix in the same invocation. It does not delete the
+invalid object. GCS authentication, DNS, quota, and service errors stop the
+task; they do not cause recomputation.
 
 The WDL returns `window_manifest.json`, `window_fit_index.tsv`, and three
 Parquet tables. `window_fit_index.tsv` identifies each fitted RDS.

@@ -854,7 +854,7 @@ checkpoint_named_object_matches <- function(value, expected) {
     identical(value_json, expected_json)
 }
 
-read_valid_boundary_manifest <- function(
+read_valid_fit_manifest <- function(
     store,
     record,
     expected_input_hashes = NULL,
@@ -865,6 +865,9 @@ read_valid_boundary_manifest <- function(
   fixed_manifest_path <- checkpoint_fixed_manifest_path(record)
   local_manifest <- tempfile("resume-fit-manifest-", fileext = ".json")
   on.exit(unlink(local_manifest), add = TRUE)
+  if (!store$object_exists(fixed_manifest_path)) {
+    stop("Checkpoint manifest is absent: ", fixed_manifest_path, call. = FALSE)
+  }
   store$download(fixed_manifest_path, local_manifest)
   fit_manifest <- jsonlite::read_json(local_manifest, simplifyVector = FALSE)
   validate_fit_manifest_structure(fit_manifest, record)
@@ -887,6 +890,25 @@ read_valid_boundary_manifest <- function(
     stop("Checkpoint runtime identity does not match the current analysis.", call. = FALSE)
   }
   fit_manifest$fit_manifest_path <- fixed_manifest_path
+  fit_manifest
+}
+
+read_valid_boundary_manifest <- function(
+    store,
+    record,
+    expected_input_hashes = NULL,
+    expected_settings = NULL,
+    expected_source_hashes = NULL,
+    expected_runtime = NULL
+) {
+  fit_manifest <- read_valid_fit_manifest(
+    store,
+    record,
+    expected_input_hashes,
+    expected_settings,
+    expected_source_hashes,
+    expected_runtime
+  )
 
   if (!identical(fit_manifest$status, "SKIPPED")) {
     payload <- fit_manifest$payloads$susie_fit
@@ -1133,6 +1155,21 @@ is_usable_window_manifest <- function(
 }
 
 trim_window_manifest_boundary <- function(window_manifest, invalid_index) {
+  committed_indexes <- purrr::map_int(
+    window_manifest$committed %||% list(),
+    function(record) {
+      checkpoint_optional_index(record$processing_index) %||% -1L
+    }
+  )
+  recovered_prefix <- checkpoint_optional_index(
+    window_manifest$recovered_prefix_last_committed_index
+  ) %||% -1L
+  includes_recovered_prefix <- any(committed_indexes <= recovered_prefix)
+  if (includes_recovered_prefix) {
+    window_manifest$recovered_prefix_last_committed_index <- -1L
+  } else if (invalid_index <= recovered_prefix) {
+    window_manifest$recovered_prefix_last_committed_index <- invalid_index - 1L
+  }
   window_manifest$committed <- purrr::keep(
     window_manifest$committed,
     function(record) {

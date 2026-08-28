@@ -345,6 +345,77 @@ run_named_test("input loader ignores samples from inapplicable covariate files",
   )
 })
 
+run_named_test("modality covariate gaps affect only that modality cache", {
+  splicing_sample_ids <- sprintf("sample_%02d", 6:40)
+  splicing_path <- tempfile(fileext = ".tsv")
+  on.exit(unlink(splicing_path), add = TRUE)
+  splicing_covariates <- tibble::tibble(covariate_id = "splicing_pc1") |>
+    dplyr::bind_cols(
+      tibble::as_tibble(
+        matrix(
+          seq_along(splicing_sample_ids) / 10,
+          nrow = 1L,
+          dimnames = list(NULL, splicing_sample_ids)
+        )
+      )
+    )
+  readr::write_tsv(splicing_covariates, splicing_path)
+  modality_config <- config
+  modality_config$covariate_files <- c(
+    modality_config$covariate_files,
+    splicing_path
+  )
+  modality_config$covariate_modalities <- c(
+    modality_config$covariate_modalities,
+    "splicing"
+  )
+
+  modality_inputs <- load_checkpointed_window_inputs(
+    modality_config,
+    ordered_manifest
+  )
+  modality_plan <- build_checkpointed_window_cache_plan(
+    modality_inputs,
+    ordered_manifest
+  )
+  expression_group <- modality_plan$groups[[
+    modality_plan$phenotypes$linked_expression$group_key
+  ]]
+  splicing_group <- modality_plan$groups[[
+    modality_plan$phenotypes$linked_splicing$group_key
+  ]]
+  expect_true_value(
+    "sample_05" %in% modality_inputs$sample_ids,
+    "base alignment retains expression sample"
+  )
+  expect_true_value(
+    "sample_05" %in% expression_group$retained_sample_ids,
+    "expression cache retains expression sample"
+  )
+  expect_true_value(
+    !"sample_05" %in% splicing_group$retained_sample_ids,
+    "splicing cache removes missing-covariate sample"
+  )
+  expect_identical_value(expression_group$overlap_samples, 36L, "expression overlap")
+  expect_identical_value(splicing_group$overlap_samples, 35L, "splicing overlap")
+
+  modality_cache <- new_checkpointed_window_genotype_cache(
+    modality_inputs$genotype,
+    modality_inputs$variant_info$variant_id,
+    modality_plan,
+    raw_dosage_samples = modality_inputs$raw_dosage_samples,
+    overlap_samples = modality_inputs$overlap_samples
+  )
+  expression_prepared <- modality_cache$get("linked_expression")
+  splicing_prepared <- modality_cache$get("linked_splicing")
+  expect_identical_value(expression_prepared$qc$overlap_samples, 36L, "expression QC overlap")
+  expect_identical_value(splicing_prepared$qc$overlap_samples, 35L, "splicing QC overlap")
+  expect_true_value(
+    expression_prepared$cache_key != splicing_prepared$cache_key,
+    "modality overlap cache identities"
+  )
+})
+
 fit_results <- purrr::map(seq_len(nrow(ordered_manifest)), function(index) {
   record <- ordered_manifest[index, ]
   fit_checkpointed_window_phenotype(
@@ -846,6 +917,42 @@ run_named_test("formatter preserves all three result schemas", {
   expect_identical_value(names(written$full_susie), full_susie_columns, "written full-SuSiE columns")
 })
 
+run_named_test("six-variant credible-set fit uses the fixed ten-effect schema", {
+  six_variant_result <- fit_results[[1L]]
+  expect_true_value(
+    length(six_variant_result$fit$sets$cs) > 0L,
+    "six-variant source credible sets"
+  )
+  tables <- format_checkpointed_susie_tables(
+    six_variant_result,
+    ordered_manifest[1L, ]
+  )
+  expect_true_value(nrow(tables$credible_sets) > 0L, "six-variant credible-set rows")
+  expect_identical_value(nrow(tables$full_susie), 6L, "six-variant full rows")
+  expect_identical_value(nrow(tables$lbf_variable), 6L, "six-variant LBF rows")
+  expect_identical_value(
+    typeof(tables$full_susie$low_purity),
+    "character",
+    "nonempty low-purity type"
+  )
+  expect_true_value(
+    all(as.matrix(tables$full_susie[paste0("alpha", 7:10)]) == 0),
+    "absent alpha effects"
+  )
+  expect_true_value(
+    all(as.matrix(tables$full_susie[paste0("mu_", 7:10)]) == 0),
+    "absent mu effects"
+  )
+  expect_true_value(
+    all(as.matrix(tables$full_susie[paste0("mu2_", 7:10)]) == 0),
+    "absent mu2 effects"
+  )
+  expect_true_value(
+    all(is.na(as.matrix(tables$lbf_variable[paste0("lbf_variable", 7:10)]))),
+    "absent LBF effects"
+  )
+})
+
 run_named_test("skipped formatter writes typed empty schemas", {
   skipped <- list(
     status = "SKIPPED",
@@ -865,6 +972,11 @@ run_named_test("skipped formatter writes typed empty schemas", {
   expect_identical_value(typeof(tables$credible_sets$position), "integer", "credible-set position type")
   expect_identical_value(typeof(tables$lbf_variable$position), "integer", "LBF position type")
   expect_identical_value(typeof(tables$full_susie$pip), "double", "full-SuSiE PIP type")
+  expect_identical_value(
+    typeof(tables$full_susie$low_purity),
+    "character",
+    "full-SuSiE low-purity type"
+  )
 })
 
 run_named_test("result table validator rejects prototype type drift", {

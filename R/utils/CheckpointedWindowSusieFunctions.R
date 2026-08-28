@@ -480,6 +480,23 @@ applicable_covariate_matrix <- function(covariates, modality, sample_ids) {
   checkpointed_reduce_covariate_matrix(sample_by_covariate)
 }
 
+checkpointed_applicable_covariate_sample_ids <- function(
+    covariates,
+    modality,
+    sample_ids
+) {
+  selected <- purrr::keep(
+    covariates,
+    ~ .x$label %in% c("shared", modality)
+  )
+  if (length(selected) == 0L) {
+    stop("Phenotype modality has no applicable covariate input.", call. = FALSE)
+  }
+  sample_ids[purrr::map_lgl(sample_ids, function(sample_id) {
+    all(purrr::map_lgl(selected, ~ sample_id %in% .x$sample_ids))
+  })]
+}
+
 read_checkpointed_sample_allowlist <- function(path) {
   allowlist <- data.table::fread(
     path,
@@ -531,10 +548,6 @@ load_checkpointed_window_inputs <- function(
 
   dosage_samples <- colnames(dosage$genotype)
   manifest_modalities <- unique(ordered_manifest$modality)
-  applicable_covariates <- purrr::keep(
-    covariates,
-    ~ .x$label %in% c("shared", manifest_modalities)
-  )
   purrr::walk(manifest_modalities, function(modality) {
     if (!any(purrr::map_lgl(
       covariates,
@@ -543,10 +556,7 @@ load_checkpointed_window_inputs <- function(
       stop("Phenotype modality has no applicable covariate input.", call. = FALSE)
     }
   })
-  available_sample_sets <- c(
-    list(names(phenotype_data$values[[1L]])),
-    purrr::map(applicable_covariates, "sample_ids")
-  )
+  available_sample_sets <- list(names(phenotype_data$values[[1L]]))
   keep_samples <- config$keep_samples
   has_allowlist <- !is.null(keep_samples) && length(keep_samples) == 1L &&
     !is.na(keep_samples) && nzchar(keep_samples)
@@ -637,9 +647,11 @@ checkpointed_design_identity <- function(sample_ids, design) {
 checkpointed_genotype_cache_key <- function(
     sample_ids,
     retained_variant_ids,
-    design
+    design,
+    overlap_sample_ids = sample_ids
 ) {
   payload <- list(
+    ordered_overlap_sample_ids = as.character(overlap_sample_ids),
     ordered_sample_ids = as.character(sample_ids),
     retained_variant_ids = as.character(retained_variant_ids),
     retained_covariate_columns = colnames(design) %||% character(),
@@ -678,13 +690,20 @@ build_checkpointed_window_cache_plan <- function(model_inputs, ordered_manifest)
       if (is.null(phenotype)) {
         stop("Cache planning phenotype is absent: ", phenotype_id, call. = FALSE)
       }
-      aligned_values <- phenotype[model_inputs$sample_ids]
-      retained_sample_ids <- model_inputs$sample_ids[is.finite(aligned_values)]
+      overlap_sample_ids <- checkpointed_applicable_covariate_sample_ids(
+        model_inputs$covariates,
+        record$modality[[1L]],
+        model_inputs$sample_ids
+      )
+      aligned_values <- phenotype[overlap_sample_ids]
+      retained_sample_ids <- overlap_sample_ids[is.finite(aligned_values)]
+      overlap_sample_mask_id <- checkpointed_sample_mask_id(overlap_sample_ids)
       sample_mask_id <- checkpointed_sample_mask_id(retained_sample_ids)
       candidate_key <- digest::digest(
         jsonlite::toJSON(
           list(
             modality = record$modality[[1L]],
+            overlap_sample_mask_id = overlap_sample_mask_id,
             sample_mask_id = sample_mask_id
           ),
           auto_unbox = TRUE,
@@ -698,6 +717,8 @@ build_checkpointed_window_cache_plan <- function(model_inputs, ordered_manifest)
         phenotype_id = phenotype_id,
         modality = record$modality[[1L]],
         candidate_key = candidate_key,
+        overlap_sample_ids = overlap_sample_ids,
+        overlap_sample_mask_id = overlap_sample_mask_id,
         retained_sample_ids = retained_sample_ids,
         sample_mask_id = sample_mask_id
       )
@@ -721,11 +742,18 @@ build_checkpointed_window_cache_plan <- function(model_inputs, ordered_manifest)
     rownames(design) <- retained_sample_ids
     design_id <- checkpointed_design_identity(retained_sample_ids, design)
     preparation_key <- digest::digest(
-      paste(design_id, reference$sample_mask_id, sep = "\n"),
+      paste(
+        design_id,
+        reference$overlap_sample_mask_id,
+        reference$sample_mask_id,
+        sep = "\n"
+      ),
       algo = "sha256",
       serialize = FALSE
     )
     list(
+      overlap_sample_ids = reference$overlap_sample_ids,
+      overlap_samples = as.integer(length(reference$overlap_sample_ids)),
       retained_sample_ids = retained_sample_ids,
       covariates = covariates,
       design = design,
@@ -804,14 +832,17 @@ prepare_checkpointed_window_genotype <- function(
   genotype <- genotype[, sample_ids, drop = FALSE]
   design <- as.matrix(plan$design)
   storage.mode(design) <- "double"
+  group_overlap_samples <- as.integer(plan$overlap_samples %||% overlap_samples)
+  overlap_sample_ids <- plan$overlap_sample_ids %||% sample_ids
   empty_cache_key <- checkpointed_genotype_cache_key(
     sample_ids,
     character(),
-    design
+    design,
+    overlap_sample_ids
   )
   base_qc <- checkpointed_preparation_qc(
     raw_dosage_samples,
-    overlap_samples,
+    group_overlap_samples,
     sample_ids,
     variant_ids,
     character(),
@@ -932,11 +963,12 @@ prepare_checkpointed_window_genotype <- function(
   cache_key <- checkpointed_genotype_cache_key(
     sample_ids,
     retained_variant_ids,
-    design
+    design,
+    overlap_sample_ids
   )
   qc <- checkpointed_preparation_qc(
     raw_dosage_samples,
-    overlap_samples,
+    group_overlap_samples,
     sample_ids,
     variant_ids,
     retained_variant_ids,
@@ -1201,12 +1233,39 @@ checkpointed_call_legacy_helper <- function(helper, ...) {
   helper(...)
 }
 
+checkpointed_pad_extraction_fit <- function(fit, effect_count = 10L) {
+  matrix_fields <- c("alpha", "mu", "mu2", "lbf_variable")
+  current_effects <- nrow(fit$alpha)
+  if (current_effects > effect_count) {
+    stop(
+      "Checkpoint extraction fit has more than ten effects.",
+      call. = FALSE
+    )
+  }
+  if (current_effects == effect_count) {
+    return(fit)
+  }
+
+  purrr::reduce(matrix_fields, function(fit, field) {
+    values <- fit[[field]]
+    fill_value <- if (identical(field, "lbf_variable")) NA_real_ else 0
+    padding <- matrix(
+      fill_value,
+      nrow = effect_count - nrow(values),
+      ncol = ncol(values),
+      dimnames = list(NULL, colnames(values))
+    )
+    fit[[field]] <- rbind(values, padding)
+    fit
+  }, .init = fit)
+}
+
 format_checkpointed_susie_tables <- function(result, phenotype_record) {
   if (identical(result$status, "SKIPPED")) {
     return(checkpointed_empty_susie_tables())
   }
   validate_checkpointed_susie_fit(result$fit)
-  extraction_fit <- result$fit
+  extraction_fit <- checkpointed_pad_extraction_fit(result$fit)
   if (is.numeric(extraction_fit$z) && is.null(dim(extraction_fit$z))) {
     extraction_fit$z <- matrix(
       extraction_fit$z,
@@ -1315,7 +1374,7 @@ format_checkpointed_susie_tables <- function(result, phenotype_record) {
       alt = .data$alt,
       cs_id = .data$cs_id,
       cs_index = .data$cs_index,
-      low_purity = .data$low_purity,
+      low_purity = as.character(.data$low_purity),
       region = .data$region,
       pip = .data$pip,
       z = .data$z,
@@ -1454,11 +1513,14 @@ checkpointed_complete_fit_qc <- function(
   } else {
     fit_result$fit$variant_id
   }
+  group_overlap_samples <- as.integer(
+    plan$overlap_samples %||% model_inputs$overlap_samples
+  )
   defaults <- list(
-    input_samples = as.integer(model_inputs$overlap_samples),
+    input_samples = group_overlap_samples,
     retained_samples = as.integer(length(plan$retained_sample_ids)),
     raw_dosage_samples = as.integer(model_inputs$raw_dosage_samples),
-    overlap_samples = as.integer(model_inputs$overlap_samples),
+    overlap_samples = group_overlap_samples,
     phenotype_retained_samples = as.integer(length(plan$retained_sample_ids)),
     input_variants = as.integer(nrow(model_inputs$variant_info)),
     retained_variants = as.integer(length(retained_variant_ids)),
@@ -1471,7 +1533,8 @@ checkpointed_complete_fit_qc <- function(
     cache_key = checkpointed_genotype_cache_key(
       plan$retained_sample_ids,
       retained_variant_ids,
-      plan$design
+      plan$design,
+      plan$overlap_sample_ids %||% plan$retained_sample_ids
     )
   )
   for (field in names(defaults)) {
@@ -1607,6 +1670,52 @@ checkpointed_download_payload <- function(store, payload, local_path) {
   local_path
 }
 
+new_checkpoint_payload_corruption <- function(
+    fit_manifest,
+    payload_path,
+    reason
+) {
+  processing_index <- checkpoint_scalar_index(
+    fit_manifest$processing_index,
+    "Checkpoint processing index"
+  )
+  message <- paste0(
+    "Checkpoint payload validation failed for phenotype index ",
+    processing_index,
+    " at path ",
+    payload_path,
+    ": ",
+    conditionMessage(reason)
+  )
+  structure(
+    list(
+      message = message,
+      call = NULL,
+      processing_index = processing_index,
+      phenotype_id = fit_manifest$phenotype_id,
+      phenotype_key = fit_manifest$phenotype_key,
+      payload_path = payload_path,
+      fit_manifest_path = fit_manifest$fit_manifest_path
+    ),
+    class = c("checkpoint_payload_corruption", "error", "condition")
+  )
+}
+
+stop_checkpoint_payload_corruption <- function(
+    condition,
+    fit_manifest,
+    payload_path
+) {
+  if (inherits(condition, "checkpoint_store_error")) {
+    stop(condition)
+  }
+  stop(new_checkpoint_payload_corruption(
+    fit_manifest,
+    payload_path,
+    condition
+  ))
+}
+
 hydrate_checkpointed_fit_manifests <- function(
     store,
     ordered_manifest,
@@ -1615,16 +1724,67 @@ hydrate_checkpointed_fit_manifests <- function(
     expected_source_hashes = NULL,
     expected_runtime = NULL
 ) {
-  purrr::map(
+  lapply(
     seq_len(nrow(ordered_manifest)),
-    ~ read_valid_boundary_manifest(
-      store,
-      ordered_manifest[.x, , drop = FALSE],
-      expected_input_hashes = expected_input_hashes,
-      expected_settings = expected_settings,
-      expected_source_hashes = expected_source_hashes,
-      expected_runtime = expected_runtime
-    )
+    function(row_index) {
+      fit_manifest <- read_valid_fit_manifest(
+        store,
+        ordered_manifest[row_index, , drop = FALSE],
+        expected_input_hashes = expected_input_hashes,
+        expected_settings = expected_settings,
+        expected_source_hashes = expected_source_hashes,
+        expected_runtime = expected_runtime
+      )
+      if (!identical(fit_manifest$status, "SKIPPED")) {
+        rds_path <- fit_manifest$payloads$susie_fit$path
+        if (!store$object_exists(rds_path)) {
+          stop(new_checkpoint_payload_corruption(
+            fit_manifest,
+            rds_path,
+            simpleError("Saved fit RDS is absent.")
+          ))
+        }
+      }
+      fit_manifest
+    }
+  )
+}
+
+checkpointed_read_phenotype_tables <- function(store, fit_manifest) {
+  parquet_names <- c("credible_sets", "lbf_variable", "full_susie")
+  tables <- stats::setNames(
+    lapply(parquet_names, function(payload_name) {
+      payload <- fit_manifest$payloads[[payload_name]]
+      local_path <- tempfile(
+        paste0("assembled-", payload_name, "-"),
+        fileext = ".parquet"
+      )
+      on.exit(unlink(local_path), add = TRUE)
+      tryCatch(
+        {
+          checkpointed_download_payload(store, payload, local_path)
+          arrow::read_parquet(local_path, as_data_frame = TRUE)
+        },
+        error = function(condition) {
+          stop_checkpoint_payload_corruption(
+            condition,
+            fit_manifest,
+            payload$path
+          )
+        }
+      )
+    }),
+    parquet_names
+  )
+  tryCatch(
+    checkpointed_validate_susie_tables(tables),
+    error = function(condition) {
+      stop_checkpoint_payload_corruption(
+        condition,
+        fit_manifest,
+        fit_manifest$fit_manifest_path
+      )
+    }
   )
 }
 
@@ -1674,24 +1834,14 @@ assemble_checkpointed_window_outputs <- function(
   })
 
   parquet_names <- c("credible_sets", "lbf_variable", "full_susie")
+  phenotype_tables <- lapply(
+    committed_records,
+    function(fit_manifest) {
+      checkpointed_read_phenotype_tables(store, fit_manifest)
+    }
+  )
   combined_tables <- purrr::map(parquet_names, function(payload_name) {
-    phenotype_tables <- purrr::map(
-      committed_records,
-      function(fit_manifest) {
-        local_path <- tempfile(
-          paste0("assembled-", payload_name, "-"),
-          fileext = ".parquet"
-        )
-        on.exit(unlink(local_path), add = TRUE)
-        checkpointed_download_payload(
-          store,
-          fit_manifest$payloads[[payload_name]],
-          local_path
-        )
-        arrow::read_parquet(local_path, as_data_frame = TRUE)
-      }
-    )
-    dplyr::bind_rows(phenotype_tables)
+    dplyr::bind_rows(purrr::map(phenotype_tables, payload_name))
   }) |>
     stats::setNames(parquet_names)
   combined_tables <- checkpointed_validate_susie_tables(combined_tables)
@@ -1819,158 +1969,219 @@ run_checkpointed_window <- function(
     }
 
     commit_count <- 0L
-    indexes <- ordered_manifest$processing_index[
-      ordered_manifest$processing_index >= resume$next_index
-    ]
+    next_index <- resume$next_index
+    recovered_payload_indexes <- integer()
     use_prepared_cache <- identical(
       fit_function,
       fit_checkpointed_window_phenotype
     )
-    model_inputs <- NULL
-    cache_plan <- list(phenotypes = list(), groups = list())
-    if (length(indexes) > 0L) {
-      model_inputs <- load_checkpointed_window_inputs(
-        config,
-        ordered_manifest,
-        impute_genotype = !use_prepared_cache
-      )
-      remaining_manifest <- ordered_manifest |>
-        dplyr::filter(.data$processing_index %in% indexes)
-      cache_plan <- build_checkpointed_window_cache_plan(
-        model_inputs,
-        remaining_manifest
-      )
-    }
-    genotype_cache <- NULL
-    if (use_prepared_cache && length(indexes) > 0L) {
-      genotype_cache <- new_checkpointed_window_genotype_cache(
-        model_inputs$genotype,
-        model_inputs$variant_info$variant_id,
-        cache_plan,
-        raw_dosage_samples = model_inputs$raw_dosage_samples,
-        overlap_samples = model_inputs$overlap_samples
-      )
-      model_inputs$genotype <- NULL
-    }
-    for (index in indexes) {
-      phenotype_record <- ordered_manifest |>
-        dplyr::filter(.data$processing_index == index)
-      phenotype_id <- phenotype_record$phenotype_id[[1L]]
-      phenotype_plan <- cache_plan$phenotypes[[phenotype_id]]
-      plan <- cache_plan$groups[[phenotype_plan$group_key]]
-      message(
-        "[checkpointed-window] Fit index ",
-        index,
-        " phenotype ",
-        phenotype_id,
-        " modality ",
-        phenotype_record$modality[[1L]],
-        " samples ",
-        length(plan$retained_sample_ids),
-        " design ",
-        plan$design_id
-      )
-      started_at <- checkpointed_timestamp()
-      fit_result <- if (use_prepared_cache) {
-        fit_prepared_checkpointed_window_phenotype(
-          genotype_cache$get(phenotype_id),
-          model_inputs$phenotypes[[phenotype_id]],
-          settings
+    repeat {
+      indexes <- ordered_manifest$processing_index[
+        ordered_manifest$processing_index >= next_index
+      ]
+      model_inputs <- NULL
+      cache_plan <- list(phenotypes = list(), groups = list())
+      if (length(indexes) > 0L) {
+        model_inputs <- load_checkpointed_window_inputs(
+          config,
+          ordered_manifest,
+          impute_genotype = !use_prepared_cache
         )
-      } else {
-        fit_function(
-          genotype = model_inputs$genotype,
-          phenotype = model_inputs$phenotypes[[phenotype_id]],
-          covariates = applicable_covariate_matrix(
-            model_inputs$covariates,
-            phenotype_record$modality[[1L]],
-            model_inputs$sample_ids
-          ),
-          variant_ids = model_inputs$variant_info$variant_id,
-          settings = settings
+        remaining_manifest <- ordered_manifest |>
+          dplyr::filter(.data$processing_index %in% indexes)
+        cache_plan <- build_checkpointed_window_cache_plan(
+          model_inputs,
+          remaining_manifest
         )
       }
-      fit_result <- checkpointed_complete_fit_qc(
-        fit_result,
-        plan,
-        model_inputs
-      )
-      fit_result$started_at <- started_at
-      fit_result$completed_at <- checkpointed_timestamp()
-      local_artifacts <- write_local_phenotype_artifacts(
-        fit_result,
-        phenotype_record,
-        tempfile("checkpointed-phenotype-")
-      )
-      fit_manifest <- build_fit_manifest(
-        analysis_id,
-        config$window_id,
-        phenotype_record,
-        fit_result,
-        local_artifacts,
-        input_hashes,
-        settings,
-        provenance
-      )
-      fit_sha256 <- if (identical(fit_result$status, "SKIPPED")) {
-        NULL
-      } else {
-        fit_manifest$payloads$susie_fit$sha256
+      genotype_cache <- NULL
+      if (use_prepared_cache && length(indexes) > 0L) {
+        genotype_cache <- new_checkpointed_window_genotype_cache(
+          model_inputs$genotype,
+          model_inputs$variant_info$variant_id,
+          cache_plan,
+          raw_dosage_samples = model_inputs$raw_dosage_samples,
+          overlap_samples = model_inputs$overlap_samples
+        )
+        model_inputs$genotype <- NULL
       }
-      committed <- commit_phenotype_checkpoint(
-        store,
-        phenotype_checkpoint_paths(
+      for (index in indexes) {
+        phenotype_record <- ordered_manifest |>
+          dplyr::filter(.data$processing_index == index)
+        phenotype_id <- phenotype_record$phenotype_id[[1L]]
+        phenotype_plan <- cache_plan$phenotypes[[phenotype_id]]
+        plan <- cache_plan$groups[[phenotype_plan$group_key]]
+        message(
+          "[checkpointed-window] Fit index ",
+          index,
+          " phenotype ",
+          phenotype_id,
+          " modality ",
+          phenotype_record$modality[[1L]],
+          " samples ",
+          length(plan$retained_sample_ids),
+          " design ",
+          plan$design_id
+        )
+        started_at <- checkpointed_timestamp()
+        fit_result <- if (use_prepared_cache) {
+          fit_prepared_checkpointed_window_phenotype(
+            genotype_cache$get(phenotype_id),
+            model_inputs$phenotypes[[phenotype_id]],
+            settings
+          )
+        } else {
+          fit_function(
+            genotype = model_inputs$genotype[, plan$retained_sample_ids, drop = FALSE],
+            phenotype = model_inputs$phenotypes[[phenotype_id]][
+              plan$retained_sample_ids
+            ],
+            covariates = plan$covariates,
+            variant_ids = model_inputs$variant_info$variant_id,
+            settings = settings
+          )
+        }
+        fit_result <- checkpointed_complete_fit_qc(
+          fit_result,
+          plan,
+          model_inputs
+        )
+        fit_result$started_at <- started_at
+        fit_result$completed_at <- checkpointed_timestamp()
+        local_artifacts <- write_local_phenotype_artifacts(
+          fit_result,
+          phenotype_record,
+          tempfile("checkpointed-phenotype-")
+        )
+        fit_manifest <- build_fit_manifest(
           analysis_id,
           config$window_id,
-          phenotype_record$phenotype_key[[1L]],
-          fit_sha256
+          phenotype_record,
+          fit_result,
+          local_artifacts,
+          input_hashes,
+          settings,
+          provenance
+        )
+        fit_sha256 <- if (identical(fit_result$status, "SKIPPED")) {
+          NULL
+        } else {
+          fit_manifest$payloads$susie_fit$sha256
+        }
+        committed <- commit_phenotype_checkpoint(
+          store,
+          phenotype_checkpoint_paths(
+            analysis_id,
+            config$window_id,
+            phenotype_record$phenotype_key[[1L]],
+            fit_sha256
+          ),
+          local_artifacts,
+          fit_manifest
+        )
+        window_state <<- advance_window_run_manifest(window_state, committed)
+        upload_window_run_manifest(
+          store,
+          window_paths$window_manifest,
+          window_state
+        )
+        checkpointed_cleanup_phenotype_artifacts(local_artifacts)
+        if (use_prepared_cache) {
+          genotype_cache$release(phenotype_id)
+        }
+        message(
+          "[checkpointed-window] Committed ",
+          phenotype_id,
+          " at index ",
+          index
+        )
+        commit_count <- commit_count + 1L
+        if (commit_count >= interrupt_after_commits) {
+          stop(structure(
+            list(message = "Synthetic interruption"),
+            class = c("checkpoint_test_interrupt", "error", "condition")
+          ))
+        }
+      }
+
+      hydration <- tryCatch(
+        list(
+          manifests = hydrate_checkpointed_fit_manifests(
+            store,
+            ordered_manifest,
+            expected_input_hashes = input_hashes,
+            expected_settings = settings,
+            expected_source_hashes = provenance$source_hashes,
+            expected_runtime = provenance$runtime
+          ),
+          corruption = NULL
         ),
-        local_artifacts,
-        fit_manifest
+        checkpoint_payload_corruption = function(condition) {
+          list(manifests = NULL, corruption = condition)
+        }
       )
-      window_state <<- advance_window_run_manifest(window_state, committed)
+      corruption <- hydration$corruption
+      if (is.null(corruption)) {
+        hydrated_manifests <- hydration$manifests
+        window_state$committed <<- purrr::map(
+          hydrated_manifests,
+          checkpoint_committed_record
+        )
+        window_state$last_committed_index <<- nrow(ordered_manifest) - 1L
+        assembly <- tryCatch(
+          list(
+            paths = assemble_checkpointed_window_outputs(
+              store,
+              hydrated_manifests,
+              config$output_dir
+            ),
+            corruption = NULL
+          ),
+          checkpoint_payload_corruption = function(condition) {
+            list(paths = NULL, corruption = condition)
+          }
+        )
+        corruption <- assembly$corruption
+      }
+      if (is.null(corruption)) {
+        final_paths <- assembly$paths
+        break
+      }
+
+      invalid_index <- as.integer(corruption$processing_index)
+      if (invalid_index %in% recovered_payload_indexes) {
+        stop(corruption)
+      }
+      recovered_payload_indexes <- c(
+        recovered_payload_indexes,
+        invalid_index
+      )
+      invalid_record <- ordered_manifest |>
+        dplyr::filter(.data$processing_index == invalid_index)
+      recovery <- checkpoint_recovery_entry(
+        invalid_record,
+        corruption$fit_manifest_path,
+        conditionMessage(corruption),
+        attempt = window_state$attempt
+      )
+      window_state <<- trim_window_manifest_boundary(
+        window_state,
+        invalid_index
+      )
+      window_state <<- append_window_recovery(window_state, recovery)
       upload_window_run_manifest(
         store,
         window_paths$window_manifest,
         window_state
       )
-      checkpointed_cleanup_phenotype_artifacts(local_artifacts)
-      if (use_prepared_cache) {
-        genotype_cache$release(phenotype_id)
-      }
       message(
-        "[checkpointed-window] Committed ",
-        phenotype_id,
-        " at index ",
-        index
+        "[checkpointed-window] Recompute from index ",
+        invalid_index,
+        " after payload validation failed at ",
+        corruption$payload_path
       )
-      commit_count <- commit_count + 1L
-      if (commit_count >= interrupt_after_commits) {
-        stop(structure(
-          list(message = "Synthetic interruption"),
-          class = c("checkpoint_test_interrupt", "error", "condition")
-        ))
-      }
+      next_index <- invalid_index
     }
-
-    hydrated_manifests <- hydrate_checkpointed_fit_manifests(
-      store,
-      ordered_manifest,
-      expected_input_hashes = input_hashes,
-      expected_settings = settings,
-      expected_source_hashes = provenance$source_hashes,
-      expected_runtime = provenance$runtime
-    )
-    window_state$committed <<- purrr::map(
-      hydrated_manifests,
-      checkpoint_committed_record
-    )
-    window_state$last_committed_index <<- nrow(ordered_manifest) - 1L
-    final_paths <- assemble_checkpointed_window_outputs(
-      store,
-      hydrated_manifests,
-      config$output_dir
-    )
     committed_window_outputs <- commit_window_outputs(
       store,
       analysis_id,

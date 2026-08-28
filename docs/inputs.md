@@ -89,7 +89,15 @@ Each covariate TSV is a covariate-by-sample table. The first column contains
 unique covariate IDs. The other column names are unique sample IDs. All values
 must be finite. The runner combines `shared` files and files for the phenotype
 modality in WDL array order. It removes constant and dependent covariates for
-each retained-sample mask.
+each retained-sample mask. A sample that is absent from a modality-specific
+covariate file is absent only from phenotypes for that modality. It remains
+available to phenotypes that do not use that file.
+
+Each phenotype manifest records three sample counts. `raw_dosage_samples` is
+the dosage header count. `overlap_samples` is the count after the phenotype
+header, optional allowlist, shared covariates, and applicable modality
+covariates are aligned. `phenotype_retained_samples` is the count after that
+phenotype's finite-value mask is applied.
 
 The optional sample allowlist must have exactly one named column. Its sample
 IDs must be unique and nonempty.

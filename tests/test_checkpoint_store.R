@@ -503,6 +503,44 @@ run_named_test("window manifest helpers advance and record a failure", {
   )
 })
 
+run_named_test("payload recovery keeps a valid recovered-prefix inventory", {
+  hydrated <- list(
+    recovered_prefix_last_committed_index = 1L,
+    last_committed_index = 2L,
+    status = "COMPLETE",
+    committed = purrr::map(0:2, ~ list(processing_index = .x))
+  )
+  trimmed_hydrated <- trim_window_manifest_boundary(hydrated, 2L)
+  expect_identical_value(
+    trimmed_hydrated$recovered_prefix_last_committed_index,
+    -1L,
+    "hydrated recovery prefix"
+  )
+  expect_identical_value(
+    purrr::map_int(trimmed_hydrated$committed, "processing_index"),
+    0:1,
+    "hydrated recovery inventory"
+  )
+
+  implicit_prefix <- list(
+    recovered_prefix_last_committed_index = 1L,
+    last_committed_index = 2L,
+    status = "RUNNING",
+    committed = list(list(processing_index = 2L))
+  )
+  trimmed_prefix <- trim_window_manifest_boundary(implicit_prefix, 1L)
+  expect_identical_value(
+    trimmed_prefix$recovered_prefix_last_committed_index,
+    0L,
+    "implicit recovery prefix"
+  )
+  expect_identical_value(
+    length(trimmed_prefix$committed),
+    0L,
+    "implicit recovery inventory"
+  )
+})
+
 run_named_test("window completion uses COMPLETE and invalid statuses are rejected", {
   ordered <- make_ordered_manifest(1L)
   window_manifest <- new_window_run_manifest(

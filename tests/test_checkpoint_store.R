@@ -1,4 +1,5 @@
 source("tests/test_helpers.R")
+source("R/utils/InitFunctions.R")
 source("R/utils/CheckpointedWindowSusieFunctions.R")
 source("R/utils/CheckpointStore.R")
 
@@ -44,9 +45,9 @@ make_local_artifacts <- function(fit = fake_fit) {
     full_susie = file.path(artifact_directory, "full_susie.parquet")
   )
   saveRDS(fit, paths$fit_rds)
-  purrr::iwalk(
-    paths[c("credible_sets", "lbf_variable", "full_susie")],
-    ~ arrow::write_parquet(tibble::tibble(artifact = .y), .x)
+  write_checkpointed_susie_tables(
+    checkpointed_empty_susie_tables(),
+    artifact_directory
   )
   paths
 }
@@ -286,6 +287,39 @@ run_named_test("phenotype commit rejects a checksum mismatch", {
   expect_identical_value(calls$count, 0L, "uploads after checksum mismatch")
 })
 
+run_named_test("phenotype commit validates every Parquet schema before upload", {
+  record <- make_ordered_manifest(1L)[1L, ]
+  commit_inputs <- make_commit_inputs(record)
+  arrow::write_parquet(
+    tibble::tibble(wrong_schema = "invalid"),
+    commit_inputs$local_artifacts$credible_sets
+  )
+  commit_inputs$fit_manifest$payloads$credible_sets <- payload_record(
+    commit_inputs$local_artifacts$credible_sets,
+    commit_inputs$paths$credible_sets
+  )
+  calls <- new.env(parent = emptyenv())
+  calls$count <- 0L
+  mock_store <- list(
+    upload = function(local_path, relative_path) {
+      calls$count <- calls$count + 1L
+      invisible(TRUE)
+    },
+    object_uri = function(relative_path) paste0("gs://test-root/", relative_path)
+  )
+
+  expect_error_message(
+    commit_phenotype_checkpoint(
+      mock_store,
+      commit_inputs$paths,
+      commit_inputs$local_artifacts,
+      commit_inputs$fit_manifest
+    ),
+    "table columns do not match"
+  )
+  expect_identical_value(calls$count, 0L, "uploads after Parquet schema failure")
+})
+
 run_named_test("phenotype commit enforces every canonical fixed path", {
   record <- make_ordered_manifest(1L)[1L, ]
   path_fields <- c("fit_manifest", "credible_sets", "lbf_variable", "full_susie")
@@ -387,6 +421,63 @@ run_named_test("window manifest helpers advance and record a failure", {
     ordered$phenotype_id[[2L]],
     "failure phenotype ID"
   )
+})
+
+run_named_test("window completion uses COMPLETE and invalid statuses are rejected", {
+  ordered <- make_ordered_manifest(1L)
+  window_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = paste(rep("a", 64L), collapse = "")),
+    checkpointed_susie_settings()
+  )
+  window_manifest <- advance_window_run_manifest(
+    window_manifest,
+    list(
+      analysis_id = "analysis-1",
+      window_id = "chr1_0_2000000",
+      phenotype_id = ordered$phenotype_id[[1L]],
+      phenotype_key = ordered$phenotype_key[[1L]],
+      modality = ordered$modality[[1L]],
+      processing_index = 0L,
+      p_value = ordered$p_value[[1L]],
+      status = "CONVERGED"
+    )
+  )
+  final_record <- list(
+    path = "analysis-1/chr1_0_2000000/output",
+    sha256 = paste(rep("b", 64L), collapse = ""),
+    bytes = 1,
+    uri = "gs://test-root/analysis-1/chr1_0_2000000/output"
+  )
+  final_outputs <- stats::setNames(
+    rep(list(final_record), 4L),
+    c("fit_index", "credible_sets", "lbf_variable", "full_susie")
+  )
+  completed <- complete_window_run_manifest(window_manifest, final_outputs)
+  expect_identical_value(completed$status, "COMPLETE", "terminal window status")
+
+  purrr::walk(c("COMPLETED", "PENDING", ""), function(invalid_status) {
+    invalid_cursor <- new_window_run_manifest(
+      "analysis-1",
+      "chr1_0_2000000",
+      ordered,
+      c(dosage = paste(rep("a", 64L), collapse = "")),
+      checkpointed_susie_settings()
+    )
+    invalid_cursor$status <- invalid_status
+    resume <- resolve_resume_boundary(
+      new_checkpoint_store(tempfile("invalid-window-status-")),
+      ordered,
+      invalid_cursor
+    )
+    expect_identical_value(
+      resume$window_manifest,
+      NULL,
+      paste("invalid status", invalid_status)
+    )
+  })
 })
 
 run_named_test("failure manifest uses null identity after the phenotype inventory", {
@@ -717,4 +808,99 @@ run_named_test("resume adopts one valid commit after the saved cursor", {
   expect_identical_value(resume$next_index, 11L, "adopted next index")
   expect_identical_value(resume$recovered, TRUE, "adopted commit flag")
   expect_identical_value(resume$window_manifest$last_committed_index, 10L, "updated cursor")
+})
+
+run_named_test("resume compares name-stable current provenance with cursor and boundary", {
+  expected_input_hashes <- c(
+    dosage = paste(rep("a", 64L), collapse = ""),
+    phenotypes = paste(rep("b", 64L), collapse = "")
+  )
+  expected_settings <- checkpointed_susie_settings()
+
+  make_provenance_checkpoint <- function(label) {
+    ordered <- make_ordered_manifest(1L)
+    store_root <- tempfile(paste0("checkpoint-provenance-", label, "-"))
+    store <- new_checkpoint_store(store_root)
+    commit_inputs <- make_commit_inputs(ordered[1L, ])
+    committed <- commit_phenotype_checkpoint(
+      store,
+      commit_inputs$paths,
+      commit_inputs$local_artifacts,
+      commit_inputs$fit_manifest
+    )
+    cursor <- new_window_run_manifest(
+      "analysis-1",
+      "chr1_0_2000000",
+      ordered,
+      expected_input_hashes,
+      expected_settings
+    ) |>
+      advance_window_run_manifest(committed)
+    list(
+      ordered = ordered,
+      store = store,
+      store_root = store_root,
+      committed = committed,
+      cursor = cursor,
+      fit_manifest_path = commit_inputs$paths$fit_manifest
+    )
+  }
+
+  unchanged <- make_provenance_checkpoint("unchanged")
+  on.exit(unlink(unchanged$store_root, recursive = TRUE), add = TRUE)
+  stable <- resolve_resume_boundary(
+    unchanged$store,
+    unchanged$ordered,
+    unchanged$cursor,
+    expected_input_hashes = rev(expected_input_hashes),
+    expected_settings = expected_settings[rev(names(expected_settings))]
+  )
+  expect_identical_value(stable$recovered, FALSE, "name-stable provenance")
+  expect_identical_value(stable$next_index, 1L, "name-stable next index")
+
+  purrr::walk(c("input_hashes", "settings"), function(field) {
+    window_only <- make_provenance_checkpoint(paste0("window-", field))
+    on.exit(unlink(window_only$store_root, recursive = TRUE), add = TRUE)
+    if (identical(field, "input_hashes")) {
+      window_only$cursor$input_hashes$dosage <- paste(rep("c", 64L), collapse = "")
+    } else {
+      window_only$cursor$settings$L <- 11L
+    }
+    recovered <- resolve_resume_boundary(
+      window_only$store,
+      window_only$ordered,
+      window_only$cursor,
+      expected_input_hashes = expected_input_hashes,
+      expected_settings = expected_settings
+    )
+    expect_identical_value(recovered$window_manifest, NULL, paste(field, "cursor fallback"))
+    expect_identical_value(recovered$next_index, 1L, paste(field, "fixed checkpoint reuse"))
+
+    coordinated <- make_provenance_checkpoint(paste0("coordinated-", field))
+    on.exit(unlink(coordinated$store_root, recursive = TRUE), add = TRUE)
+    if (identical(field, "input_hashes")) {
+      coordinated$cursor$input_hashes$dosage <- paste(rep("c", 64L), collapse = "")
+      coordinated$committed$input_hashes$dosage <- paste(rep("c", 64L), collapse = "")
+    } else {
+      coordinated$cursor$settings$L <- 11L
+      coordinated$committed$settings$L <- 11L
+    }
+    jsonlite::write_json(
+      coordinated$committed,
+      file.path(coordinated$store_root, coordinated$fit_manifest_path),
+      auto_unbox = TRUE,
+      pretty = TRUE,
+      null = "null",
+      digits = NA
+    )
+    recomputed <- resolve_resume_boundary(
+      coordinated$store,
+      coordinated$ordered,
+      coordinated$cursor,
+      expected_input_hashes = expected_input_hashes,
+      expected_settings = expected_settings
+    )
+    expect_identical_value(recomputed$last_committed_index, -1L, paste(field, "recompute boundary"))
+    expect_identical_value(recomputed$next_index, 0L, paste(field, "recompute index"))
+  })
 })

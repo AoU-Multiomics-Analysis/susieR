@@ -68,6 +68,49 @@ make_controller_config <- function(label) {
   )
 }
 
+make_three_phenotype_config <- function(label) {
+  config <- make_controller_config(label)
+  input_dir <- tempfile(paste0("checkpointed-three-phenotype-", label, "-"))
+  dir.create(input_dir, recursive = TRUE)
+  phenotype_data <- data.table::fread(
+    fixture_path("window_phenotypes.bed.gz"),
+    check.names = FALSE,
+    data.table = FALSE
+  ) |>
+    tibble::as_tibble()
+  third_phenotype <- phenotype_data |>
+    dplyr::filter(.data$phenotype_id == "linked_expression") |>
+    dplyr::mutate(
+      chromosome = 8L,
+      start = 800000L,
+      end = 800001L,
+      phenotype_id = "linked_expression_replica",
+      dplyr::across(
+        dplyr::starts_with("sample_"),
+        ~ .x + seq_along(.x) * 1e-4
+      )
+    )
+  phenotype_path <- file.path(input_dir, "window_phenotypes.tsv")
+  readr::write_tsv(
+    dplyr::bind_rows(phenotype_data, third_phenotype),
+    phenotype_path
+  )
+  manifest_path <- file.path(input_dir, "manifest.tsv")
+  readr::write_tsv(
+    tibble::tribble(
+      ~window_id, ~phenotype_id, ~modality, ~phenotype_file, ~p_value,
+      config$window_id, "linked_expression", "expression", phenotype_path, 1e-12,
+      config$window_id, "linked_splicing", "splicing", phenotype_path, 2e-8,
+      config$window_id, "linked_expression_replica", "expression", phenotype_path, 3e-8
+    ),
+    manifest_path
+  )
+  config$window_phenotypes <- manifest_path
+  config$phenotype_data <- phenotype_path
+  config$test_input_dir <- input_dir
+  config
+}
+
 controller_ordered_manifest <- function(config) {
   raw_manifest <- readr::read_tsv(
     config$window_phenotypes,
@@ -151,19 +194,26 @@ invisible(utils::capture.output(
 new_counting_fit_function <- function(
     counts,
     results = prepared_results,
-    failure = NULL
+    failure = NULL,
+    phenotype_values = prepared_inputs$phenotypes,
+    before_fit = NULL
 ) {
   force(counts)
   force(results)
   force(failure)
+  force(phenotype_values)
+  force(before_fit)
   function(genotype, phenotype, covariates, variant_ids, settings) {
     phenotype_matches <- purrr::map_lgl(
-      prepared_inputs$phenotypes,
+      phenotype_values,
       ~ identical(as.numeric(.x), as.numeric(phenotype))
     )
-    phenotype_id <- names(prepared_inputs$phenotypes)[phenotype_matches]
+    phenotype_id <- names(phenotype_values)[phenotype_matches]
     if (length(phenotype_id) != 1L) {
       stop("The counting fit function could not identify the phenotype.", call. = FALSE)
+    }
+    if (!is.null(before_fit)) {
+      before_fit(phenotype_id)
     }
     counts$by_phenotype[[phenotype_id]] <-
       counts$by_phenotype[[phenotype_id]] + 1L
@@ -174,13 +224,24 @@ new_counting_fit_function <- function(
   }
 }
 
-new_fit_counts <- function() {
+new_fit_counts <- function(phenotype_ids = names(prepared_inputs$phenotypes)) {
   counts <- new.env(parent = emptyenv())
   counts$by_phenotype <- stats::setNames(
-    rep(0L, length(prepared_inputs$phenotypes)),
-    names(prepared_inputs$phenotypes)
+    rep(0L, length(phenotype_ids)),
+    phenotype_ids
   )
   counts
+}
+
+prepare_three_phenotype_case <- function(config) {
+  ordered <- controller_ordered_manifest(config)
+  inputs <- load_checkpointed_window_inputs(config, ordered)
+  results <- list(
+    linked_expression = prepared_results[["linked_expression"]],
+    linked_splicing = prepared_results[["linked_splicing"]],
+    linked_expression_replica = prepared_results[["linked_expression"]]
+  )
+  list(ordered = ordered, inputs = inputs, results = results)
 }
 
 commit_direct_fit <- function(config, store, processing_index, fit_result) {
@@ -325,12 +386,24 @@ run_named_test("resume recomputes a corrupt boundary RDS", {
   )
 })
 
-run_named_test("resume adopts one valid commit after a lagging cursor", {
-  config <- make_controller_config("lagging-cursor")
-  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+run_named_test("lagging adoption uploads RUNNING before the following fit", {
+  config <- make_three_phenotype_config("lagging-cursor")
+  on.exit(
+    unlink(
+      c(config$checkpoint_root, config$output_dir, config$test_input_dir),
+      recursive = TRUE
+    ),
+    add = TRUE
+  )
+  case <- prepare_three_phenotype_case(config)
+  expect_identical_value(nrow(case$ordered), 3L, "lagging test phenotype count")
   store <- new_checkpoint_store(config$checkpoint_root)
-  counts <- new_fit_counts()
-  fit_function <- new_counting_fit_function(counts)
+  counts <- new_fit_counts(names(case$inputs$phenotypes))
+  fit_function <- new_counting_fit_function(
+    counts,
+    results = case$results,
+    phenotype_values = case$inputs$phenotypes
+  )
 
   expect_error_condition(
     run_checkpointed_window(
@@ -345,18 +418,41 @@ run_named_test("resume adopts one valid commit after a lagging cursor", {
     config,
     store,
     1L,
-    prepared_results[["linked_splicing"]]
+    case$results[["linked_splicing"]]
   )
 
-  run_checkpointed_window(config, store = store, fit_function = fit_function)
+  before_fit <- function(phenotype_id) {
+    expect_identical_value(
+      phenotype_id,
+      "linked_expression_replica",
+      "post-adoption phenotype"
+    )
+    adopted_cursor <- read_controller_window_manifest(config, store)
+    expect_identical_value(adopted_cursor$status, "RUNNING", "adopted cursor status")
+    expect_identical_value(adopted_cursor$last_committed_index, 1L, "adopted cursor boundary")
+  }
+  run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = new_counting_fit_function(
+      counts,
+      results = case$results,
+      phenotype_values = case$inputs$phenotypes,
+      before_fit = before_fit
+    )
+  )
   expect_identical_value(
     counts$by_phenotype,
-    c(linked_expression = 1L, linked_splicing = 0L),
+    c(
+      linked_expression = 1L,
+      linked_splicing = 0L,
+      linked_expression_replica = 1L
+    ),
     "counts after lagging-cursor adoption"
   )
   completed <- read_controller_window_manifest(config, store)
-  expect_identical_value(completed$status, "COMPLETED", "adopted completion status")
-  expect_identical_value(completed$last_committed_index, 1L, "adopted final boundary")
+  expect_identical_value(completed$status, "COMPLETE", "adopted completion status")
+  expect_identical_value(completed$last_committed_index, 2L, "adopted final boundary")
 })
 
 run_named_test("a skipped phenotype advances and has no RDS URI in the fit index", {
@@ -532,6 +628,101 @@ run_named_test("fallback recovery hydrates an exact-path prefix for final assemb
     purrr::map_int(completed$committed, "processing_index"),
     0:1,
     "hydrated committed order"
+  )
+})
+
+run_named_test("recovered-prefix cursor survives failure and a second interruption", {
+  config <- make_three_phenotype_config("recovered-prefix-preemption")
+  on.exit(
+    unlink(
+      c(config$checkpoint_root, config$output_dir, config$test_input_dir),
+      recursive = TRUE
+    ),
+    add = TRUE
+  )
+  case <- prepare_three_phenotype_case(config)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  commit_direct_fit(
+    config,
+    store,
+    0L,
+    case$results[["linked_expression"]]
+  )
+
+  failed_counts <- new_fit_counts(names(case$inputs$phenotypes))
+  expect_error_condition(
+    run_checkpointed_window(
+      config,
+      store = store,
+      fit_function = new_counting_fit_function(
+        failed_counts,
+        results = case$results,
+        failure = simpleError("recovered-prefix failed attempt"),
+        phenotype_values = case$inputs$phenotypes
+      )
+    ),
+    "simpleError",
+    "recovered-prefix failed attempt"
+  )
+  failed <- read_controller_window_manifest(config, store)
+  expect_identical_value(failed$status, "FAILED", "recovered-prefix failed status")
+  expect_identical_value(
+    failed$recovered_prefix_last_committed_index,
+    0L,
+    "recovered-prefix boundary"
+  )
+  expect_identical_value(length(failed$committed), 0L, "recovered-prefix empty suffix")
+
+  retry_counts <- new_fit_counts(names(case$inputs$phenotypes))
+  retry_fit <- new_counting_fit_function(
+    retry_counts,
+    results = case$results,
+    phenotype_values = case$inputs$phenotypes
+  )
+  expect_error_condition(
+    run_checkpointed_window(
+      config,
+      store = store,
+      fit_function = retry_fit,
+      interrupt_after_commits = 1L
+    ),
+    "checkpoint_test_interrupt"
+  )
+  interrupted <- read_controller_window_manifest(config, store)
+  expect_identical_value(interrupted$status, "RUNNING", "second interruption status")
+  expect_identical_value(interrupted$last_committed_index, 1L, "second interruption boundary")
+  expect_identical_value(
+    purrr::map_int(interrupted$committed, "processing_index"),
+    1L,
+    "recovered-prefix suffix inventory"
+  )
+  expect_identical_value(length(interrupted$failure_history), 1L, "interrupted failure history")
+
+  resumable <- resolve_resume_boundary(store, case$ordered, interrupted)
+  expect_identical_value(resumable$next_index, 2L, "partial cursor next index")
+  expect_true_value(!is.null(resumable$window_manifest), "partial cursor reuse")
+
+  paths <- run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = retry_fit
+  )
+  expect_identical_value(
+    retry_counts$by_phenotype,
+    c(
+      linked_expression = 0L,
+      linked_splicing = 1L,
+      linked_expression_replica = 1L
+    ),
+    "counts across recovered-prefix interruptions"
+  )
+  completed <- jsonlite::read_json(paths$window_manifest, simplifyVector = FALSE)
+  expect_identical_value(completed$status, "COMPLETE", "recovered-prefix final status")
+  expect_identical_value(length(completed$failure_history), 1L, "final failure history")
+  expect_identical_value(
+    purrr::map_int(completed$committed, "processing_index"),
+    0:2,
+    "hydrated complete inventory"
   )
 })
 

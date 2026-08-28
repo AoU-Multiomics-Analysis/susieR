@@ -4,6 +4,8 @@ checkpoint_schema_version <- 1L
 
 checkpoint_terminal_statuses <- c("CONVERGED", "NONCONVERGED", "SKIPPED")
 
+checkpoint_window_statuses <- c("RUNNING", "FAILED", "COMPLETE")
+
 checkpoint_skip_reasons <- c(
   "NO_USABLE_VARIANTS",
   "ZERO_PHENOTYPE_VARIANCE",
@@ -473,6 +475,19 @@ commit_phenotype_checkpoint <- function(store, paths, local_artifacts, fit_manif
     }
   })
 
+  parquet_names <- c("credible_sets", "lbf_variable", "full_susie")
+  local_tables <- purrr::map(parquet_names, function(payload_name) {
+    artifact_name <- names(artifact_mappings)[
+      match(payload_name, unname(artifact_mappings))
+    ]
+    arrow::read_parquet(
+      local_artifacts[[artifact_name]],
+      as_data_frame = TRUE
+    )
+  }) |>
+    stats::setNames(parquet_names)
+  checkpointed_validate_susie_tables(local_tables)
+
   if (!identical(status, "SKIPPED")) {
     fit <- tryCatch(
       readRDS(local_artifacts$fit_rds),
@@ -723,13 +738,54 @@ checkpoint_fixed_manifest_path <- function(record) {
   )$fit_manifest
 }
 
-read_valid_boundary_manifest <- function(store, record) {
+checkpoint_canonical_named_json <- function(value) {
+  if (!is.list(value)) {
+    value <- as.list(value)
+  }
+  value_names <- names(value)
+  if (length(value) == 0L || is.null(value_names) || anyNA(value_names) ||
+      any(!nzchar(value_names)) || anyDuplicated(value_names)) {
+    return(NULL)
+  }
+  jsonlite::toJSON(
+    value[order(value_names)],
+    auto_unbox = TRUE,
+    null = "null",
+    digits = NA
+  )
+}
+
+checkpoint_named_object_matches <- function(value, expected) {
+  if (is.null(expected)) {
+    return(TRUE)
+  }
+  value_json <- checkpoint_canonical_named_json(value)
+  expected_json <- checkpoint_canonical_named_json(expected)
+  !is.null(value_json) && !is.null(expected_json) &&
+    identical(value_json, expected_json)
+}
+
+read_valid_boundary_manifest <- function(
+    store,
+    record,
+    expected_input_hashes = NULL,
+    expected_settings = NULL
+) {
   fixed_manifest_path <- checkpoint_fixed_manifest_path(record)
   local_manifest <- tempfile("resume-fit-manifest-", fileext = ".json")
   on.exit(unlink(local_manifest), add = TRUE)
   store$download(fixed_manifest_path, local_manifest)
   fit_manifest <- jsonlite::read_json(local_manifest, simplifyVector = FALSE)
   validate_fit_manifest_structure(fit_manifest, record)
+  if (!checkpoint_named_object_matches(
+    fit_manifest$input_hashes,
+    expected_input_hashes
+  )) {
+    stop("Checkpoint input hashes do not match the current analysis.", call. = FALSE)
+  }
+  if (!checkpoint_named_object_matches(fit_manifest$settings, expected_settings)) {
+    stop("Checkpoint settings do not match the current analysis.", call. = FALSE)
+  }
   fit_manifest$fit_manifest_path <- fixed_manifest_path
 
   if (!identical(fit_manifest$status, "SKIPPED")) {
@@ -766,9 +822,23 @@ read_valid_boundary_manifest <- function(store, record) {
   fit_manifest
 }
 
-try_read_valid_boundary_manifest <- function(store, record) {
+try_read_valid_boundary_manifest <- function(
+    store,
+    record,
+    expected_input_hashes = NULL,
+    expected_settings = NULL
+) {
   tryCatch(
-    list(valid = TRUE, manifest = read_valid_boundary_manifest(store, record), error = NULL),
+    list(
+      valid = TRUE,
+      manifest = read_valid_boundary_manifest(
+        store,
+        record,
+        expected_input_hashes,
+        expected_settings
+      ),
+      error = NULL
+    ),
     error = function(condition) {
       if (inherits(condition, "checkpoint_store_error")) {
         stop(condition)
@@ -833,9 +903,16 @@ window_manifest_commits_are_valid <- function(
     ordered_manifest,
     last_committed_index,
     analysis_id,
-    window_id
+    window_id,
+    recovered_prefix_last_committed_index = -1L
 ) {
-  expected_count <- last_committed_index + 1L
+  first_detailed_index <- recovered_prefix_last_committed_index + 1L
+  expected_indexes <- if (first_detailed_index <= last_committed_index) {
+    seq.int(first_detailed_index, last_committed_index)
+  } else {
+    integer()
+  }
+  expected_count <- length(expected_indexes)
   if (!is.list(committed) || length(committed) != expected_count) {
     return(FALSE)
   }
@@ -845,7 +922,8 @@ window_manifest_commits_are_valid <- function(
 
   for (list_index in seq_len(expected_count)) {
     record <- committed[[list_index]]
-    expected <- ordered_manifest[list_index, , drop = FALSE]
+    expected_index <- expected_indexes[[list_index]]
+    expected <- ordered_manifest[expected_index + 1L, , drop = FALSE]
     record_index <- if (is.list(record)) {
       checkpoint_optional_index(record$processing_index)
     } else {
@@ -881,7 +959,13 @@ window_manifest_commits_are_valid <- function(
   TRUE
 }
 
-is_usable_window_manifest <- function(window_manifest, ordered_manifest, context) {
+is_usable_window_manifest <- function(
+    window_manifest,
+    ordered_manifest,
+    context,
+    expected_input_hashes = NULL,
+    expected_settings = NULL
+) {
   if (!is.list(window_manifest)) {
     return(FALSE)
   }
@@ -891,10 +975,36 @@ is_usable_window_manifest <- function(window_manifest, ordered_manifest, context
   if (is.null(committed)) {
     committed <- list()
   }
+  status <- window_manifest$status
+  valid_status <- is.character(status) && length(status) == 1L &&
+    !is.na(status) && status %in% checkpoint_window_statuses
+  recovered_prefix <- if (is.null(
+    window_manifest$recovered_prefix_last_committed_index
+  )) {
+    -1L
+  } else {
+    checkpoint_optional_index(
+      window_manifest$recovered_prefix_last_committed_index
+    )
+  }
+  valid_prefix <- !is.null(recovered_prefix) &&
+    recovered_prefix >= -1L && !is.null(last_index) &&
+    recovered_prefix <= last_index
+  inventory_prefix <- if (valid_status && status %in% c("RUNNING", "FAILED")) {
+    recovered_prefix
+  } else {
+    -1L
+  }
 
   !is.null(schema_version) && identical(schema_version, checkpoint_schema_version) &&
     identical(window_manifest$analysis_id, context$analysis_id) &&
     identical(window_manifest$window_id, context$window_id) &&
+    valid_status && valid_prefix &&
+    checkpoint_named_object_matches(
+      window_manifest$input_hashes,
+      expected_input_hashes
+    ) &&
+    checkpoint_named_object_matches(window_manifest$settings, expected_settings) &&
     !is.null(last_index) &&
     last_index >= -1L && last_index < nrow(ordered_manifest) &&
     window_manifest_phenotypes_are_valid(
@@ -906,16 +1016,46 @@ is_usable_window_manifest <- function(window_manifest, ordered_manifest, context
       ordered_manifest,
       last_index,
       context$analysis_id,
-      context$window_id
+      context$window_id,
+      inventory_prefix
     )
 }
 
 trim_window_manifest_boundary <- function(window_manifest, invalid_index) {
-  retained_count <- max(0L, invalid_index)
-  window_manifest$committed <- utils::head(window_manifest$committed, retained_count)
+  window_manifest$committed <- purrr::keep(
+    window_manifest$committed,
+    function(record) {
+      record_index <- if (is.list(record)) {
+        checkpoint_optional_index(record$processing_index)
+      } else {
+        NULL
+      }
+      !is.null(record_index) && record_index < invalid_index
+    }
+  )
   window_manifest$last_committed_index <- invalid_index - 1L
   window_manifest$status <- "RUNNING"
   window_manifest
+}
+
+window_manifest_inventory_prefix <- function(window_manifest) {
+  if (!window_manifest$status %in% c("RUNNING", "FAILED") ||
+      is.null(window_manifest$recovered_prefix_last_committed_index)) {
+    return(-1L)
+  }
+  checkpoint_scalar_index(
+    window_manifest$recovered_prefix_last_committed_index,
+    "Window recovered prefix index"
+  )
+}
+
+window_manifest_cursor_record <- function(window_manifest, processing_index) {
+  inventory_prefix <- window_manifest_inventory_prefix(window_manifest)
+  list_index <- processing_index - inventory_prefix
+  if (list_index < 1L || list_index > length(window_manifest$committed)) {
+    return(NULL)
+  }
+  window_manifest$committed[[list_index]]
 }
 
 cursor_record_matches_boundary <- function(cursor_record, boundary_manifest, expected_path) {
@@ -937,24 +1077,64 @@ cursor_record_matches_boundary <- function(cursor_record, boundary_manifest, exp
     identical(cursor_record$fit_manifest_path, expected_path)
 }
 
-resolve_resume_boundary <- function(store, ordered_manifest, window_manifest = NULL) {
+resolve_resume_boundary <- function(
+    store,
+    ordered_manifest,
+    window_manifest = NULL,
+    expected_input_hashes = NULL,
+    expected_settings = NULL
+) {
   context <- checkpoint_order_context(ordered_manifest)
   phenotype_count <- nrow(ordered_manifest)
 
-  if (is_usable_window_manifest(window_manifest, ordered_manifest, context)) {
+  if (is_usable_window_manifest(
+    window_manifest,
+    ordered_manifest,
+    context,
+    expected_input_hashes,
+    expected_settings
+  )) {
     last_index <- checkpoint_scalar_index(
       window_manifest$last_committed_index,
       "Window last committed index"
     )
-    if (last_index >= 0L) {
-      record <- ordered_manifest[last_index + 1L, , drop = FALSE]
-      expected_path <- checkpoint_fixed_manifest_path(record)
-      boundary <- if (store$object_exists(expected_path)) {
-        try_read_valid_boundary_manifest(store, record)
+    inventory_prefix <- window_manifest_inventory_prefix(window_manifest)
+    if (inventory_prefix >= 0L) {
+      prefix_record <- ordered_manifest[inventory_prefix + 1L, , drop = FALSE]
+      prefix_path <- checkpoint_fixed_manifest_path(prefix_record)
+      prefix_boundary <- if (store$object_exists(prefix_path)) {
+        try_read_valid_boundary_manifest(
+          store,
+          prefix_record,
+          expected_input_hashes,
+          expected_settings
+        )
       } else {
         list(valid = FALSE, manifest = NULL, error = "Checkpoint manifest is absent.")
       }
-      cursor_record <- window_manifest$committed[[last_index + 1L]]
+      if (!prefix_boundary$valid) {
+        return(list(
+          last_committed_index = inventory_prefix - 1L,
+          next_index = inventory_prefix,
+          recovered = TRUE,
+          window_manifest = NULL
+        ))
+      }
+    }
+    if (last_index >= 0L && last_index != inventory_prefix) {
+      record <- ordered_manifest[last_index + 1L, , drop = FALSE]
+      expected_path <- checkpoint_fixed_manifest_path(record)
+      boundary <- if (store$object_exists(expected_path)) {
+        try_read_valid_boundary_manifest(
+          store,
+          record,
+          expected_input_hashes,
+          expected_settings
+        )
+      } else {
+        list(valid = FALSE, manifest = NULL, error = "Checkpoint manifest is absent.")
+      }
+      cursor_record <- window_manifest_cursor_record(window_manifest, last_index)
       if (!boundary$valid ||
           !cursor_record_matches_boundary(cursor_record, boundary$manifest, expected_path)) {
         repaired_manifest <- trim_window_manifest_boundary(window_manifest, last_index)
@@ -972,7 +1152,12 @@ resolve_resume_boundary <- function(store, ordered_manifest, window_manifest = N
       next_record <- ordered_manifest[next_index + 1L, , drop = FALSE]
       next_path <- checkpoint_fixed_manifest_path(next_record)
       if (store$object_exists(next_path)) {
-        next_boundary <- try_read_valid_boundary_manifest(store, next_record)
+        next_boundary <- try_read_valid_boundary_manifest(
+          store,
+          next_record,
+          expected_input_hashes,
+          expected_settings
+        )
         if (next_boundary$valid) {
           advanced_manifest <- advance_window_run_manifest(
             window_manifest,
@@ -1018,7 +1203,12 @@ resolve_resume_boundary <- function(store, ordered_manifest, window_manifest = N
   }
 
   boundary_record <- ordered_manifest[lower_present + 1L, , drop = FALSE]
-  boundary <- try_read_valid_boundary_manifest(store, boundary_record)
+  boundary <- try_read_valid_boundary_manifest(
+    store,
+    boundary_record,
+    expected_input_hashes,
+    expected_settings
+  )
   if (!boundary$valid) {
     return(list(
       last_committed_index = lower_present - 1L,
@@ -1097,7 +1287,7 @@ complete_window_run_manifest <- function(
       length(window_manifest$committed) != phenotype_count) {
     stop("Window completion requires every phenotype commit.", call. = FALSE)
   }
-  window_manifest$status <- "COMPLETED"
+  window_manifest$status <- "COMPLETE"
   window_manifest["failure"] <- list(NULL)
   window_manifest$completed_at <- checkpointed_timestamp()
   window_manifest$final_outputs <- committed_window_outputs

@@ -1157,7 +1157,9 @@ run_checkpointed_window <- function(
     resume <- resolve_resume_boundary(
       store,
       ordered_manifest,
-      saved_window_manifest
+      saved_window_manifest,
+      expected_input_hashes = input_hashes,
+      expected_settings = settings
     )
     if (is.null(resume$window_manifest)) {
       window_state <<- new_window_run_manifest(
@@ -1175,6 +1177,19 @@ run_checkpointed_window <- function(
     }
     window_state <<- checkpointed_begin_attempt(window_state)
     message("[checkpointed-window] Resume at index ", resume$next_index)
+    must_persist_resume <- !is.null(saved_window_manifest) ||
+      resume$last_committed_index >= 0L
+    if (must_persist_resume) {
+      upload_window_run_manifest(
+        store,
+        window_paths$window_manifest,
+        window_state
+      )
+      message(
+        "[checkpointed-window] Persisted RUNNING cursor at index ",
+        resume$last_committed_index
+      )
+    }
 
     model_inputs <- load_checkpointed_window_inputs(config, ordered_manifest)
     commit_count <- 0L
@@ -1284,7 +1299,7 @@ run_checkpointed_window <- function(
       window_paths$window_manifest,
       window_state
     )
-    message("[checkpointed-window] Completed ", config$window_id)
+    message("[checkpointed-window] Complete ", config$window_id)
     c(list(window_manifest = local_window_manifest), final_paths)
   }
 

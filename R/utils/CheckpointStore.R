@@ -87,6 +87,41 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
   )
 }
 
+read_window_run_manifest_if_present <- function(store, relative_path) {
+  if (!store$object_exists(relative_path)) {
+    return(NULL)
+  }
+  local_manifest <- tempfile("window-run-manifest-", fileext = ".json")
+  on.exit(unlink(local_manifest), add = TRUE)
+  store$download(relative_path, local_manifest)
+  window_manifest <- tryCatch(
+    jsonlite::read_json(local_manifest, simplifyVector = FALSE),
+    error = function(condition) NULL
+  )
+  if (!is.list(window_manifest)) {
+    return(NULL)
+  }
+  window_manifest
+}
+
+upload_window_run_manifest <- function(store, relative_path, window_manifest) {
+  if (!is.list(window_manifest)) {
+    stop("Window run manifest must be a JSON object.", call. = FALSE)
+  }
+  local_manifest <- tempfile("window-run-manifest-", fileext = ".json")
+  on.exit(unlink(local_manifest), add = TRUE)
+  jsonlite::write_json(
+    window_manifest,
+    local_manifest,
+    auto_unbox = TRUE,
+    pretty = TRUE,
+    null = "null",
+    digits = NA
+  )
+  store$upload(local_manifest, relative_path)
+  TRUE
+}
+
 window_checkpoint_paths <- function(analysis_id, window_id) {
   list(
     window_manifest = file.path(analysis_id, window_id, "window_manifest.json"),
@@ -538,6 +573,29 @@ new_window_run_manifest <- function(
   )
 }
 
+checkpoint_committed_record <- function(fit_manifest) {
+  fit_manifest_path <- fit_manifest$fit_manifest_path
+  if (is.null(fit_manifest_path)) {
+    fit_manifest_path <- phenotype_checkpoint_paths(
+      fit_manifest$analysis_id,
+      fit_manifest$window_id,
+      fit_manifest$phenotype_key
+    )$fit_manifest
+  }
+  list(
+    processing_index = checkpoint_scalar_index(
+      fit_manifest$processing_index,
+      "Checkpoint processing index"
+    ),
+    phenotype_id = fit_manifest$phenotype_id,
+    phenotype_key = fit_manifest$phenotype_key,
+    modality = fit_manifest$modality,
+    p_value = as.numeric(fit_manifest$p_value),
+    status = fit_manifest$status,
+    fit_manifest_path = fit_manifest_path
+  )
+}
+
 advance_window_run_manifest <- function(window_manifest, fit_manifest) {
   processing_index <- checkpoint_scalar_index(
     fit_manifest$processing_index,
@@ -563,23 +621,7 @@ advance_window_run_manifest <- function(window_manifest, fit_manifest) {
     stop("Checkpoint p_value must be finite and between zero and one.", call. = FALSE)
   }
 
-  fit_manifest_path <- fit_manifest$fit_manifest_path
-  if (is.null(fit_manifest_path)) {
-    fit_manifest_path <- phenotype_checkpoint_paths(
-      fit_manifest$analysis_id,
-      fit_manifest$window_id,
-      fit_manifest$phenotype_key
-    )$fit_manifest
-  }
-  committed_record <- list(
-    processing_index = processing_index,
-    phenotype_id = fit_manifest$phenotype_id,
-    phenotype_key = fit_manifest$phenotype_key,
-    modality = fit_manifest$modality,
-    p_value = p_value,
-    status = fit_manifest$status,
-    fit_manifest_path = fit_manifest_path
-  )
+  committed_record <- checkpoint_committed_record(fit_manifest)
   window_manifest$committed <- c(window_manifest$committed, list(committed_record))
   window_manifest$last_committed_index <- processing_index
   window_manifest$status <- "RUNNING"
@@ -992,4 +1034,86 @@ resolve_resume_boundary <- function(store, ordered_manifest, window_manifest = N
     recovered = TRUE,
     window_manifest = NULL
   )
+}
+
+commit_window_outputs <- function(
+    store,
+    analysis_id,
+    window_id,
+    local_paths
+) {
+  required <- c("fit_index", "credible_sets", "lbf_variable", "full_susie")
+  if (!is.list(local_paths) || !identical(names(local_paths), required)) {
+    stop(
+      "Window output paths must contain fit_index and all three Parquet outputs.",
+      call. = FALSE
+    )
+  }
+  canonical_paths <- window_checkpoint_paths(analysis_id, window_id)[required]
+  records <- purrr::map2(
+    local_paths,
+    canonical_paths,
+    function(local_path, relative_path) {
+      record <- checkpointed_payload_record(local_path, relative_path)
+      record$uri <- store$object_uri(relative_path)
+      record
+    }
+  )
+  purrr::walk2(
+    local_paths,
+    canonical_paths,
+    ~ store$upload(.x, .y)
+  )
+  records
+}
+
+complete_window_run_manifest <- function(
+    window_manifest,
+    committed_window_outputs
+) {
+  expected_outputs <- c(
+    "fit_index",
+    "credible_sets",
+    "lbf_variable",
+    "full_susie"
+  )
+  if (!is.list(committed_window_outputs) ||
+      !identical(names(committed_window_outputs), expected_outputs)) {
+    stop("Committed window outputs are incomplete.", call. = FALSE)
+  }
+  purrr::iwalk(committed_window_outputs, function(record, name) {
+    validate_checkpoint_payload_record(record, paste0("window ", name))
+    checkpoint_scalar_character(
+      record$uri,
+      paste0("Checkpoint window ", name, " URI")
+    )
+  })
+  phenotype_count <- length(window_manifest$phenotypes)
+  last_index <- checkpoint_scalar_index(
+    window_manifest$last_committed_index,
+    "Window last committed index"
+  )
+  if (!identical(last_index, phenotype_count - 1L) ||
+      length(window_manifest$committed) != phenotype_count) {
+    stop("Window completion requires every phenotype commit.", call. = FALSE)
+  }
+  window_manifest$status <- "COMPLETED"
+  window_manifest["failure"] <- list(NULL)
+  window_manifest$completed_at <- checkpointed_timestamp()
+  window_manifest$final_outputs <- committed_window_outputs
+  window_manifest
+}
+
+write_local_window_run_manifest <- function(window_manifest, output_dir) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  local_path <- file.path(output_dir, "window_manifest.json")
+  jsonlite::write_json(
+    window_manifest,
+    local_path,
+    auto_unbox = TRUE,
+    pretty = TRUE,
+    null = "null",
+    digits = NA
+  )
+  local_path
 }

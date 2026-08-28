@@ -1,5 +1,9 @@
 # Canonical manifest and identity helpers for one-window univariate SuSiE.
 
+`%||%` <- function(x, y) {
+  if (is.null(x)) y else x
+}
+
 checkpointed_susie_settings <- function() {
   list(
     L = 10L,
@@ -859,4 +863,449 @@ write_checkpointed_susie_tables <- function(tables, output_dir) {
   )
   purrr::walk2(tables, paths, arrow::write_parquet)
   as.list(paths)
+}
+
+checkpointed_timestamp <- function(time = Sys.time()) {
+  format(
+    as.POSIXct(time, tz = "UTC"),
+    "%Y-%m-%dT%H:%M:%SZ",
+    tz = "UTC"
+  )
+}
+
+write_local_phenotype_artifacts <- function(result, phenotype_record, directory) {
+  if (!is.list(result) || !identical(result$status %in% checkpoint_terminal_statuses, TRUE)) {
+    stop("Checkpoint fit result has an invalid status.", call. = FALSE)
+  }
+  if (!identical(result$status, "SKIPPED")) {
+    validate_checkpointed_susie_fit(result$fit)
+  }
+
+  dir.create(directory, recursive = TRUE, showWarnings = FALSE)
+  tables <- format_checkpointed_susie_tables(result, phenotype_record)
+  table_paths <- write_checkpointed_susie_tables(tables, directory)
+  fit_rds <- NULL
+  if (!identical(result$status, "SKIPPED")) {
+    fit_rds <- file.path(directory, "susie_fit.rds")
+    saveRDS(result$fit, fit_rds)
+  }
+
+  c(list(fit_rds = fit_rds), table_paths)
+}
+
+checkpointed_payload_record <- function(local_path, relative_path) {
+  if (!is.character(local_path) || length(local_path) != 1L ||
+      !file.exists(local_path)) {
+    stop("Local checkpoint payload is absent.", call. = FALSE)
+  }
+  list(
+    path = relative_path,
+    sha256 = sha256_file(local_path),
+    bytes = as.numeric(unname(file.info(local_path)$size))
+  )
+}
+
+checkpointed_package_versions <- function() {
+  list(
+    R = R.version$version.string,
+    arrow = as.character(utils::packageVersion("arrow")),
+    susieR = as.character(utils::packageVersion("susieR"))
+  )
+}
+
+build_fit_manifest <- function(
+    analysis_id,
+    window_id,
+    phenotype_record,
+    fit_result,
+    local_artifacts,
+    input_hashes,
+    settings
+) {
+  status <- fit_result$status
+  if (!status %in% checkpoint_terminal_statuses) {
+    stop("Checkpoint fit result has an invalid status.", call. = FALSE)
+  }
+  if (!is.list(fit_result$qc)) {
+    stop("Checkpoint fit result is missing QC counts.", call. = FALSE)
+  }
+  container_digest <- Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST")
+  if (!nzchar(container_digest)) {
+    stop(
+      "CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST must be a nonempty string.",
+      call. = FALSE
+    )
+  }
+
+  fit_sha256 <- if (identical(status, "SKIPPED")) {
+    NULL
+  } else {
+    sha256_file(local_artifacts$fit_rds)
+  }
+  paths <- phenotype_checkpoint_paths(
+    analysis_id,
+    window_id,
+    phenotype_record$phenotype_key[[1L]],
+    fit_sha256
+  )
+  artifact_mappings <- checkpoint_artifact_mappings(status)
+  payloads <- purrr::map2(
+    names(artifact_mappings),
+    unname(artifact_mappings),
+    function(artifact_name, payload_name) {
+      checkpointed_payload_record(
+        local_artifacts[[artifact_name]],
+        paths[[artifact_name]]
+      )
+    }
+  ) |>
+    stats::setNames(unname(artifact_mappings))
+
+  manifest <- list(
+    schema_version = checkpoint_schema_version,
+    analysis_id = analysis_id,
+    window_id = window_id,
+    phenotype_id = phenotype_record$phenotype_id[[1L]],
+    phenotype_key = phenotype_record$phenotype_key[[1L]],
+    modality = phenotype_record$modality[[1L]],
+    processing_index = as.integer(phenotype_record$processing_index[[1L]]),
+    p_value = as.numeric(phenotype_record$p_value[[1L]]),
+    status = status,
+    converged = if (identical(status, "SKIPPED")) NULL else fit_result$fit$converged,
+    exclusion_reason = if (identical(status, "SKIPPED")) fit_result$reason else NULL,
+    input_hashes = as.list(input_hashes),
+    settings = settings,
+    container_digest = container_digest,
+    package_versions = checkpointed_package_versions(),
+    counts = fit_result$qc[c(
+      "input_samples",
+      "retained_samples",
+      "input_variants",
+      "retained_variants"
+    )],
+    started_at = fit_result$started_at %||% checkpointed_timestamp(),
+    completed_at = fit_result$completed_at %||% checkpointed_timestamp(),
+    payloads = payloads
+  )
+  validate_fit_manifest_structure(manifest, phenotype_record)
+  manifest
+}
+
+checkpointed_download_payload <- function(store, payload, local_path) {
+  validate_checkpoint_payload_record(payload, basename(local_path))
+  if (!store$object_exists(payload$path)) {
+    stop("Checkpoint payload is absent: ", payload$path, call. = FALSE)
+  }
+  store$download(payload$path, local_path)
+  if (!identical(sha256_file(local_path), payload$sha256)) {
+    stop("Checkpoint payload checksum does not match: ", payload$path, call. = FALSE)
+  }
+  if (!identical(
+    as.numeric(unname(file.info(local_path)$size)),
+    as.numeric(payload$bytes)
+  )) {
+    stop("Checkpoint payload byte size does not match: ", payload$path, call. = FALSE)
+  }
+  local_path
+}
+
+hydrate_checkpointed_fit_manifests <- function(store, ordered_manifest) {
+  purrr::map(
+    seq_len(nrow(ordered_manifest)),
+    ~ read_valid_boundary_manifest(
+      store,
+      ordered_manifest[.x, , drop = FALSE]
+    )
+  )
+}
+
+assemble_checkpointed_window_outputs <- function(
+    store,
+    committed_records,
+    output_dir
+) {
+  if (!is.list(committed_records) || length(committed_records) == 0L) {
+    stop("Final assembly requires committed phenotype manifests.", call. = FALSE)
+  }
+  purrr::walk(committed_records, validate_fit_manifest_structure)
+  processing_indexes <- purrr::map_int(
+    committed_records,
+    ~ checkpoint_scalar_index(.x$processing_index, "Checkpoint processing index")
+  )
+  record_order <- order(processing_indexes)
+  committed_records <- committed_records[record_order]
+  processing_indexes <- processing_indexes[record_order]
+  if (!identical(processing_indexes, seq_along(committed_records) - 1L)) {
+    stop("Committed phenotype manifests are not gap-free and zero-based.", call. = FALSE)
+  }
+
+  fit_index <- purrr::map_dfr(committed_records, function(fit_manifest) {
+    tibble::tibble(
+      processing_index = as.integer(fit_manifest$processing_index),
+      phenotype_id = fit_manifest$phenotype_id,
+      phenotype_key = fit_manifest$phenotype_key,
+      modality = fit_manifest$modality,
+      p_value = as.numeric(fit_manifest$p_value),
+      status = fit_manifest$status,
+      exclusion_reason = fit_manifest$exclusion_reason %||% NA_character_,
+      fit_manifest_uri = fit_manifest$fit_manifest_uri,
+      susie_fit_uri = if (identical(fit_manifest$status, "SKIPPED")) {
+        NA_character_
+      } else {
+        fit_manifest$payloads$susie_fit$uri
+      }
+    )
+  })
+
+  parquet_names <- c("credible_sets", "lbf_variable", "full_susie")
+  combined_tables <- purrr::map(parquet_names, function(payload_name) {
+    phenotype_tables <- purrr::map(
+      committed_records,
+      function(fit_manifest) {
+        local_path <- tempfile(
+          paste0("assembled-", payload_name, "-"),
+          fileext = ".parquet"
+        )
+        on.exit(unlink(local_path), add = TRUE)
+        checkpointed_download_payload(
+          store,
+          fit_manifest$payloads[[payload_name]],
+          local_path
+        )
+        arrow::read_parquet(local_path, as_data_frame = TRUE)
+      }
+    )
+    dplyr::bind_rows(phenotype_tables)
+  }) |>
+    stats::setNames(parquet_names)
+  combined_tables <- checkpointed_validate_susie_tables(combined_tables)
+
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  fit_index_path <- file.path(output_dir, "window_fit_index.tsv")
+  readr::write_tsv(fit_index, fit_index_path, na = "")
+  table_paths <- write_checkpointed_susie_tables(combined_tables, output_dir)
+  c(list(fit_index = fit_index_path), table_paths)
+}
+
+checkpointed_scientific_paths <- function(config) {
+  covariate_hash_names <- paste0(
+    "covariate_",
+    seq_along(config$covariate_files),
+    "_",
+    config$covariate_modalities
+  )
+  paths <- c(
+    window_dosage = config$window_dosage,
+    window_phenotypes = config$window_phenotypes,
+    phenotype_data = config$phenotype_data,
+    stats::setNames(config$covariate_files, covariate_hash_names)
+  )
+  if (!is.null(config$keep_samples)) {
+    paths <- c(paths, keep_samples = config$keep_samples)
+  }
+  paths
+}
+
+checkpointed_begin_attempt <- function(window_manifest) {
+  if (!is.null(window_manifest$failure)) {
+    window_manifest$failure_history <- c(
+      window_manifest$failure_history %||% list(),
+      list(window_manifest$failure)
+    )
+  }
+  window_manifest["failure"] <- list(NULL)
+  window_manifest$status <- "RUNNING"
+  window_manifest
+}
+
+run_checkpointed_window <- function(
+    config,
+    store = NULL,
+    fit_function = fit_checkpointed_window_phenotype,
+    interrupt_after_commits = Inf
+) {
+  window_state <- NULL
+  window_paths <- NULL
+  run_window_body <- function() {
+    raw_manifest <- readr::read_tsv(
+      config$window_phenotypes,
+      show_col_types = FALSE
+    )
+    ordered_manifest <- validate_window_phenotype_manifest(
+      raw_manifest,
+      config$window_id
+    )
+    scientific_paths <- checkpointed_scientific_paths(config)
+    input_hashes <- purrr::map_chr(scientific_paths, sha256_file)
+    settings <- checkpointed_susie_settings()
+    analysis_id <- build_checkpoint_analysis_id(
+      input_hashes,
+      ordered_manifest,
+      settings,
+      Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST"),
+      sha256_file(config$wrapper_path)
+    )
+    ordered_manifest <- ordered_manifest |>
+      dplyr::mutate(analysis_id = analysis_id, .before = 1L)
+
+    store <<- store %||% new_checkpoint_store(config$checkpoint_root)
+    window_paths <<- window_checkpoint_paths(analysis_id, config$window_id)
+    saved_window_manifest <- read_window_run_manifest_if_present(
+      store,
+      window_paths$window_manifest
+    )
+    resume <- resolve_resume_boundary(
+      store,
+      ordered_manifest,
+      saved_window_manifest
+    )
+    if (is.null(resume$window_manifest)) {
+      window_state <<- new_window_run_manifest(
+        analysis_id,
+        config$window_id,
+        ordered_manifest,
+        input_hashes,
+        settings
+      )
+      window_state$last_committed_index <<- resume$last_committed_index
+      window_state$recovered_prefix_last_committed_index <<-
+        resume$last_committed_index
+    } else {
+      window_state <<- resume$window_manifest
+    }
+    window_state <<- checkpointed_begin_attempt(window_state)
+    message("[checkpointed-window] Resume at index ", resume$next_index)
+
+    model_inputs <- load_checkpointed_window_inputs(config, ordered_manifest)
+    commit_count <- 0L
+    indexes <- ordered_manifest$processing_index[
+      ordered_manifest$processing_index >= resume$next_index
+    ]
+    for (index in indexes) {
+      phenotype_record <- ordered_manifest |>
+        dplyr::filter(.data$processing_index == index)
+      started_at <- checkpointed_timestamp()
+      fit_result <- fit_function(
+        genotype = model_inputs$genotype,
+        phenotype = model_inputs$phenotypes[[
+          phenotype_record$phenotype_id[[1L]]
+        ]],
+        covariates = applicable_covariate_matrix(
+          model_inputs$covariates,
+          phenotype_record$modality[[1L]],
+          model_inputs$sample_ids
+        ),
+        variant_ids = model_inputs$variant_info$variant_id,
+        settings = settings
+      )
+      fit_result$started_at <- started_at
+      fit_result$completed_at <- checkpointed_timestamp()
+      local_artifacts <- write_local_phenotype_artifacts(
+        fit_result,
+        phenotype_record,
+        tempfile("checkpointed-phenotype-")
+      )
+      fit_manifest <- build_fit_manifest(
+        analysis_id,
+        config$window_id,
+        phenotype_record,
+        fit_result,
+        local_artifacts,
+        input_hashes,
+        settings
+      )
+      fit_sha256 <- if (identical(fit_result$status, "SKIPPED")) {
+        NULL
+      } else {
+        fit_manifest$payloads$susie_fit$sha256
+      }
+      committed <- commit_phenotype_checkpoint(
+        store,
+        phenotype_checkpoint_paths(
+          analysis_id,
+          config$window_id,
+          phenotype_record$phenotype_key[[1L]],
+          fit_sha256
+        ),
+        local_artifacts,
+        fit_manifest
+      )
+      window_state <<- advance_window_run_manifest(window_state, committed)
+      upload_window_run_manifest(
+        store,
+        window_paths$window_manifest,
+        window_state
+      )
+      message(
+        "[checkpointed-window] Committed ",
+        phenotype_record$phenotype_id[[1L]],
+        " at index ",
+        index
+      )
+      commit_count <- commit_count + 1L
+      if (commit_count >= interrupt_after_commits) {
+        stop(structure(
+          list(message = "Synthetic interruption"),
+          class = c("checkpoint_test_interrupt", "error", "condition")
+        ))
+      }
+    }
+
+    hydrated_manifests <- hydrate_checkpointed_fit_manifests(
+      store,
+      ordered_manifest
+    )
+    window_state$committed <<- purrr::map(
+      hydrated_manifests,
+      checkpoint_committed_record
+    )
+    window_state$last_committed_index <<- nrow(ordered_manifest) - 1L
+    final_paths <- assemble_checkpointed_window_outputs(
+      store,
+      hydrated_manifests,
+      config$output_dir
+    )
+    committed_window_outputs <- commit_window_outputs(
+      store,
+      analysis_id,
+      config$window_id,
+      final_paths
+    )
+    window_state <<- complete_window_run_manifest(
+      window_state,
+      committed_window_outputs
+    )
+    local_window_manifest <- write_local_window_run_manifest(
+      window_state,
+      config$output_dir
+    )
+    upload_window_run_manifest(
+      store,
+      window_paths$window_manifest,
+      window_state
+    )
+    message("[checkpointed-window] Completed ", config$window_id)
+    c(list(window_manifest = local_window_manifest), final_paths)
+  }
+
+  tryCatch(
+    run_window_body(),
+    error = function(condition) {
+      if (inherits(condition, "checkpoint_test_interrupt")) {
+        stop(condition)
+      }
+      if (!is.null(window_state) && !is.null(window_paths)) {
+        failed_state <- fail_window_run_manifest(window_state, condition)
+        try(
+          upload_window_run_manifest(
+            store,
+            window_paths$window_manifest,
+            failed_state
+          ),
+          silent = TRUE
+        )
+      }
+      stop(condition)
+    }
+  )
 }

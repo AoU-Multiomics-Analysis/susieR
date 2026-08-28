@@ -30,6 +30,24 @@ require_absent() {
   fi
 }
 
+prohibited_install_pattern='(^[[:space:]]*RUN[[:space:]]+|[;&|][[:space:]]*)(apt-get|apt|conda|mamba|micromamba|pip|pip3)([[:space:]]+-{1,2}[^[:space:]]+)*[[:space:]]+install([[:space:]]|$)|(^[[:space:]]*RUN[[:space:]]+|[;&|][[:space:]]*)(python|python3)([[:space:]]+-{1,2}[^[:space:]]+)*[[:space:]]+-m[[:space:]]+pip([[:space:]]+-{1,2}[^[:space:]]+)*[[:space:]]+install([[:space:]]|$)|install\.packages\(|remotes::install|git[[:space:]]+clone'
+
+require_prohibited_install_fixture() {
+  local fixture="$1"
+  if ! printf '%s\n' "$fixture" | rg -iq -- "$prohibited_install_pattern"; then
+    printf 'Prohibited-install fixture was not rejected: %s\n' "$fixture" >&2
+    exit 1
+  fi
+}
+
+require_allowed_install_text_fixture() {
+  local fixture="$1"
+  if printf '%s\n' "$fixture" | rg -iq -- "$prohibited_install_pattern"; then
+    printf 'Allowed text fixture was rejected as an install command: %s\n' "$fixture" >&2
+    exit 1
+  fi
+}
+
 step_block() {
   local step_name="$1"
   awk -v step_name="$step_name" '
@@ -79,7 +97,23 @@ require_literal 'RUN ln -sf /opt/r/scripts/run_checkpointed_window_susie.R /tmp/
 require_literal 'USER root' "$dockerfile"
 require_literal 'USER $MAMBA_USER' "$dockerfile"
 require_literal 'CMD ["bash"]' "$dockerfile"
-require_absent '(^|[;&|[:space:]])(apt-get|apt|conda|mamba|micromamba|pip|pip3)[[:space:]]+install([[:space:]]|$)|(^|[;&|[:space:]])(python|python3)[[:space:]]+-m[[:space:]]+pip[[:space:]]+install([[:space:]]|$)|install\.packages\(|remotes::install|git[[:space:]]+clone' "$dockerfile"
+require_absent "$prohibited_install_pattern" "$dockerfile"
+
+for prohibited_install_fixture in \
+  'RUN apt-get -y install curl' \
+  'RUN pip --no-cache-dir install requests' \
+  'RUN conda -y install r-base' \
+  'RUN mamba --yes install r-base' \
+  'RUN micromamba -y install r-base' \
+  'RUN python3 -m pip --no-cache-dir install requests'; do
+  require_prohibited_install_fixture "$prohibited_install_fixture"
+done
+
+for allowed_install_text_fixture in \
+  "RUN echo 'apt-get -y install curl'" \
+  "RUN printf '%s\\n' 'pip --no-cache-dir install requests'"; do
+  require_allowed_install_text_fixture "$allowed_install_text_fixture"
+done
 
 require_literal '.github/workflows/checkpointed-window-susie-image.yml' "$workflow"
 require_literal 'containers/CheckpointedWindowSusie/Dockerfile' "$workflow"

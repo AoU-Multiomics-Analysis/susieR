@@ -79,6 +79,30 @@ covariate_paths <- c(
 )
 covariate_labels <- c("shared", "expression")
 
+run_named_test("covariate reader preserves numeric sample IDs from the header", {
+  covariates <- read_checkpointed_covariates(
+    fixture_path("numeric_sample_covariates.tsv"),
+    "shared"
+  )
+  expect_identical_value(
+    covariates[[1L]]$covariate_ids,
+    c("GENETICPC1", "GENETICPC2"),
+    "numeric-header covariate IDs"
+  )
+  expect_identical_value(
+    covariates[[1L]]$sample_ids,
+    c("1000291", "1000610"),
+    "numeric-header sample IDs"
+  )
+  if (!isTRUE(all.equal(
+    unname(covariates[[1L]]$values),
+    matrix(c(0.25, 1.5, -0.5, 2.25), nrow = 2L),
+    tolerance = 1e-12
+  ))) {
+    stop("Numeric-header covariate values were not preserved.", call. = FALSE)
+  }
+})
+
 run_named_test("covariate selection is modality specific and ordered", {
   covariates <- read_checkpointed_covariates(covariate_paths, covariate_labels)
   sample_ids <- sprintf("sample_%02d", seq_len(40L))

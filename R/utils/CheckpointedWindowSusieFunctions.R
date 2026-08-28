@@ -332,6 +332,7 @@ read_checkpointed_covariates <- function(paths, labels) {
   covariates <- purrr::map2(paths, labels, function(path, label) {
     data <- data.table::fread(
       path,
+      header = TRUE,
       check.names = FALSE,
       data.table = FALSE
     )

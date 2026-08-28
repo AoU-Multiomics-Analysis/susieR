@@ -1065,9 +1065,6 @@ fit_prepared_checkpointed_window_phenotype <- function(
   if (!is.finite(phenotype_variance) || phenotype_variance <= 0) {
     return(checkpointed_skipped_fit("ZERO_PHENOTYPE_VARIANCE", prepared$qc))
   }
-  if (!is.null(prepared$skip_reason)) {
-    return(checkpointed_skipped_fit(prepared$skip_reason, prepared$qc))
-  }
   transformed_phenotype <- rank_inverse_normal(phenotype)
   phenotype_residual <- qr.resid(prepared$design_qr, transformed_phenotype)
   if (!checkpointed_has_numerical_variation(
@@ -1075,6 +1072,9 @@ fit_prepared_checkpointed_window_phenotype <- function(
     transformed_phenotype
   )) {
     return(checkpointed_skipped_fit("ZERO_PHENOTYPE_VARIANCE", prepared$qc))
+  }
+  if (!is.null(prepared$skip_reason)) {
+    return(checkpointed_skipped_fit(prepared$skip_reason, prepared$qc))
   }
 
   fit <- susieR::susie(

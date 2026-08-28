@@ -608,6 +608,39 @@ run_named_test("constant phenotype takes precedence over a genotype skip", {
   )
 })
 
+run_named_test("covariate-span phenotype takes precedence over a genotype skip", {
+  sample_ids <- sprintf("sample_%02d", seq_len(8L))
+  phenotype <- stats::setNames(seq_len(8L), sample_ids)
+  rank_normal_scores <- rank_inverse_normal(phenotype)
+  design <- cbind(intercept = 1, rank_normal_score = rank_normal_scores)
+  rownames(design) <- sample_ids
+  prepared <- list(
+    skip_reason = "NO_USABLE_VARIANTS",
+    sample_ids = sample_ids,
+    design_qr = qr(
+      design,
+      tol = checkpointed_qr_tolerance,
+      LAPACK = FALSE
+    ),
+    qc = list(genotype_skip_reason = "NO_USABLE_VARIANTS")
+  )
+  result <- fit_prepared_checkpointed_window_phenotype(
+    prepared,
+    phenotype,
+    checkpointed_susie_settings()
+  )
+  expect_identical_value(
+    result$reason,
+    "ZERO_PHENOTYPE_VARIANCE",
+    "covariate-span phenotype exclusion precedence"
+  )
+  expect_identical_value(
+    result$qc$genotype_skip_reason,
+    "NO_USABLE_VARIANTS",
+    "covariate-span genotype QC preservation"
+  )
+})
+
 run_named_test("trans-linked phenotypes use the full usable window", {
   dosage_chromosomes <- unique(model_inputs$variant_info$CHROM)
   phenotype_chromosomes <- unique(model_inputs$phenotype_metadata$chromosome)

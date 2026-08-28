@@ -262,7 +262,7 @@ read_checkpointed_window_phenotypes <- function(path, ordered_manifest) {
   )
   chromosome_column <- checkpointed_column_name(
     names(phenotype_data),
-    c("chromosome", "CHROM", "#CHROM", "chr", "#chr"),
+    c("chromosome", "chrom", "CHROM", "#CHROM", "chr", "#chr"),
     "chromosome"
   )
   start_column <- checkpointed_column_name(
@@ -1137,6 +1137,7 @@ run_checkpointed_window <- function(
   run_window_body <- function() {
     raw_manifest <- readr::read_tsv(
       config$window_phenotypes,
+      col_types = readr::cols(.default = readr::col_character()),
       show_col_types = FALSE
     )
     ordered_manifest <- validate_window_phenotype_manifest(

@@ -295,6 +295,95 @@ commit_direct_fit <- function(config, store, processing_index, fit_result) {
   )
 }
 
+run_named_test("controller keeps exact subnormal p values in checkpoint identity", {
+  config <- make_controller_config("subnormal-p-values")
+  config$window_phenotypes <- fixture_path("subnormal_window_phenotypes.tsv")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  counts <- new_fit_counts()
+  fit_function <- new_counting_fit_function(counts)
+  exact_p_values <- as.numeric(c(
+    "1.35242422104231e-309",
+    "6.834591488289331e-295"
+  ))
+  expected_ordered <- tibble::tibble(
+    window_id = rep(config$window_id, 2L),
+    phenotype_id = c("linked_expression", "linked_splicing"),
+    modality = c("expression", "splicing"),
+    phenotype_file = rep("window_phenotypes.bed.gz", 2L),
+    p_value = exact_p_values,
+    processing_index = 0:1,
+    phenotype_key = c(
+      checkpoint_phenotype_key(
+        config$window_id,
+        "expression",
+        "linked_expression"
+      ),
+      checkpoint_phenotype_key(
+        config$window_id,
+        "splicing",
+        "linked_splicing"
+      )
+    )
+  )
+  input_hashes <- purrr::map_chr(
+    checkpointed_scientific_paths(config),
+    sha256_file
+  )
+  expected_analysis_id <- build_checkpoint_analysis_id(
+    input_hashes,
+    expected_ordered,
+    checkpointed_susie_settings(),
+    Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST"),
+    sha256_file(config$wrapper_path)
+  )
+
+  paths <- run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = fit_function
+  )
+  first_manifest <- jsonlite::read_json(
+    paths$window_manifest,
+    simplifyVector = FALSE
+  )
+  expect_identical_value(
+    purrr::map_chr(first_manifest$phenotypes, "phenotype_id"),
+    expected_ordered$phenotype_id,
+    "subnormal-p-value processing order"
+  )
+  expect_identical_value(
+    purrr::map_dbl(first_manifest$phenotypes, "p_value"),
+    exact_p_values,
+    "checkpoint p values"
+  )
+  expect_identical_value(
+    first_manifest$analysis_id,
+    expected_analysis_id,
+    "exact-p-value analysis ID"
+  )
+
+  resumed_paths <- run_checkpointed_window(
+    config,
+    store = store,
+    fit_function = fit_function
+  )
+  resumed_manifest <- jsonlite::read_json(
+    resumed_paths$window_manifest,
+    simplifyVector = FALSE
+  )
+  expect_identical_value(
+    resumed_manifest$analysis_id,
+    first_manifest$analysis_id,
+    "stable resumed analysis ID"
+  )
+  expect_identical_value(
+    counts$by_phenotype,
+    c(linked_expression = 1L, linked_splicing = 1L),
+    "resume fit counts"
+  )
+})
+
 run_named_test("window cursor reader rejects a non-object JSON value", {
   store_root <- tempfile("checkpointed-invalid-window-json-")
   on.exit(unlink(store_root, recursive = TRUE), add = TRUE)

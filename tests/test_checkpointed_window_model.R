@@ -73,6 +73,38 @@ run_named_test("phenotype reader follows the authoritative manifest", {
   expect_identical_value(length(phenotypes$values$linked_expression), 40L, "phenotype sample count")
 })
 
+run_named_test("phenotype reader accepts the real chrom metadata header", {
+  phenotypes <- read_checkpointed_window_phenotypes(
+    fixture_path("chrom_window_phenotypes.tsv"),
+    ordered_manifest
+  )
+  expect_identical_value(
+    phenotypes$metadata$chromosome,
+    c("7", "12"),
+    "chrom-header chromosome metadata"
+  )
+  expect_identical_value(
+    phenotypes$metadata$start,
+    c(700000L, 1200000L),
+    "chrom-header start metadata"
+  )
+  expect_identical_value(
+    phenotypes$metadata$end,
+    c(700001L, 1200001L),
+    "chrom-header end metadata"
+  )
+  expect_identical_value(
+    phenotypes$metadata$phenotype_id,
+    c("linked_expression", "linked_splicing"),
+    "chrom-header phenotype IDs"
+  )
+  expect_identical_value(
+    unname(phenotypes$values$linked_expression),
+    c(-8, -1),
+    "chrom-header phenotype values"
+  )
+})
+
 covariate_paths <- c(
   fixture_path("shared_covariates.tsv"),
   fixture_path("expression_covariates.tsv")

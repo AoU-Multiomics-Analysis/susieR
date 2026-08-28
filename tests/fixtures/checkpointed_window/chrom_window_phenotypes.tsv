@@ -1,0 +1,3 @@
+chrom	start	end	phenotype_id	sample_01	sample_02
+12	1200000	1200001	linked_splicing	-1	3
+7	700000	700001	linked_expression	-8	-1

@@ -905,6 +905,68 @@ run_named_test("resume adopts one valid commit after the saved cursor", {
   expect_identical_value(resume$window_manifest$last_committed_index, 10L, "updated cursor")
 })
 
+run_named_test("resume records an invalid exact next manifest before recomputation", {
+  ordered <- make_ordered_manifest(2L)
+  store_root <- tempfile("checkpoint-invalid-next-")
+  on.exit(unlink(store_root, recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(store_root)
+
+  first_inputs <- make_commit_inputs(ordered[1L, ])
+  first_committed <- commit_phenotype_checkpoint(
+    store,
+    first_inputs$paths,
+    first_inputs$local_artifacts,
+    first_inputs$fit_manifest
+  )
+  second_inputs <- make_commit_inputs(ordered[2L, ])
+  second_committed <- commit_phenotype_checkpoint(
+    store,
+    second_inputs$paths,
+    second_inputs$local_artifacts,
+    second_inputs$fit_manifest
+  )
+  second_committed$payloads$susie_fit$sha256 <- paste(rep("f", 64L), collapse = "")
+  jsonlite::write_json(
+    second_committed,
+    file.path(store_root, second_inputs$paths$fit_manifest),
+    auto_unbox = TRUE,
+    pretty = TRUE,
+    null = "null",
+    digits = NA
+  )
+
+  window_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = "dosage-hash"),
+    checkpointed_susie_settings()
+  ) |>
+    advance_window_run_manifest(first_committed)
+  resume <- resolve_resume_boundary(store, ordered, window_manifest)
+
+  expect_identical_value(resume$last_committed_index, 0L, "retained valid boundary")
+  expect_identical_value(resume$next_index, 1L, "invalid next recomputation index")
+  expect_identical_value(resume$recovered, TRUE, "audited recovery state")
+  expect_identical_value(
+    length(resume$window_manifest$recovery_history),
+    1L,
+    "invalid next recovery count"
+  )
+  recovery <- resume$window_manifest$recovery_history[[1L]]
+  expect_identical_value(recovery$processing_index, 1L, "invalid next recovery index")
+  expect_identical_value(
+    recovery$fit_manifest_path,
+    second_inputs$paths$fit_manifest,
+    "invalid next recovery path"
+  )
+  expect_true_value(nzchar(recovery$reason), "invalid next recovery reason")
+  expect_true_value(
+    store$object_exists(second_inputs$paths$fit_manifest),
+    "invalid next manifest remains durable"
+  )
+})
+
 run_named_test("resume compares name-stable current provenance with cursor and boundary", {
   expected_input_hashes <- c(
     dosage = paste(rep("a", 64L), collapse = ""),

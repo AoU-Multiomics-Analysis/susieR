@@ -1346,6 +1346,22 @@ resolve_resume_boundary <- function(
             window_manifest = advanced_manifest
           ))
         }
+        attempt <- checkpoint_optional_index(window_manifest$attempt)
+        audited_manifest <- append_window_recovery(
+          window_manifest,
+          checkpoint_recovery_entry(
+            next_record,
+            next_path,
+            next_boundary$error,
+            if (is.null(attempt)) NULL else attempt + 1L
+          )
+        )
+        return(list(
+          last_committed_index = last_index,
+          next_index = next_index,
+          recovered = TRUE,
+          window_manifest = audited_manifest
+        ))
       }
     }
 

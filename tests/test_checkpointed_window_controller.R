@@ -460,6 +460,41 @@ run_named_test("interruption keeps a running cursor and resume fits only the suf
   expect_true_value(all(file.exists(unlist(final_paths))), "completed local outputs")
 })
 
+run_named_test("injected fit functions receive legacy-imputed retained dosage", {
+  config <- make_controller_config("injected-imputed-dosage")
+  dosage_path <- tempfile("injected-missing-dosage-", fileext = ".tsv")
+  dosage <- readr::read_tsv(
+    fixture_path("window_dosage.tsv"),
+    show_col_types = FALSE
+  )
+  dosage$sample_05[[1L]] <- -1
+  readr::write_tsv(dosage, dosage_path)
+  config$window_dosage <- dosage_path
+  on.exit(
+    unlink(c(config$checkpoint_root, config$output_dir, dosage_path), recursive = TRUE),
+    add = TRUE
+  )
+  ordered <- controller_ordered_manifest(config)
+  raw_inputs <- load_checkpointed_window_inputs(config, ordered)
+  expect_true_value(anyNA(raw_inputs$genotype), "raw cache dosage contains missing value")
+
+  observed_missing <- logical()
+  counting_fit <- new_counting_fit_function(new_fit_counts())
+  injected_fit <- function(genotype, phenotype, covariates, variant_ids, settings) {
+    observed_missing <<- c(observed_missing, anyNA(genotype))
+    counting_fit(genotype, phenotype, covariates, variant_ids, settings)
+  }
+  run_checkpointed_window(
+    config,
+    fit_function = injected_fit
+  )
+  expect_identical_value(
+    observed_missing,
+    c(FALSE, FALSE),
+    "missing dosage seen by injected fits"
+  )
+})
+
 run_named_test("resume recomputes a corrupt boundary RDS", {
   config <- make_controller_config("corrupt-boundary")
   on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
@@ -820,6 +855,43 @@ run_named_test("fallback recovery hydrates an exact-path prefix for final assemb
     purrr::map_int(completed$committed, "processing_index"),
     0:1,
     "hydrated committed order"
+  )
+})
+
+run_named_test("final hydration rejects changed provenance in an interior manifest", {
+  config <- make_controller_config("interior-provenance")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  ordered <- controller_ordered_manifest(config)
+  first_manifest_path <- checkpoint_fixed_manifest_path(ordered[1L, , drop = FALSE])
+  counts <- new_fit_counts()
+  fit_function <- new_counting_fit_function(
+    counts,
+    before_fit = function(phenotype_id) {
+      if (!identical(phenotype_id, "linked_splicing")) {
+        return(invisible(NULL))
+      }
+      local_manifest <- file.path(config$checkpoint_root, first_manifest_path)
+      manifest <- jsonlite::read_json(local_manifest, simplifyVector = FALSE)
+      manifest$source_hashes$checkpoint_store <- paste(rep("9", 64L), collapse = "")
+      jsonlite::write_json(
+        manifest,
+        local_manifest,
+        auto_unbox = TRUE,
+        pretty = TRUE,
+        null = "null",
+        digits = NA
+      )
+    }
+  )
+
+  expect_error_message(
+    run_checkpointed_window(
+      config,
+      store = store,
+      fit_function = fit_function
+    ),
+    "Checkpoint source hashes do not match the current analysis."
   )
 })
 

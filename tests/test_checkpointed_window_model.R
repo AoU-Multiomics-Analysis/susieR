@@ -412,8 +412,8 @@ run_named_test("same design and mask prepares genotype once", {
   metrics <- cache$metrics()
 
   expect_identical_value(
-    plan$phenotypes$linked_expression$preparation_key,
-    plan$phenotypes$linked_expression_replica$preparation_key,
+    plan$phenotypes$linked_expression$group_key,
+    plan$phenotypes$linked_expression_replica$group_key,
     "shared preparation key"
   )
   expect_identical_value(metrics$total_preparations, 1L, "genotype preparations")
@@ -430,6 +430,78 @@ run_named_test("same design and mask prepares genotype once", {
     cache$metrics()$resident_entries,
     0L,
     "cache release after last use"
+  )
+})
+
+run_named_test("cache planning stores one design for one hundred same-group phenotypes", {
+  phenotype_ids <- sprintf("expression_replica_%03d", seq_len(100L))
+  repeated_manifest <- purrr::map_dfr(
+    seq_along(phenotype_ids),
+    function(index) {
+      ordered_manifest[1L, ] |>
+        dplyr::mutate(
+          phenotype_id = phenotype_ids[[index]],
+          processing_index = as.integer(index - 1L),
+          phenotype_key = checkpoint_phenotype_key(
+            "chr1_0_2000000",
+            "expression",
+            phenotype_ids[[index]]
+          )
+        )
+    }
+  )
+  repeated_inputs <- model_inputs
+  repeated_inputs$phenotypes <- stats::setNames(
+    rep(list(model_inputs$phenotypes$linked_expression), 100L),
+    phenotype_ids
+  )
+
+  original_applicable_covariate_matrix <- applicable_covariate_matrix
+  design_preprocessing_count <- 0L
+  assign(
+    "applicable_covariate_matrix",
+    function(...) {
+      design_preprocessing_count <<- design_preprocessing_count + 1L
+      original_applicable_covariate_matrix(...)
+    },
+    envir = .GlobalEnv
+  )
+  on.exit(
+    assign(
+      "applicable_covariate_matrix",
+      original_applicable_covariate_matrix,
+      envir = .GlobalEnv
+    ),
+    add = TRUE
+  )
+
+  plan <- build_checkpointed_window_cache_plan(
+    repeated_inputs,
+    repeated_manifest
+  )
+  expect_identical_value(
+    design_preprocessing_count,
+    1L,
+    "design preprocessing count"
+  )
+  expect_identical_value(length(plan$groups), 1L, "stored group count")
+  expect_identical_value(length(plan$phenotypes), 100L, "phenotype reference count")
+  expect_true_value(
+    all(purrr::map_lgl(
+      plan$phenotypes,
+      ~ identical(names(.x), c(
+        "processing_index",
+        "phenotype_id",
+        "modality",
+        "group_key"
+      ))
+    )),
+    "lightweight phenotype references"
+  )
+  expect_identical_value(
+    unique(purrr::map_chr(plan$phenotypes, "group_key")),
+    names(plan$groups),
+    "single shared group reference"
   )
 })
 
@@ -459,8 +531,8 @@ run_named_test("different design or sample mask prepares separately", {
     "separate genotype preparations"
   )
   expect_true_value(
-    mask_plan$phenotypes$linked_expression$preparation_key !=
-      mask_plan$phenotypes$linked_splicing$preparation_key,
+    mask_plan$phenotypes$linked_expression$group_key !=
+      mask_plan$phenotypes$linked_splicing$group_key,
     "different preparation keys"
   )
   expect_true_value(
@@ -511,6 +583,29 @@ run_named_test("cached and one-shot scientific results agree", {
   expect_identical_value(cached$qc$overlap_samples, 36L, "overlap sample count")
   expect_identical_value(cached$qc$phenotype_retained_samples, 36L, "phenotype sample count")
   expect_true_value(nzchar(cached$qc$design_id), "design identity")
+})
+
+run_named_test("constant phenotype takes precedence over a genotype skip", {
+  prepared <- list(
+    skip_reason = "NO_ALTERNATIVE_ALLELE",
+    sample_ids = c("sample_a", "sample_b", "sample_c"),
+    qc = list(genotype_skip_reason = "NO_ALTERNATIVE_ALLELE")
+  )
+  constant <- fit_prepared_checkpointed_window_phenotype(
+    prepared,
+    stats::setNames(rep(2, 3L), prepared$sample_ids),
+    checkpointed_susie_settings()
+  )
+  expect_identical_value(
+    constant$reason,
+    "ZERO_PHENOTYPE_VARIANCE",
+    "constant phenotype exclusion precedence"
+  )
+  expect_identical_value(
+    constant$qc$genotype_skip_reason,
+    "NO_ALTERNATIVE_ALLELE",
+    "genotype QC preservation"
+  )
 })
 
 run_named_test("trans-linked phenotypes use the full usable window", {

@@ -497,7 +497,11 @@ read_checkpointed_sample_allowlist <- function(path) {
   sample_ids
 }
 
-load_checkpointed_window_inputs <- function(config, ordered_manifest) {
+load_checkpointed_window_inputs <- function(
+    config,
+    ordered_manifest,
+    impute_genotype = FALSE
+) {
   required <- c(
     "window_dosage",
     "phenotype_data",
@@ -512,7 +516,10 @@ load_checkpointed_window_inputs <- function(config, ordered_manifest) {
       call. = FALSE
     )
   }
-  dosage <- read_checkpointed_window_dosage(config$window_dosage, impute = FALSE)
+  dosage <- read_checkpointed_window_dosage(
+    config$window_dosage,
+    impute = isTRUE(impute_genotype)
+  )
   phenotype_data <- read_checkpointed_window_phenotypes(
     config$phenotype_data,
     ordered_manifest
@@ -662,7 +669,7 @@ build_checkpointed_window_cache_plan <- function(model_inputs, ordered_manifest)
     )
   }
 
-  phenotype_plans <- purrr::map(
+  phenotype_references <- purrr::map(
     seq_len(nrow(ordered_manifest)),
     function(row_index) {
       record <- ordered_manifest[row_index, , drop = FALSE]
@@ -673,17 +680,16 @@ build_checkpointed_window_cache_plan <- function(model_inputs, ordered_manifest)
       }
       aligned_values <- phenotype[model_inputs$sample_ids]
       retained_sample_ids <- model_inputs$sample_ids[is.finite(aligned_values)]
-      covariates <- applicable_covariate_matrix(
-        model_inputs$covariates,
-        record$modality[[1L]],
-        retained_sample_ids
-      )
-      design <- cbind(intercept = 1, covariates)
-      rownames(design) <- retained_sample_ids
-      design_id <- checkpointed_design_identity(retained_sample_ids, design)
       sample_mask_id <- checkpointed_sample_mask_id(retained_sample_ids)
-      preparation_key <- digest::digest(
-        paste(design_id, sample_mask_id, sep = "\n"),
+      candidate_key <- digest::digest(
+        jsonlite::toJSON(
+          list(
+            modality = record$modality[[1L]],
+            sample_mask_id = sample_mask_id
+          ),
+          auto_unbox = TRUE,
+          null = "null"
+        ),
         algo = "sha256",
         serialize = FALSE
       )
@@ -691,19 +697,63 @@ build_checkpointed_window_cache_plan <- function(model_inputs, ordered_manifest)
         processing_index = as.integer(record$processing_index[[1L]]),
         phenotype_id = phenotype_id,
         modality = record$modality[[1L]],
+        candidate_key = candidate_key,
         retained_sample_ids = retained_sample_ids,
-        covariates = covariates,
-        design = design,
-        design_id = design_id,
-        sample_mask_id = sample_mask_id,
-        preparation_key = preparation_key,
-        removed_covariates = attr(covariates, "removed_covariates") %||%
-          character()
+        sample_mask_id = sample_mask_id
       )
     }
   ) |>
     stats::setNames(ordered_manifest$phenotype_id)
-  list(phenotypes = phenotype_plans)
+
+  candidate_keys <- unique(purrr::map_chr(phenotype_references, "candidate_key"))
+  candidate_groups <- purrr::map(candidate_keys, function(candidate_key) {
+    reference <- purrr::detect(
+      phenotype_references,
+      ~ identical(.x$candidate_key, candidate_key)
+    )
+    retained_sample_ids <- reference$retained_sample_ids
+    covariates <- applicable_covariate_matrix(
+      model_inputs$covariates,
+      reference$modality,
+      retained_sample_ids
+    )
+    design <- cbind(intercept = 1, covariates)
+    rownames(design) <- retained_sample_ids
+    design_id <- checkpointed_design_identity(retained_sample_ids, design)
+    preparation_key <- digest::digest(
+      paste(design_id, reference$sample_mask_id, sep = "\n"),
+      algo = "sha256",
+      serialize = FALSE
+    )
+    list(
+      retained_sample_ids = retained_sample_ids,
+      covariates = covariates,
+      design = design,
+      design_id = design_id,
+      sample_mask_id = reference$sample_mask_id,
+      preparation_key = preparation_key,
+      removed_covariates = attr(covariates, "removed_covariates") %||%
+        character()
+    )
+  }) |>
+    stats::setNames(candidate_keys)
+
+  groups <- purrr::reduce(candidate_groups, function(groups, group) {
+    if (is.null(groups[[group$preparation_key]])) {
+      groups[[group$preparation_key]] <- group
+    }
+    groups
+  }, .init = list())
+  phenotype_references <- purrr::map(phenotype_references, function(reference) {
+    group_key <- candidate_groups[[reference$candidate_key]]$preparation_key
+    list(
+      processing_index = reference$processing_index,
+      phenotype_id = reference$phenotype_id,
+      modality = reference$modality,
+      group_key = group_key
+    )
+  })
+  list(phenotypes = phenotype_references, groups = groups)
 }
 
 checkpointed_preparation_qc <- function(
@@ -919,12 +969,13 @@ new_checkpointed_window_genotype_cache <- function(
   state$prepared_keys <- character()
   state$preparation_counts <- integer()
   plans <- cache_plan$phenotypes
-  all_keys <- unique(purrr::map_chr(plans, "preparation_key"))
+  groups <- cache_plan$groups
+  all_keys <- unique(purrr::map_chr(plans, "group_key"))
   last_use <- purrr::map_int(
     all_keys,
     function(key) {
       max(purrr::map_int(
-        purrr::keep(plans, ~ identical(.x$preparation_key, key)),
+        purrr::keep(plans, ~ identical(.x$group_key, key)),
         "processing_index"
       ))
     }
@@ -936,7 +987,11 @@ new_checkpointed_window_genotype_cache <- function(
     if (is.null(plan)) {
       stop("Cache plan does not contain phenotype: ", phenotype_id, call. = FALSE)
     }
-    key <- plan$preparation_key
+    key <- plan$group_key
+    group <- groups[[key]]
+    if (is.null(group)) {
+      stop("Cache plan does not contain group: ", key, call. = FALSE)
+    }
     if (is.null(state$entries[[key]])) {
       if (is.null(state$raw_genotype)) {
         stop("Raw genotype was released before cache preparation.", call. = FALSE)
@@ -944,7 +999,7 @@ new_checkpointed_window_genotype_cache <- function(
       state$entries[[key]] <- prepare_checkpointed_window_genotype(
         state$raw_genotype,
         variant_ids,
-        plan,
+        group,
         raw_dosage_samples,
         overlap_samples
       )
@@ -966,7 +1021,7 @@ new_checkpointed_window_genotype_cache <- function(
     if (is.null(plan)) {
       return(invisible(FALSE))
     }
-    key <- plan$preparation_key
+    key <- plan$group_key
     if (identical(plan$processing_index, last_use[[key]])) {
       state$entries[[key]] <- NULL
     }
@@ -992,7 +1047,9 @@ fit_prepared_checkpointed_window_phenotype <- function(
     phenotype,
     settings
 ) {
-  if (!is.null(prepared$skip_reason)) {
+  genotype_skip_reasons <- c("NO_ALTERNATIVE_ALLELE", "NO_USABLE_VARIANTS")
+  if (!is.null(prepared$skip_reason) &&
+      !prepared$skip_reason %in% genotype_skip_reasons) {
     return(checkpointed_skipped_fit(prepared$skip_reason, prepared$qc))
   }
   phenotype <- if (!is.null(names(phenotype))) {
@@ -1007,6 +1064,9 @@ fit_prepared_checkpointed_window_phenotype <- function(
   phenotype_variance <- stats::var(phenotype)
   if (!is.finite(phenotype_variance) || phenotype_variance <= 0) {
     return(checkpointed_skipped_fit("ZERO_PHENOTYPE_VARIANCE", prepared$qc))
+  }
+  if (!is.null(prepared$skip_reason)) {
+    return(checkpointed_skipped_fit(prepared$skip_reason, prepared$qc))
   }
   transformed_phenotype <- rank_inverse_normal(phenotype)
   phenotype_residual <- qr.resid(prepared$design_qr, transformed_phenotype)
@@ -1547,12 +1607,23 @@ checkpointed_download_payload <- function(store, payload, local_path) {
   local_path
 }
 
-hydrate_checkpointed_fit_manifests <- function(store, ordered_manifest) {
+hydrate_checkpointed_fit_manifests <- function(
+    store,
+    ordered_manifest,
+    expected_input_hashes = NULL,
+    expected_settings = NULL,
+    expected_source_hashes = NULL,
+    expected_runtime = NULL
+) {
   purrr::map(
     seq_len(nrow(ordered_manifest)),
     ~ read_valid_boundary_manifest(
       store,
-      ordered_manifest[.x, , drop = FALSE]
+      ordered_manifest[.x, , drop = FALSE],
+      expected_input_hashes = expected_input_hashes,
+      expected_settings = expected_settings,
+      expected_source_hashes = expected_source_hashes,
+      expected_runtime = expected_runtime
     )
   )
 }
@@ -1751,10 +1822,18 @@ run_checkpointed_window <- function(
     indexes <- ordered_manifest$processing_index[
       ordered_manifest$processing_index >= resume$next_index
     ]
+    use_prepared_cache <- identical(
+      fit_function,
+      fit_checkpointed_window_phenotype
+    )
     model_inputs <- NULL
-    cache_plan <- list(phenotypes = list())
+    cache_plan <- list(phenotypes = list(), groups = list())
     if (length(indexes) > 0L) {
-      model_inputs <- load_checkpointed_window_inputs(config, ordered_manifest)
+      model_inputs <- load_checkpointed_window_inputs(
+        config,
+        ordered_manifest,
+        impute_genotype = !use_prepared_cache
+      )
       remaining_manifest <- ordered_manifest |>
         dplyr::filter(.data$processing_index %in% indexes)
       cache_plan <- build_checkpointed_window_cache_plan(
@@ -1762,10 +1841,6 @@ run_checkpointed_window <- function(
         remaining_manifest
       )
     }
-    use_prepared_cache <- identical(
-      fit_function,
-      fit_checkpointed_window_phenotype
-    )
     genotype_cache <- NULL
     if (use_prepared_cache && length(indexes) > 0L) {
       genotype_cache <- new_checkpointed_window_genotype_cache(
@@ -1781,7 +1856,8 @@ run_checkpointed_window <- function(
       phenotype_record <- ordered_manifest |>
         dplyr::filter(.data$processing_index == index)
       phenotype_id <- phenotype_record$phenotype_id[[1L]]
-      plan <- cache_plan$phenotypes[[phenotype_id]]
+      phenotype_plan <- cache_plan$phenotypes[[phenotype_id]]
+      plan <- cache_plan$groups[[phenotype_plan$group_key]]
       message(
         "[checkpointed-window] Fit index ",
         index,
@@ -1879,7 +1955,11 @@ run_checkpointed_window <- function(
 
     hydrated_manifests <- hydrate_checkpointed_fit_manifests(
       store,
-      ordered_manifest
+      ordered_manifest,
+      expected_input_hashes = input_hashes,
+      expected_settings = settings,
+      expected_source_hashes = provenance$source_hashes,
+      expected_runtime = provenance$runtime
     )
     window_state$committed <<- purrr::map(
       hydrated_manifests,

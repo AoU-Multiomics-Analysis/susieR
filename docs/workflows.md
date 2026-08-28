@@ -8,6 +8,7 @@ The WDL descriptors live in `workflows/`. Each descriptor has a unique workflow 
 | `workflows/susieRonly.wdl` | `SusieROnlyWorkflow` | Run fine-mapping when inputs are already prepared. |
 | `workflows/ExtractMultiPhenotypeInputs.wdl` | `ExtractMultiPhenotypeInputsWorkflow` | Extract multi-phenotype BED and TensorQTL inputs without subsetting dosages. |
 | `workflows/prepInputsSusieR.wdl` | `PrepSusieRWorkflow` | Prepare phenotype-specific input files only. |
+| `workflows/CheckpointedWindowSusie.wdl` | `CheckpointedWindowSusieWorkflow` | Fine-map one prepared window with GCS checkpoints. |
 | `workflows/ComputeR2Susie.wdl` | `ComputeR2SusieWorkflow` | Run cross-validation R2 evaluation. |
 | `workflows/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Merge sharded Susie Parquet outputs. |
 | `workflows/AnnotateSusie.wdl` | `AnnotateSusieWorkflow` | Annotate a merged Susie TSV. |
@@ -70,6 +71,52 @@ Optional inputs in addition to the shared fine-mapping inputs:
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |
 
 Outputs are `SusieParquet`, `SusielbfParquet`, `FullSusieParquet`, and `VariantPositionSummary`.
+
+### `workflows/CheckpointedWindowSusie.wdl` - Checkpointed Prepared Window
+
+This workflow runs one task for one prepared variant window. Terra launches one workflow per prepared window. Do not use a WDL scatter for this workflow.
+
+The prepare workflow owns phenotype filtering. The analysis task trusts
+`window_phenotypes.tsv` as the prepared manifest. The manifest requires
+`window_id`, `phenotype_id`, `modality`, `phenotype_file`, and `p_value`. The
+task orders phenotypes by `p_value`, modality, and phenotype ID.
+
+The current prepare workflows do not yet create this production manifest. Add
+the required `p_value` column before you submit this workflow in production.
+
+The first version tests every usable variant in the supplied window. It does
+not calculate a phenotype-centered interval. Set `checkpoint_root` to a
+writable `gs://` prefix. One active writer may use an analysis ID and window ID
+pair.
+
+Each committed phenotype has an RDS with the full fitted `susie` object. GCS
+payloads upload before the phenotype manifest. The task uploads
+`window_manifest.json` last. Normal resume reads only the window cursor and
+the latest fit. If the cursor is missing, the task probes fixed manifest paths.
+It does not list the full GCS prefix.
+
+The WDL returns `window_manifest.json`, `window_fit_index.tsv`, and three
+Parquet tables. `window_fit_index.tsv` identifies each fitted RDS.
+`SKIPPED` and `NONCONVERGED` are terminal phenotype states. They do not block
+later phenotypes. Unexpected failures preserve the last valid cursor and fail
+the task.
+
+The checkpoint root uses this layout:
+
+```text
+gs://<bucket>/<checkpoint-root>/<analysis-id>/<window-id>/
+  window_manifest.json
+  window_fit_index.tsv
+  results/
+  phenotypes/<phenotype-key>/
+    fit_manifest.json
+    susie_fit.<sha256>.rds
+```
+
+Start from
+[`examples/inputs/CheckpointedWindowSusie.inputs.json`](../examples/inputs/CheckpointedWindowSusie.inputs.json).
+Replace every example path with a Terra workspace path. Submit one input JSON
+for each prepared window.
 
 ### `workflows/ExtractMultiPhenotypeInputs.wdl` - Phenotype Extraction Only
 

@@ -3,6 +3,14 @@ set -euo pipefail
 
 wdl="workflows/CheckpointedWindowSusie.wdl"
 inputs="examples/inputs/CheckpointedWindowSusie.inputs.json"
+documentation=(
+  README.md
+  docs/README.md
+  docs/inputs.md
+  docs/scripts.md
+  docs/workflows.md
+  docs/docker.md
+)
 
 require_count() {
   local pattern="$1"
@@ -141,3 +149,22 @@ for key in \
 done
 
 rg -Fq '"CheckpointedWindowSusieWorkflow.preemptible_attempts": 3' "$inputs"
+
+documentation_text="$(cat "${documentation[@]}")"
+for term in \
+  CheckpointedWindowSusieWorkflow \
+  window_phenotypes.tsv \
+  p_value \
+  window_manifest.json \
+  window_fit_index.tsv \
+  NONCONVERGED \
+  SKIPPED \
+  'one workflow per prepared window'; do
+  if ! printf '%s\n' "$documentation_text" | rg -Fq "$term"; then
+    printf 'Documentation is missing required term: %s\n' "$term" >&2
+    exit 1
+  fi
+done
+
+rg -Fq '| [`workflows/CheckpointedWindowSusie.wdl`](workflows/CheckpointedWindowSusie.wdl) | `CheckpointedWindowSusieWorkflow` |' README.md
+rg -Fq '| `containers/CheckpointedWindowSusie/Dockerfile` | `ghcr.io/aou-multiomics-analysis/susier/checkpointed-window` |' docs/docker.md

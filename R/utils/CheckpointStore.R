@@ -181,7 +181,7 @@ upload_window_run_manifest <- function(store, relative_path, window_manifest) {
     auto_unbox = TRUE,
     pretty = TRUE,
     null = "null",
-    digits = NA
+    digits = checkpoint_json_digits
   )
   store$upload(local_manifest, relative_path)
   TRUE
@@ -685,7 +685,7 @@ commit_phenotype_checkpoint <- function(store, paths, local_artifacts, fit_manif
     auto_unbox = TRUE,
     pretty = TRUE,
     null = "null",
-    digits = NA
+    digits = checkpoint_json_digits
   )
   store$upload(local_manifest, paths$fit_manifest)
   fit_manifest
@@ -919,7 +919,7 @@ checkpoint_canonical_named_json <- function(value) {
     value[order(value_names)],
     auto_unbox = TRUE,
     null = "null",
-    digits = NA
+    digits = checkpoint_json_digits
   )
 }
 
@@ -1627,7 +1627,7 @@ write_local_window_run_manifest <- function(window_manifest, output_dir) {
     auto_unbox = TRUE,
     pretty = TRUE,
     null = "null",
-    digits = NA
+    digits = checkpoint_json_digits
   )
   local_path
 }

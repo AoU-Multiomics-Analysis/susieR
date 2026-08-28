@@ -420,6 +420,57 @@ run_named_test("phenotype commit uploads all payloads before its manifest", {
   )
 })
 
+run_named_test("checkpoint JSON preserves very small P values for resume", {
+  ordered <- make_ordered_manifest(1L) |>
+    dplyr::mutate(p_value = 1.1199976554521247e-146)
+  store_root <- tempfile("checkpoint-small-p-value-")
+  on.exit(unlink(store_root, recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(store_root)
+  commit_inputs <- make_commit_inputs(ordered[1L, ])
+  committed <- commit_phenotype_checkpoint(
+    store,
+    commit_inputs$paths,
+    commit_inputs$local_artifacts,
+    commit_inputs$fit_manifest
+  )
+
+  hydrated_fit_manifest <- read_valid_boundary_manifest(store, ordered[1L, ])
+  expect_identical_value(
+    hydrated_fit_manifest$p_value,
+    ordered$p_value[[1L]],
+    "fit manifest P value after JSON round trip"
+  )
+
+  window_manifest <- new_window_run_manifest(
+    "analysis-1",
+    "chr1_0_2000000",
+    ordered,
+    c(dosage = "dosage-hash"),
+    checkpointed_susie_settings()
+  ) |>
+    advance_window_run_manifest(committed)
+  window_manifest_path <- window_checkpoint_paths(
+    "analysis-1",
+    "chr1_0_2000000"
+  )$window_manifest
+  upload_window_run_manifest(store, window_manifest_path, window_manifest)
+  hydrated_window_manifest <- read_window_run_manifest_if_present(
+    store,
+    window_manifest_path
+  )
+  expect_true_value(
+    is_usable_window_manifest(
+      hydrated_window_manifest,
+      ordered,
+      list(
+        analysis_id = "analysis-1",
+        window_id = "chr1_0_2000000"
+      )
+    ),
+    "window manifest after a very small P value JSON round trip"
+  )
+})
+
 run_named_test("phenotype commit rejects a checksum mismatch", {
   record <- make_ordered_manifest(1L)[1L, ]
   commit_inputs <- make_commit_inputs(record)

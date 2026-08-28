@@ -124,6 +124,7 @@ make_three_phenotype_config <- function(label) {
 controller_ordered_manifest <- function(config) {
   raw_manifest <- readr::read_tsv(
     config$window_phenotypes,
+    col_types = readr::cols(.default = readr::col_character()),
     show_col_types = FALSE
   )
   ordered_manifest <- validate_window_phenotype_manifest(
@@ -308,7 +309,7 @@ commit_direct_fit <- function(config, store, processing_index, fit_result) {
   )
 }
 
-run_named_test("controller keeps exact subnormal p values in checkpoint identity", {
+run_named_test("controller keeps exact very small p values in checkpoint identity", {
   config <- make_controller_config("subnormal-p-values")
   config$window_phenotypes <- fixture_path("subnormal_window_phenotypes.tsv")
   on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
@@ -317,7 +318,7 @@ run_named_test("controller keeps exact subnormal p values in checkpoint identity
   fit_function <- new_counting_fit_function(counts)
   exact_p_values <- as.numeric(c(
     "1.35242422104231e-309",
-    "6.834591488289331e-295"
+    "1.1199976554521252e-146"
   ))
   expected_ordered <- tibble::tibble(
     window_id = rep(config$window_id, 2L),
@@ -371,6 +372,20 @@ run_named_test("controller keeps exact subnormal p values in checkpoint identity
     purrr::map_dbl(first_manifest$phenotypes, "p_value"),
     exact_p_values,
     "checkpoint p values"
+  )
+  expect_identical_value(
+    purrr::map_dbl(first_manifest$committed, "p_value"),
+    exact_p_values,
+    "committed checkpoint p values"
+  )
+  fit_manifest_p_values <- purrr::map_dbl(
+    expected_ordered$processing_index,
+    ~ read_controller_fit_manifest(config, .x, store)$p_value
+  )
+  expect_identical_value(
+    fit_manifest_p_values,
+    exact_p_values,
+    "fit manifest p values"
   )
   expect_identical_value(
     first_manifest$analysis_id,

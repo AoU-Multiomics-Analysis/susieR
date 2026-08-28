@@ -4,6 +4,8 @@
   if (is.null(x)) y else x
 }
 
+checkpoint_json_digits <- 17L
+
 checkpointed_susie_settings <- function() {
   list(
     L = 10L,
@@ -134,7 +136,7 @@ build_checkpoint_analysis_id <- function(
     auto_unbox = TRUE,
     dataframe = "rows",
     null = "null",
-    digits = NA
+    digits = checkpoint_json_digits
   )
   digest::digest(canonical_json, algo = "sha256", serialize = FALSE)
 }
@@ -638,7 +640,12 @@ checkpointed_design_identity <- function(sample_ids, design) {
     design = checkpointed_matrix_identity_payload(design)
   )
   digest::digest(
-    jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null", digits = NA),
+    jsonlite::toJSON(
+      payload,
+      auto_unbox = TRUE,
+      null = "null",
+      digits = checkpoint_json_digits
+    ),
     algo = "sha256",
     serialize = FALSE
   )
@@ -658,7 +665,12 @@ checkpointed_genotype_cache_key <- function(
     design = checkpointed_matrix_identity_payload(design)
   )
   digest::digest(
-    jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null", digits = NA),
+    jsonlite::toJSON(
+      payload,
+      auto_unbox = TRUE,
+      null = "null",
+      digits = checkpoint_json_digits
+    ),
     algo = "sha256",
     serialize = FALSE
   )

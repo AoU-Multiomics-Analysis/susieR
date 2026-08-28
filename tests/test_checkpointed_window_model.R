@@ -453,6 +453,35 @@ run_named_test("cache key covers samples, retained variants, and covariate desig
   expect_true_value(all(changed_keys != key), "cache-key identity inputs")
 })
 
+run_named_test("design and cache identities distinguish nearby numeric values", {
+  small_value <- 1.1199976554521247e-146
+  adjacent_value <- small_value +
+    abs(small_value) * 2 * .Machine$double.eps
+  first_design <- matrix(
+    c(1, small_value, 1, 1),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(NULL, c("intercept", "covariate"))
+  )
+  adjacent_design <- first_design
+  adjacent_design[1L, 2L] <- adjacent_value
+  sample_ids <- c("sample_1", "sample_2")
+  variant_ids <- "chr1_100_A_G"
+
+  if (identical(
+    checkpointed_design_identity(sample_ids, first_design),
+    checkpointed_design_identity(sample_ids, adjacent_design)
+  )) {
+    stop("Distinct designs must have distinct design IDs.", call. = FALSE)
+  }
+  if (identical(
+    checkpointed_genotype_cache_key(sample_ids, variant_ids, first_design),
+    checkpointed_genotype_cache_key(sample_ids, variant_ids, adjacent_design)
+  )) {
+    stop("Distinct designs must have distinct cache keys.", call. = FALSE)
+  }
+})
+
 run_named_test("same design and mask prepares genotype once", {
   replica_manifest <- dplyr::bind_rows(
     ordered_manifest[1L, ],

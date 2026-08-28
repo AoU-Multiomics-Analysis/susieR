@@ -129,6 +129,52 @@ run_named_test("analysis ID is canonical and sensitive to identity inputs", {
   }
 })
 
+run_named_test("analysis ID distinguishes nearby very small P values", {
+  ordered <- validate_window_phenotype_manifest(manifest, "chr1_0_2000000")
+  small_p_value <- 1.1199976554521247e-146
+  adjacent_p_value <- small_p_value +
+    abs(small_p_value) * 2 * .Machine$double.eps
+  first_manifest <- ordered |>
+    dplyr::mutate(
+      p_value = dplyr::if_else(
+        .data$phenotype_id == "trait_a",
+        small_p_value,
+        .data$p_value
+      )
+    )
+  adjacent_manifest <- first_manifest |>
+    dplyr::mutate(
+      p_value = dplyr::if_else(
+        .data$phenotype_id == "trait_a",
+        adjacent_p_value,
+        .data$p_value
+      )
+    )
+  identity_arguments <- list(
+    input_hashes = c(genotype = "genotype-hash"),
+    settings = checkpointed_susie_settings(),
+    container_digest = "sha256:container",
+    wrapper_hash = "wrapper-hash"
+  )
+  first_id <- build_checkpoint_analysis_id(
+    identity_arguments$input_hashes,
+    first_manifest,
+    identity_arguments$settings,
+    identity_arguments$container_digest,
+    identity_arguments$wrapper_hash
+  )
+  adjacent_id <- build_checkpoint_analysis_id(
+    identity_arguments$input_hashes,
+    adjacent_manifest,
+    identity_arguments$settings,
+    identity_arguments$container_digest,
+    identity_arguments$wrapper_hash
+  )
+  if (identical(first_id, adjacent_id)) {
+    stop("Distinct P values must produce distinct analysis IDs.", call. = FALSE)
+  }
+})
+
 run_named_test("analysis ID covers every mutable runtime source", {
   ordered <- validate_window_phenotype_manifest(manifest, "chr1_0_2000000")
   source_hashes <- c(

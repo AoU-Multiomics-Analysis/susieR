@@ -25,6 +25,15 @@ require_count 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' 1
 require_count 'scatter[[:space:]]*\(' 0
 require_count '^[[:space:]]*test -s window_outputs/' 5
 
+checked_output_paths="$(
+  awk '/^[[:space:]]*test -s window_outputs\// { print $3 }' "$wdl" | sort
+)"
+expected_checked_output_paths=$'window_outputs/credible_sets.parquet\nwindow_outputs/full_susie.parquet\nwindow_outputs/lbf_variable.parquet\nwindow_outputs/window_fit_index.tsv\nwindow_outputs/window_manifest.json'
+if [ "$checked_output_paths" != "$expected_checked_output_paths" ]; then
+  printf 'Checked output paths do not match the required set.\n' >&2
+  exit 1
+fi
+
 rg -q '^workflow CheckpointedWindowSusieWorkflow' "$wdl"
 rg -q '^task RunCheckpointedWindowSusie' "$wdl"
 rg -q 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' "$wdl"

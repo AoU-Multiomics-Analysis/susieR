@@ -408,6 +408,10 @@ for smoke_command in \
   require_literal "$smoke_command" "$workflow"
 done
 
+require_literal 'Run installed end-to-end smoke test' "$workflow"
+require_literal 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' "$workflow"
+require_literal 'diff /tmp/first/window_fit_index.tsv /tmp/resumed/window_fit_index.tsv' "$workflow"
+
 require_absent 'GOOGLE_APPLICATION_CREDENTIALS|GCS_[A-Z_]*CREDENTIAL|gcloud[[:space:]]+auth|google-github-actions/auth|service_account|workload_identity|gsutil[[:space:]]+(cp|ls|rsync|rm|mb)|gs://' "$workflow"
 
 printf 'Checkpointed window container contract passed.\n'

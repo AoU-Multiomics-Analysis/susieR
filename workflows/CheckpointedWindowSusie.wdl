@@ -10,7 +10,7 @@ workflow CheckpointedWindowSusieWorkflow {
     Array[String] covariate_modalities
     File? keep_samples
     String checkpoint_root
-    String runner_image = "ghcr.io/aou-multiomics-analysis/susier/checkpointed-window:main"
+    String runner_image
     Int memory_gb = 16
     Int cpu = 1
     Int disk_gb = 500
@@ -65,12 +65,14 @@ task RunCheckpointedWindowSusie {
   File covariate_files_values = write_lines(covariate_files)
   File covariate_modalities_values = write_lines(covariate_modalities)
   File keep_samples_values = write_lines(select_all([keep_samples]))
+  File runner_image_values = write_lines([runner_image])
 
   command <<<
     set -euo pipefail
 
     IFS= read -r window_id < "~{window_id_values}"
     IFS= read -r checkpoint_root < "~{checkpoint_root_values}"
+    IFS= read -r runner_image < "~{runner_image_values}"
 
     covariate_files=()
     while IFS= read -r covariate_file; do
@@ -103,6 +105,11 @@ task RunCheckpointedWindowSusie {
         exit 1
         ;;
     esac
+    if [[ ! "$runner_image" =~ @sha256:[0-9a-f]{64}$ ]]; then
+      echo "ERROR runner image must end with @sha256 and 64 lowercase hex characters" >&2
+      exit 1
+    fi
+    export CHECKPOINTED_SUSIE_RUNTIME_IMAGE="$runner_image"
 
     mkdir -p window_outputs
 

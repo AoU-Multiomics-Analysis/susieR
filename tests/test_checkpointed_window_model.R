@@ -40,6 +40,23 @@ run_named_test("dosage reader imputes missing values and retains window order", 
   }
 })
 
+run_named_test("dosage reader can retain missing cells for mask-specific preparation", {
+  dosage <- read_checkpointed_window_dosage(
+    fixture_path("window_dosage.tsv"),
+    impute = FALSE
+  )
+  expect_identical_value(
+    sum(is.na(dosage$genotype)),
+    1L,
+    "raw missing dosage count"
+  )
+  expect_identical_value(
+    dosage$genotype[3L, 4L],
+    NA_real_,
+    "raw missing dosage cell"
+  )
+})
+
 run_named_test("dosage reader rejects finite values outside zero through two", {
   invalid_path <- tempfile(fileext = ".tsv")
   on.exit(unlink(invalid_path), add = TRUE)
@@ -256,6 +273,47 @@ run_named_test("input loader aligns every input in prepared dosage order", {
   expect_identical_value(dim(model_inputs$genotype), c(6L, 36L), "aligned genotype dimensions")
 })
 
+run_named_test("one phenotype NA does not remove a sample from another phenotype", {
+  phenotype_data <- data.table::fread(
+    fixture_path("window_phenotypes.bed.gz"),
+    check.names = FALSE,
+    data.table = FALSE
+  ) |>
+    tibble::as_tibble()
+  phenotype_data$sample_05[phenotype_data$phenotype_id == "linked_expression"] <-
+    NA_real_
+  phenotype_path <- tempfile(fileext = ".tsv")
+  on.exit(unlink(phenotype_path), add = TRUE)
+  readr::write_tsv(phenotype_data, phenotype_path)
+  na_config <- config
+  na_config$phenotype_data <- phenotype_path
+  na_inputs <- load_checkpointed_window_inputs(na_config, ordered_manifest)
+
+  expect_true_value("sample_05" %in% na_inputs$sample_ids, "shared overlap sample")
+  expect_identical_value(
+    na_inputs$phenotypes$linked_expression[["sample_05"]],
+    NA_real_,
+    "phenotype-specific missing value"
+  )
+  expect_true_value(
+    is.finite(na_inputs$phenotypes$linked_splicing[["sample_05"]]),
+    "unaffected phenotype sample"
+  )
+})
+
+run_named_test("sample allowlist requires exactly one named column", {
+  invalid_allowlist <- tempfile(fileext = ".tsv")
+  on.exit(unlink(invalid_allowlist), add = TRUE)
+  readr::write_tsv(
+    tibble::tibble(sample_id = c("sample_05", "sample_06"), note = c("a", "b")),
+    invalid_allowlist
+  )
+  expect_error_message(
+    read_checkpointed_sample_allowlist(invalid_allowlist),
+    "exactly one named"
+  )
+})
+
 run_named_test("input loader rejects a manifest modality without covariates", {
   incomplete_config <- config
   incomplete_config$covariate_files <- covariate_paths[[2L]]
@@ -300,6 +358,159 @@ fit_results <- purrr::map(seq_len(nrow(ordered_manifest)), function(index) {
     variant_ids = model_inputs$variant_info$variant_id,
     settings = checkpointed_susie_settings()
   )
+})
+
+run_named_test("cache key covers samples, retained variants, and covariate design", {
+  sample_ids <- model_inputs$sample_ids
+  design <- cbind(
+    intercept = 1,
+    applicable_covariate_matrix(
+      model_inputs$covariates,
+      "expression",
+      sample_ids
+    )
+  )
+  variant_ids <- model_inputs$variant_info$variant_id
+  key <- checkpointed_genotype_cache_key(sample_ids, variant_ids, design)
+  changed_design <- design
+  changed_design[1L, 2L] <- changed_design[1L, 2L] + 1e-6
+  changed_keys <- c(
+    checkpointed_genotype_cache_key(rev(sample_ids), variant_ids, design[nrow(design):1L, , drop = FALSE]),
+    checkpointed_genotype_cache_key(sample_ids, rev(variant_ids), design),
+    checkpointed_genotype_cache_key(sample_ids, variant_ids, changed_design)
+  )
+  expect_true_value(all(changed_keys != key), "cache-key identity inputs")
+})
+
+run_named_test("same design and mask prepares genotype once", {
+  replica_manifest <- dplyr::bind_rows(
+    ordered_manifest[1L, ],
+    ordered_manifest[1L, ] |>
+      dplyr::mutate(
+        phenotype_id = "linked_expression_replica",
+        processing_index = 1L,
+        phenotype_key = checkpoint_phenotype_key(
+          "chr1_0_2000000",
+          "expression",
+          "linked_expression_replica"
+        )
+      )
+  )
+  replica_inputs <- model_inputs
+  replica_inputs$phenotypes$linked_expression_replica <-
+    replica_inputs$phenotypes$linked_expression
+  plan <- build_checkpointed_window_cache_plan(replica_inputs, replica_manifest)
+  cache <- new_checkpointed_window_genotype_cache(
+    replica_inputs$genotype,
+    replica_inputs$variant_info$variant_id,
+    plan,
+    raw_dosage_samples = replica_inputs$raw_dosage_samples,
+    overlap_samples = replica_inputs$overlap_samples
+  )
+  first <- cache$get("linked_expression")
+  second <- cache$get("linked_expression_replica")
+  metrics <- cache$metrics()
+
+  expect_identical_value(
+    plan$phenotypes$linked_expression$preparation_key,
+    plan$phenotypes$linked_expression_replica$preparation_key,
+    "shared preparation key"
+  )
+  expect_identical_value(metrics$total_preparations, 1L, "genotype preparations")
+  expect_identical_value(first$cache_key, second$cache_key, "shared final cache key")
+  expect_true_value(metrics$raw_genotype_released, "raw genotype release")
+  cache$release("linked_expression")
+  expect_identical_value(
+    cache$metrics()$resident_entries,
+    1L,
+    "cache retained before last use"
+  )
+  cache$release("linked_expression_replica")
+  expect_identical_value(
+    cache$metrics()$resident_entries,
+    0L,
+    "cache release after last use"
+  )
+})
+
+run_named_test("different design or sample mask prepares separately", {
+  different_mask_inputs <- model_inputs
+  different_mask_inputs$phenotypes$linked_expression[[1L]] <- NA_real_
+  mask_plan <- build_checkpointed_window_cache_plan(
+    different_mask_inputs,
+    ordered_manifest
+  )
+  mask_cache <- new_checkpointed_window_genotype_cache(
+    different_mask_inputs$genotype,
+    different_mask_inputs$variant_info$variant_id,
+    mask_plan,
+    raw_dosage_samples = different_mask_inputs$raw_dosage_samples,
+    overlap_samples = different_mask_inputs$overlap_samples
+  )
+  mask_cache$get("linked_expression")
+  expect_true_value(
+    !mask_cache$metrics()$raw_genotype_released,
+    "raw genotype retained before all preparations"
+  )
+  mask_cache$get("linked_splicing")
+  expect_identical_value(
+    mask_cache$metrics()$total_preparations,
+    2L,
+    "separate genotype preparations"
+  )
+  expect_true_value(
+    mask_plan$phenotypes$linked_expression$preparation_key !=
+      mask_plan$phenotypes$linked_splicing$preparation_key,
+    "different preparation keys"
+  )
+  expect_true_value(
+    mask_cache$metrics()$raw_genotype_released,
+    "raw genotype released after all preparations"
+  )
+})
+
+run_named_test("cached and one-shot scientific results agree", {
+  one_record <- ordered_manifest[1L, , drop = FALSE]
+  plan <- build_checkpointed_window_cache_plan(model_inputs, one_record)
+  cache <- new_checkpointed_window_genotype_cache(
+    model_inputs$genotype,
+    model_inputs$variant_info$variant_id,
+    plan,
+    raw_dosage_samples = model_inputs$raw_dosage_samples,
+    overlap_samples = model_inputs$overlap_samples
+  )
+  prepared <- cache$get("linked_expression")
+  invisible(utils::capture.output(
+    cached <- fit_prepared_checkpointed_window_phenotype(
+      prepared,
+      model_inputs$phenotypes$linked_expression,
+      checkpointed_susie_settings()
+    )
+  ))
+  one_shot_covariates <- applicable_covariate_matrix(
+    model_inputs$covariates,
+    "expression",
+    model_inputs$sample_ids
+  )
+  invisible(utils::capture.output(
+    one_shot <- fit_checkpointed_window_phenotype(
+      model_inputs$genotype,
+      model_inputs$phenotypes$linked_expression,
+      one_shot_covariates,
+      model_inputs$variant_info$variant_id,
+      checkpointed_susie_settings()
+    )
+  ))
+
+  expect_identical_value(cached$status, one_shot$status, "fit status")
+  expect_identical_value(cached$fit$variant_id, one_shot$fit$variant_id, "fit variants")
+  if (!isTRUE(all.equal(cached$fit$pip, one_shot$fit$pip, tolerance = 1e-12))) {
+    stop("Cached and one-shot PIPs differ.", call. = FALSE)
+  }
+  expect_identical_value(cached$qc$raw_dosage_samples, 40L, "raw sample count")
+  expect_identical_value(cached$qc$overlap_samples, 36L, "overlap sample count")
+  expect_identical_value(cached$qc$phenotype_retained_samples, 36L, "phenotype sample count")
+  expect_true_value(nzchar(cached$qc$design_id), "design identity")
 })
 
 run_named_test("trans-linked phenotypes use the full usable window", {
@@ -526,6 +737,15 @@ run_named_test("skipped formatter writes typed empty schemas", {
   expect_identical_value(typeof(tables$credible_sets$position), "integer", "credible-set position type")
   expect_identical_value(typeof(tables$lbf_variable$position), "integer", "LBF position type")
   expect_identical_value(typeof(tables$full_susie$pip), "double", "full-SuSiE PIP type")
+})
+
+run_named_test("result table validator rejects prototype type drift", {
+  tables <- checkpointed_empty_susie_tables()
+  tables$credible_sets$position <- as.character(tables$credible_sets$position)
+  expect_error_message(
+    checkpointed_validate_susie_tables(tables),
+    "column types"
+  )
 })
 
 run_named_test("valid fit without credible sets writes typed empty schemas", {

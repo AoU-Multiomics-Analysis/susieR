@@ -30,4 +30,11 @@ The checkpointed-window runner inherits the exact pinned scientific base digest
 `sha256:07f9ddcb00391cceb6d5432144e38b16358b7a6ca7766ae3bc1b8b4aa3bac764`.
 GitHub Actions builds and smoke-tests this image. Do not build it locally for a
 smoke test. The workflow uses no GCS credentials and writes no real GCS data.
-It pushes the checkpointed image only for a push to `main`.
+It runs the installed `/opt/r` runner on a synthetic window and runs the same
+command again to test resume. It pushes the checkpointed image only for a push
+to `main`.
+
+Production WDL input must use the published checkpointed image with its
+`@sha256` digest. Do not use a tag. Do not copy the parent-image digest into
+the runner-image field. Record the digest that GitHub publishes for the
+checkpointed image.

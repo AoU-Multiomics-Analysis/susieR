@@ -128,3 +128,77 @@ run_named_test("analysis ID is canonical and sensitive to identity inputs", {
     stop("Each changed analysis identity input must change the analysis ID.", call. = FALSE)
   }
 })
+
+run_named_test("analysis ID covers every mutable runtime source", {
+  ordered <- validate_window_phenotype_manifest(manifest, "chr1_0_2000000")
+  source_hashes <- c(
+    runner_wrapper = paste(rep("a", 64L), collapse = ""),
+    checkpointed_functions = paste(rep("b", 64L), collapse = ""),
+    checkpoint_store = paste(rep("c", 64L), collapse = "")
+  )
+  analysis_id <- build_checkpoint_analysis_id(
+    input_hashes = c(genotype = "genotype-hash"),
+    ordered_manifest = ordered,
+    settings = checkpointed_susie_settings(),
+    container_digest = "sha256:base",
+    wrapper_hash = source_hashes[["runner_wrapper"]],
+    source_hashes = source_hashes,
+    runtime_image = "runner@example@sha256:published"
+  )
+
+  changed_functions <- source_hashes
+  changed_functions[["checkpointed_functions"]] <- paste(rep("d", 64L), collapse = "")
+  changed_store <- source_hashes
+  changed_store[["checkpoint_store"]] <- paste(rep("e", 64L), collapse = "")
+  changed_ids <- c(
+    build_checkpoint_analysis_id(
+      c(genotype = "genotype-hash"),
+      ordered,
+      checkpointed_susie_settings(),
+      "sha256:base",
+      source_hashes[["runner_wrapper"]],
+      source_hashes = changed_functions,
+      runtime_image = "runner@example@sha256:published"
+    ),
+    build_checkpoint_analysis_id(
+      c(genotype = "genotype-hash"),
+      ordered,
+      checkpointed_susie_settings(),
+      "sha256:base",
+      source_hashes[["runner_wrapper"]],
+      source_hashes = changed_store,
+      runtime_image = "runner@example@sha256:published"
+    )
+  )
+  expect_true_value <- function(value, label) {
+    if (!isTRUE(value)) {
+      stop("Expected true for ", label, ".", call. = FALSE)
+    }
+  }
+  expect_true_value(
+    all(changed_ids != analysis_id),
+    "helper hashes changing the analysis ID"
+  )
+})
+
+run_named_test("manifest phenotype file matches the configured phenotype data", {
+  expect_error_message(
+    validate_window_phenotype_manifest(
+      dplyr::mutate(manifest, phenotype_file = "other.bed.gz"),
+      "chr1_0_2000000",
+      phenotype_data = "/inputs/window.bed.gz"
+    ),
+    "phenotype_file must match"
+  )
+  expect_error_message(
+    validate_window_phenotype_manifest(
+      dplyr::mutate(
+        manifest,
+        phenotype_file = c("window.bed.gz", "other.bed.gz", "window.bed.gz")
+      ),
+      "chr1_0_2000000",
+      phenotype_data = "/inputs/window.bed.gz"
+    ),
+    "one phenotype_file"
+  )
+})

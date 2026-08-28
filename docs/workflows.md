@@ -81,19 +81,53 @@ The prepare workflow owns phenotype filtering. The analysis task trusts
 `window_id`, `phenotype_id`, `modality`, `phenotype_file`, and `p_value`. The
 task orders phenotypes by `p_value`, modality, and phenotype ID.
 
-The current prepare workflows do not yet create this production manifest. Add
-the required `p_value` column before you submit this workflow in production.
+The current prepare workflows do not yet create this production manifest. This
+is a deployment gap. Before production use, add a preparation adapter that
+writes the final linked and filtered phenotype set. The adapter must write the
+five required columns. It must use one `phenotype_file` value that matches the
+`phenotype_data` file base name.
 
 The first version tests every usable variant in the supplied window. It does
 not calculate a phenotype-centered interval. Set `checkpoint_root` to a
 writable `gs://` prefix. One active writer may use an analysis ID and window ID
 pair.
 
+Set `runner_image` to an immutable published `@sha256` digest. The WDL has no
+runner-image default. It rejects a mutable tag before it starts R. The runtime
+hashes the installed runner wrapper and both checkpoint helper files. The
+analysis ID changes when one of these source files changes. Window and
+phenotype manifests record these hashes, the runner-image identity, and the
+pinned base-image identity.
+
+The controller aligns dosage, applicable covariates, and the optional sample
+allowlist once. It applies finite-value masks to each phenotype separately. It
+uses an exact cache for each retained-sample mask and covariate design. The
+cache identity covers ordered sample IDs, retained variants, retained
+covariate columns, and design values. The controller imputes, filters,
+transposes, and residualizes genotype once for each cache. It then transforms
+and residualizes only the phenotype before each SuSiE fit.
+
+The controller releases a cache after its last ordered phenotype. It releases
+the raw genotype after it prepares the last distinct cache. Phenotype order
+does not change to reduce memory. Interleaved cache groups can therefore be in
+memory at the same time. As a first estimate, allow at least eight bytes for
+each sample-by-retained-variant value in each active cache, plus R and SuSiE
+overhead. Increase `memory_gb` when a window has many distinct retained-sample
+masks or covariate designs.
+
+A prior IKZF1 prepared-window run completed in 1307.44 seconds and used 8.01
+GB. This result is evidence from one input. It is not a resource guarantee.
+
 Each committed phenotype has an RDS with the full fitted `susie` object. GCS
 payloads upload before the phenotype manifest. The task uploads
 `window_manifest.json` last. Normal resume reads only the window cursor and
 the latest fit. If the cursor is missing, the task probes fixed manifest paths.
 It does not list the full GCS prefix.
+
+If boundary validation fails, the task does not delete the corrupt object. It
+records the index, phenotype ID, phenotype key, fixed manifest path, concise
+reason, timestamp, and attempt in `recovery_history`. It then recomputes that
+phenotype. Later attempts preserve this history.
 
 The WDL returns `window_manifest.json`, `window_fit_index.tsv`, and three
 Parquet tables. `window_fit_index.tsv` identifies each fitted RDS.
@@ -116,7 +150,8 @@ gs://<bucket>/<checkpoint-root>/<analysis-id>/<window-id>/
 Start from
 [`examples/inputs/CheckpointedWindowSusie.inputs.json`](../examples/inputs/CheckpointedWindowSusie.inputs.json).
 Replace every example path with a Terra workspace path. Submit one input JSON
-for each prepared window.
+for each prepared window. Replace the runner-image placeholder with the digest
+of a published checkpointed-window image.
 
 ### `workflows/ExtractMultiPhenotypeInputs.wdl` - Phenotype Extraction Only
 

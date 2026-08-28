@@ -68,6 +68,41 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work susier-checkpointed-window:smoke-test Rscript tests/test_checkpointed_window_model.R
           docker run --rm -v "$PWD:/work" -w /work susier-checkpointed-window:smoke-test Rscript tests/test_checkpointed_window_controller.R
 
+      - name: Run installed end-to-end smoke test
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/tests/fixtures/checkpointed_window:/fixtures:ro" \
+            susier-checkpointed-window:smoke-test \
+            bash -lc '
+              set -euo pipefail
+              export CHECKPOINTED_SUSIE_RUNTIME_IMAGE="local-smoke@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              Rscript /opt/r/scripts/run_checkpointed_window_susie.R \
+                --window-id chr1_0_2000000 \
+                --window-dosage /fixtures/window_dosage.tsv \
+                --window-phenotypes /fixtures/window_phenotypes.tsv \
+                --phenotype-data /fixtures/window_phenotypes.bed.gz \
+                --covariate-files /fixtures/shared_covariates.tsv,/fixtures/expression_covariates.tsv \
+                --covariate-modalities shared,expression \
+                --keep-samples /fixtures/keep_samples.tsv \
+                --checkpoint-root /tmp/checkpoints \
+                --output-dir /tmp/first
+              test -s /tmp/first/window_manifest.json
+              test -s /tmp/first/window_fit_index.tsv
+              Rscript /opt/r/scripts/run_checkpointed_window_susie.R \
+                --window-id chr1_0_2000000 \
+                --window-dosage /fixtures/window_dosage.tsv \
+                --window-phenotypes /fixtures/window_phenotypes.tsv \
+                --phenotype-data /fixtures/window_phenotypes.bed.gz \
+                --covariate-files /fixtures/shared_covariates.tsv,/fixtures/expression_covariates.tsv \
+                --covariate-modalities shared,expression \
+                --keep-samples /fixtures/keep_samples.tsv \
+                --checkpoint-root /tmp/checkpoints \
+                --output-dir /tmp/resumed
+              diff /tmp/first/window_fit_index.tsv /tmp/resumed/window_fit_index.tsv
+              test -s /tmp/resumed/window_manifest.json
+            '
+
       - name: Extract Docker metadata
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: meta

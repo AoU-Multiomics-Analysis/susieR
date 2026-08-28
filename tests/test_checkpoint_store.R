@@ -80,11 +80,30 @@ make_fit_manifest <- function(record, local_artifacts, paths, fit = fake_fit) {
     settings = checkpointed_susie_settings(),
     container_digest = "sha256:checkpointed-window-susie",
     package_versions = list(R = "4.5.1", susieR = "0.12.35"),
+    source_hashes = list(
+      runner_wrapper = paste(rep("c", 64L), collapse = ""),
+      checkpointed_functions = paste(rep("d", 64L), collapse = ""),
+      checkpoint_store = paste(rep("e", 64L), collapse = "")
+    ),
+    runtime = list(
+      runner_image = "ghcr.io/example/checkpointed@sha256:published",
+      base_image_digest = "sha256:checkpointed-window-susie"
+    ),
     counts = list(
       input_samples = 40L,
       retained_samples = 38L,
+      raw_dosage_samples = 40L,
+      overlap_samples = 40L,
+      phenotype_retained_samples = 38L,
       input_variants = length(fit$variant_id),
       retained_variants = length(fit$variant_id)
+    ),
+    qc = list(
+      removed_covariates = character(),
+      removed_variant_ids = character(),
+      design_id = paste(rep("f", 64L), collapse = ""),
+      sample_mask_id = paste(rep("1", 64L), collapse = ""),
+      cache_key = paste(rep("0", 64L), collapse = "")
     ),
     started_at = "2026-08-27T12:00:00Z",
     completed_at = "2026-08-27T12:01:00Z",
@@ -216,6 +235,64 @@ run_named_test("fit validator rejects nonfinite model arrays", {
   invalid_fit <- fake_fit
   invalid_fit$alpha[[1L]] <- NA_real_
   expect_error_message(validate_checkpointed_susie_fit(invalid_fit), "finite numeric values")
+})
+
+run_named_test("fit validator requires vector PIPs and positive model dimensions", {
+  matrix_pip <- fake_fit
+  matrix_pip$pip <- matrix(matrix_pip$pip, nrow = 1L)
+  expect_error_message(validate_checkpointed_susie_fit(matrix_pip), "numeric vector")
+
+  empty_model <- fake_fit
+  empty_model$variant_id <- character()
+  empty_model$pip <- numeric()
+  empty_model$alpha <- matrix(numeric(), nrow = 0L, ncol = 0L)
+  empty_model$mu <- matrix(numeric(), nrow = 0L, ncol = 0L)
+  empty_model$mu2 <- matrix(numeric(), nrow = 0L, ncol = 0L)
+  expect_error_message(validate_checkpointed_susie_fit(empty_model), "positive dimensions")
+})
+
+run_named_test("GCS object existence distinguishes not found from operational failure", {
+  not_found_gsutil <- tempfile("fake-gsutil-not-found-")
+  failed_gsutil <- tempfile("fake-gsutil-failed-")
+  on.exit(unlink(c(not_found_gsutil, failed_gsutil)), add = TRUE)
+  writeLines(
+    c("#!/bin/sh", "echo 'No URLs matched: gs://test-bucket/missing' >&2", "exit 1"),
+    not_found_gsutil
+  )
+  writeLines(
+    c("#!/bin/sh", "echo 'AccessDeniedException: quota or authentication failed' >&2", "exit 1"),
+    failed_gsutil
+  )
+  Sys.chmod(c(not_found_gsutil, failed_gsutil), mode = "0755")
+  missing_store <- new_checkpoint_store(
+    "gs://test-bucket/checkpoints",
+    gsutil = not_found_gsutil
+  )
+  expect_identical_value(
+    missing_store$object_exists("analysis/window/missing.json"),
+    FALSE,
+    "GCS not-found result"
+  )
+
+  failed_store <- new_checkpoint_store(
+    "gs://test-bucket/checkpoints",
+    gsutil = failed_gsutil
+  )
+  expected_uri <- paste0(
+    "gs://test-bucket/checkpoints/analysis/window/manifest.json"
+  )
+  condition <- tryCatch(
+    {
+      failed_store$object_exists("analysis/window/manifest.json")
+      NULL
+    },
+    error = identity
+  )
+  expect_true_value(inherits(condition, "checkpoint_store_error"), "GCS stat error class")
+  expect_true_value(
+    grepl(expected_uri, conditionMessage(condition), fixed = TRUE),
+    "GCS stat error URI"
+  )
 })
 
 run_named_test("phenotype commit uploads all payloads before its manifest", {
@@ -356,7 +433,10 @@ run_named_test("fit manifest requires the full scientific provenance schema", {
     "settings",
     "container_digest",
     "package_versions",
+    "source_hashes",
+    "runtime",
     "counts",
+    "qc",
     "started_at",
     "completed_at"
   )
@@ -704,6 +784,21 @@ run_named_test("corrupt boundary is returned for recomputation", {
     -1L,
     "repaired corrupt cursor"
   )
+  expect_identical_value(
+    length(resume$window_manifest$recovery_history),
+    1L,
+    "corruption recovery history length"
+  )
+  recovery <- resume$window_manifest$recovery_history[[1L]]
+  expect_identical_value(recovery$processing_index, 0L, "recovery index")
+  expect_identical_value(recovery$phenotype_id, ordered$phenotype_id[[1L]], "recovery phenotype")
+  expect_identical_value(recovery$phenotype_key, ordered$phenotype_key[[1L]], "recovery key")
+  expect_identical_value(
+    recovery$fit_manifest_path,
+    commit_inputs$paths$fit_manifest,
+    "recovery manifest path"
+  )
+  expect_true_value(nzchar(recovery$reason), "recovery reason")
 })
 
 run_named_test("fallback rejects a corrupt nonconverged RDS", {

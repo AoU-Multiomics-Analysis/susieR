@@ -64,7 +64,17 @@ make_controller_config <- function(label) {
     keep_samples = fixture_path("keep_samples.tsv"),
     checkpoint_root = tempfile(paste0("checkpointed-controller-", label, "-")),
     output_dir = tempfile(paste0("checkpointed-output-", label, "-")),
-    wrapper_path = controller_script
+    wrapper_path = controller_script,
+    source_paths = c(
+      runner_wrapper = controller_script,
+      checkpointed_functions = normalizePath(
+        "R/utils/CheckpointedWindowSusieFunctions.R",
+        mustWork = TRUE
+      ),
+      checkpoint_store = normalizePath("R/utils/CheckpointStore.R", mustWork = TRUE)
+    ),
+    runtime_image = "local-controller-test",
+    base_image_digest = Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST")
   )
 }
 
@@ -139,7 +149,9 @@ controller_ordered_manifest <- function(config) {
     ordered_manifest,
     checkpointed_susie_settings(),
     Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST"),
-    sha256_file(config$wrapper_path)
+    sha256_file(config$wrapper_path),
+    source_hashes = purrr::map_chr(config$source_paths, sha256_file),
+    runtime_image = config$runtime_image
   )
   ordered_manifest |>
     dplyr::mutate(analysis_id = analysis_id, .before = 1L)
@@ -275,7 +287,8 @@ commit_direct_fit <- function(config, store, processing_index, fit_result) {
     fit_result,
     local_artifacts,
     input_hashes,
-    checkpointed_susie_settings()
+    checkpointed_susie_settings(),
+    checkpointed_runtime_provenance(config)
   )
   fit_sha256 <- if (identical(fit_result$status, "SKIPPED")) {
     NULL
@@ -335,7 +348,9 @@ run_named_test("controller keeps exact subnormal p values in checkpoint identity
     expected_ordered,
     checkpointed_susie_settings(),
     Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST"),
-    sha256_file(config$wrapper_path)
+    sha256_file(config$wrapper_path),
+    source_hashes = purrr::map_chr(config$source_paths, sha256_file),
+    runtime_image = config$runtime_image
   )
 
   paths <- run_checkpointed_window(
@@ -472,6 +487,74 @@ run_named_test("resume recomputes a corrupt boundary RDS", {
     counts$by_phenotype,
     c(linked_expression = 2L, linked_splicing = 1L),
     "counts after corrupt-boundary resume"
+  )
+  completed <- read_controller_window_manifest(config, store)
+  expect_identical_value(length(completed$recovery_history), 1L, "recovery audit count")
+  expect_identical_value(
+    completed$recovery_history[[1L]]$processing_index,
+    0L,
+    "recovery audit index"
+  )
+  expect_true_value(
+    grepl("checksum", completed$recovery_history[[1L]]$reason, ignore.case = TRUE),
+    "recovery audit reason"
+  )
+})
+
+run_named_test("phenotype manifests contain cache QC and runtime provenance", {
+  config <- make_controller_config("manifest-readiness")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  store <- new_checkpoint_store(config$checkpoint_root)
+  invisible(utils::capture.output(
+    run_checkpointed_window(config, store = store)
+  ))
+  fit_manifest <- read_controller_fit_manifest(config, 0L, store)
+  window_manifest <- read_controller_window_manifest(config, store)
+
+  expect_identical_value(fit_manifest$counts$raw_dosage_samples, 40L, "raw samples")
+  expect_identical_value(fit_manifest$counts$overlap_samples, 36L, "overlap samples")
+  expect_identical_value(
+    fit_manifest$counts$phenotype_retained_samples,
+    36L,
+    "phenotype-retained samples"
+  )
+  expect_true_value(nzchar(fit_manifest$qc$design_id), "fit design identity")
+  expect_true_value(nzchar(fit_manifest$qc$cache_key), "fit cache key")
+  expect_identical_value(
+    names(fit_manifest$source_hashes),
+    names(config$source_paths),
+    "fit source hashes"
+  )
+  expect_identical_value(fit_manifest$runtime$runner_image, config$runtime_image, "fit image")
+  expect_identical_value(
+    names(window_manifest$source_hashes),
+    names(config$source_paths),
+    "window source hashes"
+  )
+  expect_identical_value(
+    window_manifest$runtime$base_image_digest,
+    config$base_image_digest,
+    "window base image"
+  )
+})
+
+run_named_test("controller logs pre-fit cache identity and sample count", {
+  config <- make_controller_config("pre-fit-log")
+  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
+  messages <- capture.output(
+    invisible(run_checkpointed_window(
+      config,
+      fit_function = new_counting_fit_function(new_fit_counts())
+    )),
+    type = "message"
+  )
+  expect_true_value(
+    any(grepl(
+      "Fit index 0 phenotype linked_expression modality expression samples 36 design",
+      messages,
+      fixed = TRUE
+    )),
+    "pre-fit log fields"
   )
 })
 
@@ -906,7 +989,8 @@ run_named_test("CLI accepts all flags and rejects invalid covariate arrays", {
     c(
       "window_id", "window_dosage", "window_phenotypes", "phenotype_data",
       "covariate_files", "covariate_modalities", "keep_samples",
-      "checkpoint_root", "output_dir", "wrapper_path"
+      "checkpoint_root", "output_dir", "wrapper_path", "source_paths",
+      "runtime_image", "base_image_digest"
     ),
     "CLI config fields"
   )

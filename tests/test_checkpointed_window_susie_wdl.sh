@@ -45,6 +45,11 @@ fi
 rg -q '^workflow CheckpointedWindowSusieWorkflow' "$wdl"
 rg -q '^task RunCheckpointedWindowSusie' "$wdl"
 rg -q 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' "$wdl"
+rg -q '^[[:space:]]+String runner_image$' "$wdl"
+if rg -q 'String runner_image[[:space:]]*=' "$wdl"; then
+  printf 'runner_image must not have a mutable default.\n' >&2
+  exit 1
+fi
 
 workflow_outputs="$(
   awk '
@@ -104,6 +109,9 @@ rg -Fq 'File checkpoint_root_values = write_lines([checkpoint_root])' "$wdl"
 rg -Fq 'File covariate_files_values = write_lines(covariate_files)' "$wdl"
 rg -Fq 'File covariate_modalities_values = write_lines(covariate_modalities)' "$wdl"
 rg -Fq 'File keep_samples_values = write_lines(select_all([keep_samples]))' "$wdl"
+rg -Fq 'File runner_image_values = write_lines([runner_image])' "$wdl"
+rg -Fq 'CHECKPOINTED_SUSIE_RUNTIME_IMAGE="$runner_image"' "$wdl"
+rg -Fq 'runner image must end with @sha256 and 64 lowercase hex characters' "$wdl"
 
 command_body="$(awk '/^[[:space:]]*command <<</, /^[[:space:]]*>>>/' "$wdl")"
 if printf '%s\n' "$command_body" | rg -q '~\{(window_id|checkpoint_root|covariate_modalities)\}'; then
@@ -149,6 +157,7 @@ for key in \
 done
 
 rg -Fq '"CheckpointedWindowSusieWorkflow.preemptible_attempts": 3' "$inputs"
+rg -Fq '@sha256:REPLACE_WITH_PUBLISHED_DIGEST' "$inputs"
 
 documentation_text="$(cat "${documentation[@]}")"
 for term in \

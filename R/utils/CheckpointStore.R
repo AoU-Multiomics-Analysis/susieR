@@ -28,16 +28,23 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
   is_gcs <- startsWith(root, "gs://")
   clean_root <- sub("/+$", "", root)
   object_uri <- function(relative_path) paste0(clean_root, "/", relative_path)
-  run_gsutil <- function(arguments, operation, uri) {
-    status <- tryCatch(
-      system2(gsutil, arguments),
+  capture_gsutil <- function(arguments, operation, uri) {
+    output <- tryCatch(
+      suppressWarnings(system2(gsutil, arguments, stdout = TRUE, stderr = TRUE)),
       error = function(condition) {
         stop_checkpoint_store_error(
           paste0("GCS ", operation, " failed for: ", uri)
         )
       }
     )
-    if (!identical(status, 0L)) {
+    list(
+      status = as.integer(attr(output, "status") %||% 0L),
+      output = paste(output, collapse = "\n")
+    )
+  }
+  run_gsutil <- function(arguments, operation, uri) {
+    result <- capture_gsutil(arguments, operation, uri)
+    if (!identical(result$status, 0L)) {
       stop_checkpoint_store_error(paste0("GCS ", operation, " failed for: ", uri))
     }
     invisible(TRUE)
@@ -48,7 +55,25 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
     is_gcs = is_gcs,
     object_exists = function(relative_path) {
       if (is_gcs) {
-        return(identical(system2(gsutil, c("-q", "stat", object_uri(relative_path))), 0L))
+        uri <- object_uri(relative_path)
+        result <- capture_gsutil(c("-q", "stat", uri), "stat", uri)
+        if (identical(result$status, 0L)) {
+          return(TRUE)
+        }
+        not_found_pattern <- paste(
+          c(
+            "No URLs matched",
+            "matched no objects",
+            "No such object",
+            "NotFoundException",
+            "(^|[^0-9])404([^0-9]|$)"
+          ),
+          collapse = "|"
+        )
+        if (grepl(not_found_pattern, result$output, ignore.case = TRUE)) {
+          return(FALSE)
+        }
+        stop_checkpoint_store_error(paste0("GCS stat failed for: ", uri))
       }
       file.exists(file.path(clean_root, relative_path))
     },
@@ -202,6 +227,9 @@ validate_checkpoint_counts <- function(counts) {
   required_counts <- c(
     "input_samples",
     "retained_samples",
+    "raw_dosage_samples",
+    "overlap_samples",
+    "phenotype_retained_samples",
     "input_variants",
     "retained_variants"
   )
@@ -224,9 +252,51 @@ validate_checkpoint_counts <- function(counts) {
     stop("Checkpoint counts cannot be negative.", call. = FALSE)
   }
   if (validated_counts$retained_samples > validated_counts$input_samples ||
+      validated_counts$overlap_samples > validated_counts$raw_dosage_samples ||
+      validated_counts$phenotype_retained_samples > validated_counts$overlap_samples ||
       validated_counts$retained_variants > validated_counts$input_variants) {
     stop("Checkpoint retained counts cannot exceed input counts.", call. = FALSE)
   }
+  invisible(TRUE)
+}
+
+validate_checkpoint_qc <- function(qc) {
+  required <- c(
+    "removed_covariates",
+    "removed_variant_ids",
+    "design_id",
+    "sample_mask_id",
+    "cache_key"
+  )
+  if (!is.list(qc) || any(!required %in% names(qc))) {
+    stop("Checkpoint QC is missing required fields.", call. = FALSE)
+  }
+  purrr::walk(c("removed_covariates", "removed_variant_ids"), function(field) {
+    values <- unlist(qc[[field]], use.names = FALSE)
+    if (!is.character(values) || anyNA(values) || any(!nzchar(values))) {
+      if (length(values) > 0L) {
+        stop("Checkpoint QC identifier lists must contain nonempty strings.", call. = FALSE)
+      }
+    }
+  })
+  purrr::walk(c("design_id", "sample_mask_id", "cache_key"), function(field) {
+    value <- checkpoint_scalar_character(qc[[field]], paste0("Checkpoint QC ", field))
+    if (!grepl("^[0-9a-f]{64}$", value)) {
+      stop("Checkpoint QC hash is invalid: ", field, call. = FALSE)
+    }
+  })
+  invisible(TRUE)
+}
+
+validate_checkpoint_runtime <- function(runtime) {
+  if (!is.list(runtime)) {
+    stop("Checkpoint runtime identity must be an object.", call. = FALSE)
+  }
+  checkpoint_scalar_character(runtime$runner_image, "Checkpoint runner image")
+  checkpoint_scalar_character(
+    runtime$base_image_digest,
+    "Checkpoint base image digest"
+  )
   invisible(TRUE)
 }
 
@@ -270,7 +340,10 @@ validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
     "settings",
     "container_digest",
     "package_versions",
+    "source_hashes",
+    "runtime",
     "counts",
+    "qc",
     "started_at",
     "completed_at",
     "payloads"
@@ -331,7 +404,14 @@ validate_fit_manifest_structure <- function(fit_manifest, record = NULL) {
     fit_manifest$package_versions,
     "Checkpoint package versions"
   )
+  validate_checkpoint_named_strings(
+    fit_manifest$source_hashes,
+    "Checkpoint runtime source hashes",
+    "^[0-9a-f]{64}$"
+  )
+  validate_checkpoint_runtime(fit_manifest$runtime)
   validate_checkpoint_counts(fit_manifest$counts)
+  validate_checkpoint_qc(fit_manifest$qc)
   checkpoint_scalar_character(fit_manifest$started_at, "Checkpoint start timestamp")
   checkpoint_scalar_character(fit_manifest$completed_at, "Checkpoint completion timestamp")
   status <- checkpoint_scalar_character(fit_manifest$status, "Checkpoint status")
@@ -570,7 +650,12 @@ new_window_run_manifest <- function(
     window_id,
     ordered_manifest,
     input_hashes,
-    settings
+    settings,
+    source_hashes = list(unspecified = "unspecified"),
+    runtime = list(
+      runner_image = "unspecified-runtime",
+      base_image_digest = "unspecified-base"
+    )
 ) {
   list(
     schema_version = checkpoint_schema_version,
@@ -579,11 +664,15 @@ new_window_run_manifest <- function(
     phenotypes = window_manifest_phenotypes(ordered_manifest),
     input_hashes = as.list(input_hashes),
     settings = settings,
+    source_hashes = as.list(source_hashes),
+    runtime = runtime,
     last_committed_index = -1L,
     committed = list(),
     status = "RUNNING",
     failure = NULL,
     failure_history = list(),
+    recovery_history = list(),
+    attempt = 0L,
     final_outputs = NULL
   )
 }
@@ -769,7 +858,9 @@ read_valid_boundary_manifest <- function(
     store,
     record,
     expected_input_hashes = NULL,
-    expected_settings = NULL
+    expected_settings = NULL,
+    expected_source_hashes = NULL,
+    expected_runtime = NULL
 ) {
   fixed_manifest_path <- checkpoint_fixed_manifest_path(record)
   local_manifest <- tempfile("resume-fit-manifest-", fileext = ".json")
@@ -785,6 +876,15 @@ read_valid_boundary_manifest <- function(
   }
   if (!checkpoint_named_object_matches(fit_manifest$settings, expected_settings)) {
     stop("Checkpoint settings do not match the current analysis.", call. = FALSE)
+  }
+  if (!checkpoint_named_object_matches(
+    fit_manifest$source_hashes,
+    expected_source_hashes
+  )) {
+    stop("Checkpoint source hashes do not match the current analysis.", call. = FALSE)
+  }
+  if (!checkpoint_named_object_matches(fit_manifest$runtime, expected_runtime)) {
+    stop("Checkpoint runtime identity does not match the current analysis.", call. = FALSE)
   }
   fit_manifest$fit_manifest_path <- fixed_manifest_path
 
@@ -826,7 +926,9 @@ try_read_valid_boundary_manifest <- function(
     store,
     record,
     expected_input_hashes = NULL,
-    expected_settings = NULL
+    expected_settings = NULL,
+    expected_source_hashes = NULL,
+    expected_runtime = NULL
 ) {
   tryCatch(
     list(
@@ -835,7 +937,9 @@ try_read_valid_boundary_manifest <- function(
         store,
         record,
         expected_input_hashes,
-        expected_settings
+        expected_settings,
+        expected_source_hashes,
+        expected_runtime
       ),
       error = NULL
     ),
@@ -964,7 +1068,9 @@ is_usable_window_manifest <- function(
     ordered_manifest,
     context,
     expected_input_hashes = NULL,
-    expected_settings = NULL
+    expected_settings = NULL,
+    expected_source_hashes = NULL,
+    expected_runtime = NULL
 ) {
   if (!is.list(window_manifest)) {
     return(FALSE)
@@ -1005,6 +1111,11 @@ is_usable_window_manifest <- function(
       expected_input_hashes
     ) &&
     checkpoint_named_object_matches(window_manifest$settings, expected_settings) &&
+    checkpoint_named_object_matches(
+      window_manifest$source_hashes,
+      expected_source_hashes
+    ) &&
+    checkpoint_named_object_matches(window_manifest$runtime, expected_runtime) &&
     !is.null(last_index) &&
     last_index >= -1L && last_index < nrow(ordered_manifest) &&
     window_manifest_phenotypes_are_valid(
@@ -1077,12 +1188,43 @@ cursor_record_matches_boundary <- function(cursor_record, boundary_manifest, exp
     identical(cursor_record$fit_manifest_path, expected_path)
 }
 
+checkpoint_recovery_entry <- function(
+    record,
+    fit_manifest_path,
+    reason,
+    attempt = NULL
+) {
+  concise_reason <- gsub("[[:space:]]+", " ", trimws(as.character(reason)))
+  if (nchar(concise_reason) > 500L) {
+    concise_reason <- substr(concise_reason, 1L, 500L)
+  }
+  list(
+    processing_index = as.integer(record$processing_index[[1L]]),
+    phenotype_id = as.character(record$phenotype_id[[1L]]),
+    phenotype_key = as.character(record$phenotype_key[[1L]]),
+    fit_manifest_path = fit_manifest_path,
+    reason = concise_reason,
+    recorded_at = checkpointed_timestamp(),
+    attempt = attempt
+  )
+}
+
+append_window_recovery <- function(window_manifest, entry) {
+  window_manifest$recovery_history <- c(
+    window_manifest$recovery_history %||% list(),
+    list(entry)
+  )
+  window_manifest
+}
+
 resolve_resume_boundary <- function(
     store,
     ordered_manifest,
     window_manifest = NULL,
     expected_input_hashes = NULL,
-    expected_settings = NULL
+    expected_settings = NULL,
+    expected_source_hashes = NULL,
+    expected_runtime = NULL
 ) {
   context <- checkpoint_order_context(ordered_manifest)
   phenotype_count <- nrow(ordered_manifest)
@@ -1092,7 +1234,9 @@ resolve_resume_boundary <- function(
     ordered_manifest,
     context,
     expected_input_hashes,
-    expected_settings
+    expected_settings,
+    expected_source_hashes,
+    expected_runtime
   )) {
     last_index <- checkpoint_scalar_index(
       window_manifest$last_committed_index,
@@ -1107,17 +1251,30 @@ resolve_resume_boundary <- function(
           store,
           prefix_record,
           expected_input_hashes,
-          expected_settings
+          expected_settings,
+          expected_source_hashes,
+          expected_runtime
         )
       } else {
         list(valid = FALSE, manifest = NULL, error = "Checkpoint manifest is absent.")
       }
       if (!prefix_boundary$valid) {
+        attempt <- checkpoint_optional_index(window_manifest$attempt)
+        recovery <- checkpoint_recovery_entry(
+          prefix_record,
+          prefix_path,
+          prefix_boundary$error,
+          if (is.null(attempt)) NULL else attempt + 1L
+        )
         return(list(
           last_committed_index = inventory_prefix - 1L,
           next_index = inventory_prefix,
           recovered = TRUE,
-          window_manifest = NULL
+          window_manifest = NULL,
+          recovery_history = c(
+            window_manifest$recovery_history %||% list(),
+            list(recovery)
+          )
         ))
       }
     }
@@ -1129,7 +1286,9 @@ resolve_resume_boundary <- function(
           store,
           record,
           expected_input_hashes,
-          expected_settings
+          expected_settings,
+          expected_source_hashes,
+          expected_runtime
         )
       } else {
         list(valid = FALSE, manifest = NULL, error = "Checkpoint manifest is absent.")
@@ -1138,6 +1297,21 @@ resolve_resume_boundary <- function(
       if (!boundary$valid ||
           !cursor_record_matches_boundary(cursor_record, boundary$manifest, expected_path)) {
         repaired_manifest <- trim_window_manifest_boundary(window_manifest, last_index)
+        reason <- if (!boundary$valid) {
+          boundary$error
+        } else {
+          "Window cursor record does not match the boundary checkpoint."
+        }
+        attempt <- checkpoint_optional_index(window_manifest$attempt)
+        repaired_manifest <- append_window_recovery(
+          repaired_manifest,
+          checkpoint_recovery_entry(
+            record,
+            expected_path,
+            reason,
+            if (is.null(attempt)) NULL else attempt + 1L
+          )
+        )
         return(list(
           last_committed_index = last_index - 1L,
           next_index = last_index,
@@ -1156,7 +1330,9 @@ resolve_resume_boundary <- function(
           store,
           next_record,
           expected_input_hashes,
-          expected_settings
+          expected_settings,
+          expected_source_hashes,
+          expected_runtime
         )
         if (next_boundary$valid) {
           advanced_manifest <- advance_window_run_manifest(
@@ -1207,14 +1383,22 @@ resolve_resume_boundary <- function(
     store,
     boundary_record,
     expected_input_hashes,
-    expected_settings
+    expected_settings,
+    expected_source_hashes,
+    expected_runtime
   )
   if (!boundary$valid) {
+    recovery <- checkpoint_recovery_entry(
+      boundary_record,
+      checkpoint_fixed_manifest_path(boundary_record),
+      boundary$error
+    )
     return(list(
       last_committed_index = lower_present - 1L,
       next_index = lower_present,
       recovered = TRUE,
-      window_manifest = NULL
+      window_manifest = NULL,
+      recovery_history = list(recovery)
     ))
   }
 

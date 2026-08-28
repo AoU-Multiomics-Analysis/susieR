@@ -167,7 +167,20 @@ parse_checkpointed_window_cli <- function(args = commandArgs(trailingOnly = TRUE
       "--checkpoint-root"
     ),
     output_dir = checkpointed_required_option(options$output_dir, "--output-dir"),
-    wrapper_path = checkpointed_window_source_file
+    wrapper_path = checkpointed_window_source_file,
+    source_paths = c(
+      runner_wrapper = checkpointed_window_source_file,
+      checkpointed_functions = file.path(
+        FunctionPath,
+        "CheckpointedWindowSusieFunctions.R"
+      ),
+      checkpoint_store = file.path(FunctionPath, "CheckpointStore.R")
+    ),
+    runtime_image = Sys.getenv(
+      "CHECKPOINTED_SUSIE_RUNTIME_IMAGE",
+      unset = "local-unpackaged-runtime"
+    ),
+    base_image_digest = Sys.getenv("CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST")
   )
 }
 

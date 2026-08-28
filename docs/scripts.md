@@ -64,6 +64,12 @@ The runner uploads GCS payloads before `fit_manifest.json`. It uploads
 latest fit. It does not list the full checkpoint directory. `SKIPPED` and
 `NONCONVERGED` are terminal states. They do not block later phenotypes.
 
+The runner loads raw window dosage once. It prepares one residualized genotype
+for each exact retained-sample mask and covariate design. It reuses that cache
+for matching phenotypes. Each fit manifest records raw, overlap, and retained
+sample counts; input and retained variant counts; removed covariates; design
+identity; cache identity; runtime source hashes; and image identities.
+
 ## `R/scripts/ComputeR2Susie.R`
 
 Runs cross-validation to evaluate fine-mapping predictive performance. For a given gene or phenotype, it runs susieR on each CV fold, generates predicted vs. observed expression values, and outputs a TSV of predictions.

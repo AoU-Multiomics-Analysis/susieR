@@ -74,7 +74,7 @@ run_named_test("settings and phenotype keys are deterministic", {
   expect_identical_value(settings$min_abs_corr, 0.5, "minimum correlation setting")
   expect_identical_value(
     checkpoint_phenotype_key("chr1_0_2000000", "expression", "trait_a"),
-    checkpoint_phenotype_key("chr1_0_2000000", "expression", "trait_a"),
+    "bf3478b7965f3143af373e20df5e92f336254263cf398801ed34b9cf48633982",
     "phenotype key"
   )
 })
@@ -82,8 +82,12 @@ run_named_test("settings and phenotype keys are deterministic", {
 run_named_test("file hash is deterministic", {
   test_file <- tempfile(fileext = ".txt")
   on.exit(unlink(test_file), add = TRUE)
-  writeLines("canonical content", test_file)
-  expect_identical_value(sha256_file(test_file), sha256_file(test_file), "file hash")
+  writeBin(charToRaw("canonical content"), test_file)
+  expect_identical_value(
+    sha256_file(test_file),
+    "1ef9517fb8d602685149aea524f214becb9107adc1f79a17e4605f000e823b2c",
+    "file hash"
+  )
 })
 
 run_named_test("analysis ID is canonical and sensitive to identity inputs", {

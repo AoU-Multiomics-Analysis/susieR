@@ -1041,18 +1041,25 @@ assemble_checkpointed_window_outputs <- function(
 
   fit_index <- purrr::map_dfr(committed_records, function(fit_manifest) {
     tibble::tibble(
+      window_id = fit_manifest$window_id,
       processing_index = as.integer(fit_manifest$processing_index),
       phenotype_id = fit_manifest$phenotype_id,
       phenotype_key = fit_manifest$phenotype_key,
       modality = fit_manifest$modality,
       p_value = as.numeric(fit_manifest$p_value),
       status = fit_manifest$status,
+      converged = fit_manifest$converged %||% NA,
       exclusion_reason = fit_manifest$exclusion_reason %||% NA_character_,
       fit_manifest_uri = fit_manifest$fit_manifest_uri,
       susie_fit_uri = if (identical(fit_manifest$status, "SKIPPED")) {
         NA_character_
       } else {
         fit_manifest$payloads$susie_fit$uri
+      },
+      susie_fit_sha256 = if (identical(fit_manifest$status, "SKIPPED")) {
+        NA_character_
+      } else {
+        fit_manifest$payloads$susie_fit$sha256
       }
     )
   })

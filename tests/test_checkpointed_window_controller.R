@@ -455,12 +455,20 @@ run_named_test("lagging adoption uploads RUNNING before the following fit", {
   expect_identical_value(completed$last_committed_index, 2L, "adopted final boundary")
 })
 
-run_named_test("a skipped phenotype advances and has no RDS URI in the fit index", {
-  config <- make_controller_config("skipped")
-  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
-  counts <- new_fit_counts()
-  skipped <- prepared_results
-  skipped[["linked_expression"]] <- list(
+run_named_test("the fit index has exact values for every terminal state", {
+  config <- make_three_phenotype_config("fit-index-schema")
+  on.exit(
+    unlink(
+      c(config$checkpoint_root, config$output_dir, config$test_input_dir),
+      recursive = TRUE
+    ),
+    add = TRUE
+  )
+  case <- prepare_three_phenotype_case(config)
+  terminal_results <- case$results
+  terminal_results[["linked_expression"]]$status <- "CONVERGED"
+  terminal_results[["linked_expression"]]$fit$converged <- TRUE
+  terminal_results[["linked_splicing"]] <- list(
     status = "SKIPPED",
     fit = NULL,
     reason = "NO_USABLE_VARIANTS",
@@ -469,63 +477,75 @@ run_named_test("a skipped phenotype advances and has no RDS URI in the fit index
       retained_samples = 36L,
       input_variants = 6L,
       retained_variants = 0L,
-      removed_variant_ids = prepared_inputs$variant_info$variant_id
+      removed_variant_ids = case$inputs$variant_info$variant_id
     )
   )
+  terminal_results[["linked_expression_replica"]]$status <- "NONCONVERGED"
+  terminal_results[["linked_expression_replica"]]$fit$converged <- FALSE
+  store <- new_checkpoint_store(config$checkpoint_root)
 
   paths <- run_checkpointed_window(
     config,
-    fit_function = new_counting_fit_function(counts, skipped)
+    store = store,
+    fit_function = new_counting_fit_function(
+      new_fit_counts(names(case$inputs$phenotypes)),
+      results = terminal_results,
+      phenotype_values = case$inputs$phenotypes
+    )
   )
-  completed <- read_controller_window_manifest(config)
-  expect_identical_value(completed$last_committed_index, 1L, "skipped final boundary")
-  fit_index <- readr::read_tsv(paths$fit_index, show_col_types = FALSE)
-  expect_identical_value(
-    as.integer(fit_index$processing_index),
-    0:1,
-    "fit-index order"
+  fit_manifests <- purrr::map(
+    0:2,
+    ~ read_controller_fit_manifest(config, .x, store)
   )
-  expect_identical_value(
-    fit_index$status,
-    c("SKIPPED", prepared_results[["linked_splicing"]]$status),
-    "fit-index statuses"
+  fitted_paths <- purrr::map_chr(
+    fit_manifests[c(1L, 3L)],
+    ~ .x$payloads$susie_fit$path
   )
-  expect_true_value(is.na(fit_index$susie_fit_uri[[1L]]), "skipped RDS URI")
-  expect_true_value(
-    is.character(fit_index$susie_fit_uri[[2L]]) &&
-      nzchar(fit_index$susie_fit_uri[[2L]]),
-    "fitted RDS URI"
+  fitted_sha256 <- purrr::map_chr(
+    file.path(config$checkpoint_root, fitted_paths),
+    sha256_file
   )
-})
+  fit_index <- readr::read_tsv(paths$fit_index, show_col_types = FALSE) |>
+    dplyr::mutate(processing_index = as.integer(.data$processing_index))
+  expected_fit_index <- tibble::tibble(
+    window_id = rep(config$window_id, 3L),
+    processing_index = 0:2,
+    phenotype_id = case$ordered$phenotype_id,
+    phenotype_key = case$ordered$phenotype_key,
+    modality = case$ordered$modality,
+    p_value = case$ordered$p_value,
+    status = c("CONVERGED", "SKIPPED", "NONCONVERGED"),
+    converged = c(TRUE, NA, FALSE),
+    exclusion_reason = c(NA_character_, "NO_USABLE_VARIANTS", NA_character_),
+    fit_manifest_uri = purrr::map_chr(
+      fit_manifests,
+      ~ store$object_uri(.x$fit_manifest_path)
+    ),
+    susie_fit_uri = c(
+      store$object_uri(fitted_paths[[1L]]),
+      NA_character_,
+      store$object_uri(fitted_paths[[2L]])
+    ),
+    susie_fit_sha256 = c(
+      fitted_sha256[[1L]],
+      NA_character_,
+      fitted_sha256[[2L]]
+    )
+  )
 
-run_named_test("a nonconverged phenotype keeps its validated RDS", {
-  config <- make_controller_config("nonconverged")
-  on.exit(unlink(c(config$checkpoint_root, config$output_dir), recursive = TRUE), add = TRUE)
-  counts <- new_fit_counts()
-  nonconverged <- prepared_results
-  nonconverged_fit <- nonconverged[["linked_expression"]]$fit
-  nonconverged_fit$converged <- FALSE
-  nonconverged[["linked_expression"]] <- list(
-    status = "NONCONVERGED",
-    fit = nonconverged_fit,
-    reason = NULL,
-    qc = nonconverged[["linked_expression"]]$qc
+  expect_identical_value(
+    names(fit_index),
+    names(expected_fit_index),
+    "fit-index columns"
   )
-
-  run_checkpointed_window(
-    config,
-    fit_function = new_counting_fit_function(counts, nonconverged)
+  expect_identical_value(fit_index, expected_fit_index, "complete fit-index schema")
+  completed <- read_controller_window_manifest(config, store)
+  expect_identical_value(completed$last_committed_index, 2L, "terminal-state boundary")
+  expect_identical_value(
+    readRDS(file.path(config$checkpoint_root, fitted_paths[[2L]]))$converged,
+    FALSE,
+    "saved nonconverged RDS"
   )
-  fit_manifest <- read_controller_fit_manifest(config, 0L)
-  expect_identical_value(fit_manifest$status, "NONCONVERGED", "fit status")
-  expect_identical_value(fit_manifest$converged, FALSE, "fit convergence")
-  local_rds <- tempfile(fileext = ".rds")
-  on.exit(unlink(local_rds), add = TRUE)
-  new_checkpoint_store(config$checkpoint_root)$download(
-    fit_manifest$payloads$susie_fit$path,
-    local_rds
-  )
-  expect_identical_value(readRDS(local_rds)$converged, FALSE, "saved RDS convergence")
 })
 
 run_named_test("an unexpected fit failure writes a failed cursor and rethrows", {

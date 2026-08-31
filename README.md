@@ -42,6 +42,7 @@ This repository provides WDL workflows and R scripts for running [susieR](https:
 | [`workflows/susieRonly.wdl`](workflows/susieRonly.wdl) | `SusieROnlyWorkflow` | Run fine-mapping when inputs are already prepared. |
 | [`workflows/ExtractMultiPhenotypeInputs.wdl`](workflows/ExtractMultiPhenotypeInputs.wdl) | `ExtractMultiPhenotypeInputsWorkflow` | Extract multi-phenotype BED and TensorQTL inputs without subsetting dosages. |
 | [`workflows/prepInputsSusieR.wdl`](workflows/prepInputsSusieR.wdl) | `PrepSusieRWorkflow` | Prepare phenotype-specific input files only. |
+| [`workflows/CheckpointedWindowSusie.wdl`](workflows/CheckpointedWindowSusie.wdl) | `CheckpointedWindowSusieWorkflow` | Fine-map one prepared window with durable GCS checkpoints. |
 | [`workflows/ComputeR2Susie.wdl`](workflows/ComputeR2Susie.wdl) | `ComputeR2SusieWorkflow` | Run cross-validation R2 evaluation. |
 | [`workflows/AggregateSusieTask.wdl`](workflows/AggregateSusieTask.wdl) | `AggregateSusieTaskWorkflow` | Merge sharded Susie Parquet outputs. |
 | [`workflows/AnnotateSusie.wdl`](workflows/AnnotateSusie.wdl) | `AnnotateSusieWorkflow` | Annotate a merged Susie TSV. |

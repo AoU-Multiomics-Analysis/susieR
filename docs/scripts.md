@@ -33,6 +33,43 @@ Key command-line arguments:
 | `--AncestryMetadata` | Optional ancestry assignment file for per-population MAF filtering. |
 | `--VariantList` | Optional single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |
 
+## `R/scripts/run_checkpointed_window_susie.R`
+
+This runner processes one prepared window. It trusts `window_phenotypes.tsv`.
+The prepare workflow owns phenotype filtering. The manifest must include
+`p_value`. The runner uses every usable supplied variant. It does not calculate
+a phenotype-centered interval.
+
+The current prepare workflows do not yet create this production manifest. Add
+`p_value` before you use this runner in production.
+
+Use `--window-id`, `--window-dosage`, `--window-phenotypes`, and
+`--phenotype-data` for the prepared input bundle. Use `--covariate-files` and
+`--covariate-modalities` for matching comma-separated arrays. Use
+`--checkpoint-root` for a checkpoint prefix. In production, give a writable
+`gs://` prefix. Use `--output-dir` for local final WDL outputs.
+
+The runner writes a complete fitted `susie` object to an RDS file for each fit.
+`window_fit_index.tsv` locates every fitted RDS. It also records the terminal
+state for every ordered phenotype.
+
+The checkpoint root contains one directory for the analysis ID and one
+directory for the window ID. It contains `window_manifest.json`,
+`window_fit_index.tsv`, final result tables, and one `phenotypes/<key>/`
+directory for each phenotype. Each phenotype directory contains
+`fit_manifest.json`, its RDS, and its result tables.
+
+The runner uploads GCS payloads before `fit_manifest.json`. It uploads
+`window_manifest.json` last. Normal resume reads only the window cursor and the
+latest fit. It does not list the full checkpoint directory. `SKIPPED` and
+`NONCONVERGED` are terminal states. They do not block later phenotypes.
+
+The runner loads raw window dosage once. It prepares one residualized genotype
+for each exact retained-sample mask and covariate design. It reuses that cache
+for matching phenotypes. Each fit manifest records raw, overlap, and retained
+sample counts; input and retained variant counts; removed covariates; design
+identity; cache identity; runtime source hashes; and image identities.
+
 ## `R/scripts/ComputeR2Susie.R`
 
 Runs cross-validation to evaluate fine-mapping predictive performance. For a given gene or phenotype, it runs susieR on each CV fold, generates predicted vs. observed expression values, and outputs a TSV of predictions.

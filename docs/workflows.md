@@ -8,6 +8,7 @@ The WDL descriptors live in `workflows/`. Each descriptor has a unique workflow 
 | `workflows/susieRonly.wdl` | `SusieROnlyWorkflow` | Run fine-mapping when inputs are already prepared. |
 | `workflows/ExtractMultiPhenotypeInputs.wdl` | `ExtractMultiPhenotypeInputsWorkflow` | Extract multi-phenotype BED and TensorQTL inputs without subsetting dosages. |
 | `workflows/prepInputsSusieR.wdl` | `PrepSusieRWorkflow` | Prepare phenotype-specific input files only. |
+| `workflows/CheckpointedWindowSusie.wdl` | `CheckpointedWindowSusieWorkflow` | Fine-map one prepared window with GCS checkpoints. |
 | `workflows/ComputeR2Susie.wdl` | `ComputeR2SusieWorkflow` | Run cross-validation R2 evaluation. |
 | `workflows/AggregateSusieTask.wdl` | `AggregateSusieTaskWorkflow` | Merge sharded Susie Parquet outputs. |
 | `workflows/AnnotateSusie.wdl` | `AnnotateSusieWorkflow` | Annotate a merged Susie TSV. |
@@ -70,6 +71,103 @@ Optional inputs in addition to the shared fine-mapping inputs:
 | `AdditionalGenotypesBed` | File? | Additional genotype BED file. |
 
 Outputs are `SusieParquet`, `SusielbfParquet`, `FullSusieParquet`, and `VariantPositionSummary`.
+
+### `workflows/CheckpointedWindowSusie.wdl` - Checkpointed Prepared Window
+
+This workflow runs one task for one prepared variant window. Terra launches one workflow per prepared window. Do not use a WDL scatter for this workflow.
+
+The prepare workflow owns phenotype filtering. The analysis task trusts
+`window_phenotypes.tsv` as the prepared manifest. The manifest requires
+`window_id`, `phenotype_id`, `modality`, `phenotype_file`, and `p_value`. The
+task orders phenotypes by `p_value`, modality, and phenotype ID.
+
+The current prepare workflows do not yet create this production manifest. This
+is a deployment gap. Before production use, add a preparation adapter that
+writes the final linked and filtered phenotype set. The adapter must write the
+five required columns. It must use one `phenotype_file` value that matches the
+`phenotype_data` file base name.
+
+The first version tests every usable variant in the supplied window. It does
+not calculate a phenotype-centered interval. Set `checkpoint_root` to a
+writable `gs://` prefix. One active writer may use an analysis ID and window ID
+pair.
+
+Set `runner_image` to an immutable published `@sha256` digest. The WDL has no
+runner-image default. It rejects a mutable tag before it starts R. The runtime
+hashes the installed runner wrapper and both checkpoint helper files. The
+analysis ID changes when one of these source files changes. Window and
+phenotype manifests record these hashes, the runner-image identity, and the
+pinned base-image identity.
+
+The controller first aligns dosage, phenotype headers, and the optional sample
+allowlist. For each phenotype, it then aligns shared covariates and covariates
+for that phenotype's modality. It applies the finite-value phenotype mask
+after this alignment. A gap in one modality-specific covariate file does not
+remove a sample from other modalities. The controller uses an exact cache for
+each retained-sample mask and covariate design. The cache identity covers
+ordered overlap and retained sample IDs, retained variants, retained
+covariate columns, and design values. The controller imputes, filters,
+transposes, and residualizes genotype once for each cache. It then transforms
+and residualizes only the phenotype before each SuSiE fit.
+
+The controller releases a cache after its last ordered phenotype. It releases
+the raw genotype after it prepares the last distinct cache. Phenotype order
+does not change to reduce memory. Interleaved cache groups can therefore be in
+memory at the same time. As a first estimate, allow at least eight bytes for
+each sample-by-retained-variant value in each active cache, plus R and SuSiE
+overhead. Increase `memory_gb` when a window has many distinct retained-sample
+masks or covariate designs.
+
+A prior IKZF1 prepared-window run completed in 1307.44 seconds and used 8.01
+GB. This result is evidence from one input. It is not a resource guarantee.
+
+Each committed phenotype has an RDS with the full fitted `susie` object. GCS
+payloads upload before the phenotype manifest. The task uploads
+`window_manifest.json` last. Normal resume reads only the window cursor and
+the latest fit RDS. Light hydration validates every phenotype manifest and
+checks that each saved fit exists, but it does not download every prior RDS.
+If the cursor is missing, the task probes fixed manifest paths. It does not
+list the full GCS prefix.
+
+If boundary validation fails, the task does not delete the corrupt object. It
+records the index, phenotype ID, phenotype key, fixed manifest path, concise
+reason, timestamp, and attempt in `recovery_history`. It then recomputes that
+phenotype. Later attempts preserve this history.
+
+Final assembly validates the checksum, byte count, and table schema of all
+three phenotype Parquet payloads. If a deterministic interior payload error is
+found, the controller copies the exact invalid object to a deterministic
+`recovery_evidence` path before it changes the cursor or recomputes a fit. The
+recovery record contains the source path, evidence path, and evidence URI. If
+the source object is missing, the record marks it as missing and does not
+create evidence. The controller then recomputes that phenotype and its suffix
+in the same invocation. It does not delete the source or evidence object. GCS
+authentication, DNS, quota, copy, and service errors stop the task; they do
+not cause recomputation.
+
+The WDL returns `window_manifest.json`, `window_fit_index.tsv`, and three
+Parquet tables. `window_fit_index.tsv` identifies each fitted RDS.
+`SKIPPED` and `NONCONVERGED` are terminal phenotype states. They do not block
+later phenotypes. Unexpected failures preserve the last valid cursor and fail
+the task.
+
+The checkpoint root uses this layout:
+
+```text
+gs://<bucket>/<checkpoint-root>/<analysis-id>/<window-id>/
+  window_manifest.json
+  window_fit_index.tsv
+  results/
+  phenotypes/<phenotype-key>/
+    fit_manifest.json
+    susie_fit.<sha256>.rds
+```
+
+Start from
+[`examples/inputs/CheckpointedWindowSusie.inputs.json`](../examples/inputs/CheckpointedWindowSusie.inputs.json).
+Replace every example path with a Terra workspace path. Submit one input JSON
+for each prepared window. Replace the runner-image placeholder with the digest
+of a published checkpointed-window image.
 
 ### `workflows/ExtractMultiPhenotypeInputs.wdl` - Phenotype Extraction Only
 

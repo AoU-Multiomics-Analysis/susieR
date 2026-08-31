@@ -1,0 +1,3 @@
+window_id	phenotype_id	modality	phenotype_file	p_value
+chr1_0_2000000	linked_splicing	splicing	window_phenotypes.bed.gz	1.1199976554521252e-146
+chr1_0_2000000	linked_expression	expression	window_phenotypes.bed.gz	1.35242422104231e-309

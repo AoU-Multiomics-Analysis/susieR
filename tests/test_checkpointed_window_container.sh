@@ -305,6 +305,9 @@ require_file "$workflow"
 
 rg -Fq 'FROM ghcr.io/aou-multiomics-analysis/susier@sha256:07f9ddcb00391cceb6d5432144e38b16358b7a6ca7766ae3bc1b8b4aa3bac764' containers/CheckpointedWindowSusie/Dockerfile
 require_literal 'ENV CHECKPOINTED_SUSIE_BASE_IMAGE_DIGEST=sha256:07f9ddcb00391cceb6d5432144e38b16358b7a6ca7766ae3bc1b8b4aa3bac764' "$dockerfile"
+require_literal 'google-cloud-sdk=581.0.0' "$dockerfile"
+require_literal 'ENV PATH=/opt/conda/envs/checkpoint-gcloud/bin:${PATH}' "$dockerfile"
+require_literal 'RUN ln -sf /opt/conda/envs/checkpoint-gcloud/bin/gsutil /opt/conda/bin/gsutil' "$dockerfile"
 require_literal 'ENV SUSIER_FUNCTIONS_PATH=/opt/r/lib' "$dockerfile"
 require_literal 'COPY R/utils/CheckpointedWindowSusieFunctions.R R/utils/CheckpointStore.R /opt/r/lib/' "$dockerfile"
 require_literal 'COPY R/scripts/run_checkpointed_window_susie.R /opt/r/scripts/' "$dockerfile"
@@ -400,6 +403,7 @@ for smoke_command in \
   'docker run --rm susier-checkpointed-window:smoke-test test -f /opt/r/lib/CheckpointedWindowSusieFunctions.R' \
   'docker run --rm susier-checkpointed-window:smoke-test test -f /opt/r/lib/CheckpointStore.R' \
   'docker run --rm susier-checkpointed-window:smoke-test Rscript /opt/r/scripts/run_checkpointed_window_susie.R --help' \
+  'docker run --rm susier-checkpointed-window:smoke-test bash -c '\''test "$(readlink "$(command -v gsutil)")" = /opt/conda/envs/checkpoint-gcloud/bin/gsutil && gcloud --version && gsutil version -l | grep -F "using cloud sdk: True"'\''' \
   "docker run --rm susier-checkpointed-window:smoke-test Rscript -e 'library(tidyverse); library(data.table); library(arrow); library(jsonlite); library(digest); library(susieR); stopifnot(nzchar(Sys.which(\"gsutil\")))'" \
   'docker run --rm -v "$PWD:/work" -w /work susier-checkpointed-window:smoke-test Rscript tests/test_checkpointed_window_manifest.R' \
   'docker run --rm -v "$PWD:/work" -w /work susier-checkpointed-window:smoke-test Rscript tests/test_checkpoint_store.R' \

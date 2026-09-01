@@ -62,6 +62,7 @@ jobs:
           docker run --rm susier-checkpointed-window:smoke-test test -f /opt/r/lib/CheckpointedWindowSusieFunctions.R
           docker run --rm susier-checkpointed-window:smoke-test test -f /opt/r/lib/CheckpointStore.R
           docker run --rm susier-checkpointed-window:smoke-test Rscript /opt/r/scripts/run_checkpointed_window_susie.R --help
+          docker run --rm susier-checkpointed-window:smoke-test bash -c 'test "$(readlink "$(command -v gsutil)")" = /opt/conda/envs/checkpoint-gcloud/bin/gsutil && gcloud --version && gsutil version -l | grep -F "using cloud sdk: True"'
           docker run --rm susier-checkpointed-window:smoke-test Rscript -e 'library(tidyverse); library(data.table); library(arrow); library(jsonlite); library(digest); library(susieR); stopifnot(nzchar(Sys.which("gsutil")))'
           docker run --rm -v "$PWD:/work" -w /work susier-checkpointed-window:smoke-test Rscript tests/test_checkpointed_window_manifest.R
           docker run --rm -v "$PWD:/work" -w /work susier-checkpointed-window:smoke-test Rscript tests/test_checkpoint_store.R

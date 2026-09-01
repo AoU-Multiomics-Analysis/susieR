@@ -92,7 +92,7 @@ task RunCheckpointedWindowSusie {
     covariate_modalities_csv="$(comma_join "${covariate_modalities[@]}")"
 
     keep_samples_args=()
-    if IFS= read -r keep_samples < "~{keep_samples_values}"; then
+    if IFS= read -r keep_samples < "~{keep_samples_values}" && [[ -n "$keep_samples" ]]; then
       keep_samples_args=(--keep-samples "$keep_samples")
     fi
 

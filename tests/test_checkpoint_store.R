@@ -287,7 +287,12 @@ run_named_test("GCS object existence distinguishes not found from operational fa
   failed_gsutil <- tempfile("fake-gsutil-failed-")
   on.exit(unlink(c(not_found_gsutil, failed_gsutil)), add = TRUE)
   writeLines(
-    c("#!/bin/sh", "echo 'No URLs matched: gs://test-bucket/missing' >&2", "exit 1"),
+    c(
+      "#!/bin/sh",
+      "if [ \"$1\" = '-q' ]; then exit 1; fi",
+      "echo 'No URLs matched: gs://test-bucket/missing' >&2",
+      "exit 1"
+    ),
     not_found_gsutil
   )
   writeLines(
@@ -857,7 +862,7 @@ run_named_test("GCS download failure propagates from resume", {
   writeLines(
     c(
       "#!/bin/sh",
-      "if [ \"$2\" = \"stat\" ]; then",
+      "if [ \"$1\" = \"stat\" ]; then",
       "  exit 0",
       "fi",
       "exit 17"

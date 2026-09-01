@@ -56,7 +56,7 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
     object_exists = function(relative_path) {
       if (is_gcs) {
         uri <- object_uri(relative_path)
-        result <- capture_gsutil(c("-q", "stat", uri), "stat", uri)
+        result <- capture_gsutil(c("stat", uri), "stat", uri)
         if (identical(result$status, 0L)) {
           return(TRUE)
         }

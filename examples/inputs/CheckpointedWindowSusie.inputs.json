@@ -13,7 +13,6 @@
   ],
   "CheckpointedWindowSusieWorkflow.keep_samples": "gs://example-bucket/prepared/chr1_0_2000000/keep_samples.tsv",
   "CheckpointedWindowSusieWorkflow.checkpoint_root": "gs://example-bucket/checkpoints/window-susie",
-  "CheckpointedWindowSusieWorkflow.runner_image": "ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:REPLACE_WITH_PUBLISHED_DIGEST",
   "CheckpointedWindowSusieWorkflow.memory_gb": 16,
   "CheckpointedWindowSusieWorkflow.cpu": 1,
   "CheckpointedWindowSusieWorkflow.disk_gb": 500,

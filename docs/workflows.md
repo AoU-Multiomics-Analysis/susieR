@@ -77,15 +77,12 @@ Outputs are `SusieParquet`, `SusielbfParquet`, `FullSusieParquet`, and `VariantP
 This workflow runs one task for one prepared variant window. Terra launches one workflow per prepared window. Do not use a WDL scatter for this workflow.
 
 The prepare workflow owns phenotype filtering. The analysis task trusts
-`window_phenotypes.tsv` as the prepared manifest. The manifest requires
-`window_id`, `phenotype_id`, `modality`, `phenotype_file`, and `p_value`. The
-task orders phenotypes by `p_value`, modality, and phenotype ID.
-
-The current prepare workflows do not yet create this production manifest. This
-is a deployment gap. Before production use, add a preparation adapter that
-writes the final linked and filtered phenotype set. The adapter must write the
-five required columns. It must use one `phenotype_file` value that matches the
-`phenotype_data` file base name.
+`window_phenotypes.tsv` as the prepared manifest. The shared manifest contains
+`window_id`, `outcome_key`, `phenotype_id`, `modality`, `phenotype_file`, and
+`p_value`. Target-only rows have a missing P value. The univariate task selects
+rows with a finite P value, uses `outcome_key` to match the combined phenotype
+BED, and orders rows by P value, modality, and outcome key. mvSuSiE uses all
+rows in the same manifest.
 
 The first version tests every usable variant in the supplied window. It does
 not calculate a phenotype-centered interval. Set `checkpoint_root` to a

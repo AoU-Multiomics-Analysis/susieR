@@ -36,23 +36,20 @@ prepared manifest. It does not read a global association table.
 Set `window_phenotypes` to `window_phenotypes.tsv`. The file must contain one
 row for each phenotype in the prepared window.
 
-The current prepare workflows do not yet write this production manifest. This
-is a deployment gap. A preparation step must create the file before production
-use. That step must use the final linked and filtered phenotype set. It must
-write one row for each phenotype. It must not add phenotypes that the analysis
-wrapper must filter again.
-
 | Column | Description |
 |---|---|
 | `window_id` | Prepared window identifier. It must equal the WDL `window_id`. |
-| `phenotype_id` | Unique phenotype identifier in this window. |
+| `outcome_key` | Unique BED row identifier in the form `modality::phenotype_id`. |
+| `phenotype_id` | Original phenotype identifier. |
 | `modality` | Covariate modality for the phenotype. |
 | `phenotype_file` | Prepared phenotype-data file name. All rows must use one value. Its base name must equal the `phenotype_data` base name. |
-| `p_value` | Finite association P value from zero through one. The wrapper requires this column. |
+| `p_value` | Association P value from zero through one. A target-only row has a missing value. |
 
-The wrapper orders rows by `p_value`, `modality`, and `phenotype_id`. The first
-version uses every usable variant in the supplied window. It does not calculate
-a phenotype-centered interval.
+The wrapper selects rows with a finite `p_value`. It uses `outcome_key` to
+match the combined phenotype BED. It orders these rows by `p_value`, modality,
+and `outcome_key`. It uses every usable variant in the supplied window. It does
+not calculate a phenotype-centered interval. Legacy five-column manifests that
+use `phenotype_id` as the BED row identifier remain valid.
 
 Set `checkpoint_root` to a writable `gs://` prefix. Do not use a local path in
 the WDL. Give parallel `covariate_files` and `covariate_modalities` arrays. Use

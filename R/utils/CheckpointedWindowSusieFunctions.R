@@ -32,6 +32,7 @@ validate_window_phenotype_manifest <- function(
     window_id,
     phenotype_data = NULL
 ) {
+  is_universal_manifest <- "outcome_key" %in% names(manifest)
   required <- c("window_id", "phenotype_id", "modality", "phenotype_file", "p_value")
   missing <- setdiff(required, names(manifest))
   if (length(missing) > 0L) {
@@ -42,16 +43,31 @@ validate_window_phenotype_manifest <- function(
     )
   }
 
-  validated <- manifest |>
-    dplyr::transmute(
-      window_id = as.character(.data$window_id),
-      phenotype_id = as.character(.data$phenotype_id),
-      modality = as.character(.data$modality),
-      phenotype_file = as.character(.data$phenotype_file),
-      p_value = suppressWarnings(as.numeric(.data$p_value))
-    )
+  raw_p_value <- manifest$p_value
+  missing_p_value <- is.na(raw_p_value)
+  if (is.numeric(raw_p_value)) {
+    missing_p_value <- missing_p_value & !is.nan(raw_p_value)
+  }
+  validated <- tibble::tibble(
+    window_id = as.character(manifest$window_id),
+    source_phenotype_id = as.character(manifest$phenotype_id),
+    modality = as.character(manifest$modality),
+    phenotype_file = as.character(manifest$phenotype_file),
+    p_value = suppressWarnings(as.numeric(raw_p_value)),
+    missing_p_value = missing_p_value
+  )
+  if (is_universal_manifest) {
+    validated$outcome_key <- as.character(manifest$outcome_key)
+  } else {
+    validated$outcome_key <- validated$source_phenotype_id
+  }
 
-  identifier_columns <- c("window_id", "phenotype_id", "modality", "phenotype_file")
+  identifier_columns <- c(
+    "window_id", "source_phenotype_id", "modality", "phenotype_file"
+  )
+  if (is_universal_manifest) {
+    identifier_columns <- c(identifier_columns, "outcome_key")
+  }
   has_empty_identifier <- purrr::map_lgl(
     validated[identifier_columns],
     ~ any(is.na(.x) | !nzchar(.x))
@@ -60,14 +76,35 @@ validate_window_phenotype_manifest <- function(
   if (has_empty_identifier) {
     stop("Prepared manifest identifiers cannot be empty.", call. = FALSE)
   }
-  if (anyNA(validated$p_value) || any(!is.finite(validated$p_value)) ||
-      any(validated$p_value < 0 | validated$p_value > 1)) {
+  invalid_p_value <- !validated$missing_p_value & (
+    is.na(validated$p_value) |
+      !is.finite(validated$p_value) |
+      validated$p_value < 0 |
+      validated$p_value > 1
+  )
+  if ((!is_universal_manifest && any(validated$missing_p_value)) ||
+      any(invalid_p_value)) {
     stop(
       "Prepared manifest p_value values must be finite and between zero and one.",
       call. = FALSE
     )
   }
-  if (anyDuplicated(validated$phenotype_id)) {
+  if (is_universal_manifest) {
+    expected_outcome_key <- paste(
+      validated$modality,
+      validated$source_phenotype_id,
+      sep = "::"
+    )
+    if (!identical(validated$outcome_key, expected_outcome_key)) {
+      stop(
+        "Prepared manifest outcome_key must equal modality::phenotype_id.",
+        call. = FALSE
+      )
+    }
+    if (anyDuplicated(validated$outcome_key)) {
+      stop("Prepared manifest contains duplicate outcome_key values.", call. = FALSE)
+    }
+  } else if (anyDuplicated(validated$source_phenotype_id)) {
     stop("Prepared manifest contains duplicate phenotype_id values.", call. = FALSE)
   }
   manifest_windows <- unique(validated$window_id)
@@ -86,7 +123,28 @@ validate_window_phenotype_manifest <- function(
     )
   }
 
+  if (is_universal_manifest) {
+    validated <- validated |>
+      dplyr::filter(!.data$missing_p_value)
+    if (nrow(validated) == 0L) {
+      stop(
+        paste0(
+          "Prepared manifest does not contain linked phenotypes with finite ",
+          "p_value values."
+        ),
+        call. = FALSE
+      )
+    }
+  }
+
   validated |>
+    dplyr::transmute(
+      window_id = .data$window_id,
+      phenotype_id = .data$outcome_key,
+      modality = .data$modality,
+      phenotype_file = .data$phenotype_file,
+      p_value = .data$p_value
+    ) |>
     dplyr::arrange(.data$p_value, .data$modality, .data$phenotype_id) |>
     dplyr::mutate(
       processing_index = dplyr::row_number() - 1L,

@@ -8,11 +8,118 @@ manifest <- tibble::tribble(
   "chr1_0_2000000", "trait_c", "expression", "window.bed.gz", 1e-6
 )
 
+universal_manifest <- tibble::tribble(
+  ~window_id, ~outcome_key, ~phenotype_id, ~modality, ~phenotype_file, ~p_value,
+  "chr1_0_2000000", "splicing::trait_b", "trait_b", "splicing", "window.bed.gz", 1e-6,
+  "chr1_0_2000000", "expression::target", "target", "expression", "window.bed.gz", NA_real_,
+  "chr1_0_2000000", "expression::trait_a", "trait_a", "expression", "window.bed.gz", 1e-8
+)
+
 run_named_test("manifest is ordered by p value, modality, and phenotype", {
   ordered <- validate_window_phenotype_manifest(manifest, "chr1_0_2000000")
   expect_identical_value(ordered$phenotype_id, c("trait_a", "trait_c", "trait_b"), "phenotype order")
   expect_identical_value(ordered$processing_index, 0:2, "processing indices")
   expect_identical_value(length(unique(ordered$phenotype_key)), 3L, "phenotype key count")
+})
+
+run_named_test("universal manifest selects linked rows and uses outcome keys", {
+  ordered <- validate_window_phenotype_manifest(
+    universal_manifest,
+    "chr1_0_2000000"
+  )
+  expect_identical_value(
+    ordered$phenotype_id,
+    c("expression::trait_a", "splicing::trait_b"),
+    "universal phenotype order"
+  )
+  expect_identical_value(ordered$processing_index, 0:1, "processing indices")
+})
+
+run_named_test("universal manifest rejects outcome keys that do not match", {
+  invalid_key <- dplyr::mutate(
+    universal_manifest,
+    outcome_key = dplyr::if_else(
+      .data$phenotype_id == "trait_a",
+      "expression::wrong",
+      .data$outcome_key
+    )
+  )
+  expect_error_message(
+    validate_window_phenotype_manifest(invalid_key, "chr1_0_2000000"),
+    "outcome_key must equal modality::phenotype_id"
+  )
+})
+
+run_named_test("universal manifest requires at least one linked phenotype", {
+  target_only <- dplyr::mutate(universal_manifest, p_value = NA_real_)
+  expect_error_message(
+    validate_window_phenotype_manifest(target_only, "chr1_0_2000000"),
+    "does not contain linked phenotypes with finite p_value values"
+  )
+})
+
+run_named_test("universal manifest rejects nonfinite and nonnumeric P values", {
+  invalid_values <- c("NaN", "Inf", "-Inf", "not-a-number", "-0.1", "1.1")
+  purrr::walk(invalid_values, function(invalid_value) {
+    invalid_manifest <- dplyr::mutate(
+      universal_manifest,
+      p_value = as.character(.data$p_value)
+    )
+    invalid_manifest$p_value[[1L]] <- invalid_value
+    expect_error_message(
+      validate_window_phenotype_manifest(
+        invalid_manifest,
+        "chr1_0_2000000"
+      ),
+      "p_value values must be finite and between zero and one"
+    )
+  })
+})
+
+run_named_test("universal manifest accepts P-value boundaries", {
+  boundary_manifest <- universal_manifest
+  boundary_manifest$p_value[c(1L, 3L)] <- c(1, 0)
+  ordered <- validate_window_phenotype_manifest(
+    boundary_manifest,
+    "chr1_0_2000000"
+  )
+  expect_identical_value(ordered$p_value, c(0, 1), "P-value boundaries")
+})
+
+run_named_test("outcome keys disambiguate shared IDs across modalities", {
+  collision_manifest <- tibble::tribble(
+    ~window_id, ~outcome_key, ~phenotype_id, ~modality, ~phenotype_file, ~p_value,
+    "chr1_0_2000000", "expression::shared", "shared", "expression", "window.tsv", 1e-8,
+    "chr1_0_2000000", "splicing::shared", "shared", "splicing", "window.tsv", 1e-7
+  )
+  phenotype_path <- tempfile(fileext = ".tsv")
+  on.exit(unlink(phenotype_path), add = TRUE)
+  readr::write_tsv(
+    tibble::tribble(
+      ~chrom, ~start, ~end, ~phenotype_id, ~sample_1,
+      "chr1", 1L, 2L, "expression::shared", 0.1,
+      "chr1", 3L, 4L, "splicing::shared", 0.2
+    ),
+    phenotype_path
+  )
+  ordered <- validate_window_phenotype_manifest(
+    collision_manifest,
+    "chr1_0_2000000"
+  )
+  phenotypes <- read_checkpointed_window_phenotypes(
+    phenotype_path,
+    ordered
+  )
+  expect_identical_value(
+    names(phenotypes$values),
+    c("expression::shared", "splicing::shared"),
+    "cross-modality phenotype IDs"
+  )
+  expect_identical_value(
+    ordered$modality,
+    c("expression", "splicing"),
+    "cross-modality covariate labels"
+  )
 })
 
 run_named_test("manifest rejects missing required columns", {

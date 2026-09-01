@@ -45,11 +45,9 @@ fi
 rg -q '^workflow CheckpointedWindowSusieWorkflow' "$wdl"
 rg -q '^task RunCheckpointedWindowSusie' "$wdl"
 rg -q 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' "$wdl"
-rg -q '^[[:space:]]+String runner_image$' "$wdl"
-if rg -q 'String runner_image[[:space:]]*=' "$wdl"; then
-  printf 'runner_image must not have a mutable default.\n' >&2
-  exit 1
-fi
+default_runner_image='ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:6d390ae3e186f2500abf8585e9ab16261ad7f7651ca7dc82e57497eed71aa228'
+require_count "^[[:space:]]+String runner_image = \"${default_runner_image}\"$" 1
+require_count '^[[:space:]]+String runner_image$' 1
 
 workflow_outputs="$(
   awk '
@@ -148,7 +146,6 @@ for key in \
   CheckpointedWindowSusieWorkflow.covariate_modalities \
   CheckpointedWindowSusieWorkflow.keep_samples \
   CheckpointedWindowSusieWorkflow.checkpoint_root \
-  CheckpointedWindowSusieWorkflow.runner_image \
   CheckpointedWindowSusieWorkflow.memory_gb \
   CheckpointedWindowSusieWorkflow.cpu \
   CheckpointedWindowSusieWorkflow.disk_gb \
@@ -157,7 +154,10 @@ for key in \
 done
 
 rg -Fq '"CheckpointedWindowSusieWorkflow.preemptible_attempts": 3' "$inputs"
-rg -Fq '@sha256:REPLACE_WITH_PUBLISHED_DIGEST' "$inputs"
+if rg -Fq '"CheckpointedWindowSusieWorkflow.runner_image"' "$inputs"; then
+  printf 'The example must demonstrate the default runner image.\n' >&2
+  exit 1
+fi
 
 documentation_text="$(cat "${documentation[@]}")"
 for term in \

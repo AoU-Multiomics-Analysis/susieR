@@ -89,12 +89,12 @@ not calculate a phenotype-centered interval. Set `checkpoint_root` to a
 writable `gs://` prefix. One active writer may use an analysis ID and window ID
 pair.
 
-Set `runner_image` to an immutable published `@sha256` digest. The WDL has no
-runner-image default. It rejects a mutable tag before it starts R. The runtime
-hashes the installed runner wrapper and both checkpoint helper files. The
-analysis ID changes when one of these source files changes. Window and
-phenotype manifests record these hashes, the runner-image identity, and the
-pinned base-image identity.
+The WDL defaults `runner_image` to the immutable published digest for this
+release. You can override it with another immutable `@sha256` digest. The WDL
+rejects a mutable tag before it starts R. The runtime hashes the installed
+runner wrapper and both checkpoint helper files. The analysis ID changes when
+one of these source files changes. Window and phenotype manifests record these
+hashes, the runner-image identity, and the pinned base-image identity.
 
 The controller first aligns dosage, phenotype headers, and the optional sample
 allowlist. For each phenotype, it then aligns shared covariates and covariates

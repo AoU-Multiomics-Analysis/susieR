@@ -55,15 +55,16 @@ Set `checkpoint_root` to a writable `gs://` prefix. Do not use a local path in
 the WDL. Give parallel `covariate_files` and `covariate_modalities` arrays. Use
 the label `shared` for covariates that apply to every phenotype.
 
-Set `runner_image` to a published image digest. Use this form:
+The workflow defaults to the published checkpointed-window image for this
+release. You do not need to set `runner_image`. To test another release,
+override `runner_image` with an immutable digest in this form:
 
 ```text
 ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:<64-lowercase-hex-characters>
 ```
 
-The WDL rejects tags such as `:main`. Replace
-`REPLACE_WITH_PUBLISHED_DIGEST` in the example JSON. Do not use the pinned base
-image digest as the runner-image digest. They identify different images.
+The WDL rejects tags such as `:main`. Do not use the pinned base image digest
+as the runner-image digest. They identify different images.
 
 ### Prepared dosage schema
 

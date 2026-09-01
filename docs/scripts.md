@@ -36,12 +36,10 @@ Key command-line arguments:
 ## `R/scripts/run_checkpointed_window_susie.R`
 
 This runner processes one prepared window. It trusts `window_phenotypes.tsv`.
-The prepare workflow owns phenotype filtering. The manifest must include
-`p_value`. The runner uses every usable supplied variant. It does not calculate
-a phenotype-centered interval.
-
-The current prepare workflows do not yet create this production manifest. Add
-`p_value` before you use this runner in production.
+The shared manifest contains `outcome_key`, the original `phenotype_id`, and
+`p_value`. The runner selects rows with a finite P value and uses `outcome_key`
+to match the combined phenotype BED. It uses every usable supplied variant. It
+does not calculate a phenotype-centered interval.
 
 Use `--window-id`, `--window-dosage`, `--window-phenotypes`, and
 `--phenotype-data` for the prepared input bundle. Use `--covariate-files` and

@@ -10,7 +10,7 @@ workflow CheckpointedWindowSusieWorkflow {
     Array[String] covariate_modalities
     File? keep_samples
     String checkpoint_root
-    String runner_image = "ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:554a3af851a96bc22d5579e1b4c06f5f2d7ae90f583c53449c8289d228b588f0"
+    String runner_image = "ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:6a51db8e605820f3f644b45621ffa6607b07daa73f80f27d644c2593fe10aae4"
     Int memory_gb = 16
     Int cpu = 1
     Int disk_gb = 500

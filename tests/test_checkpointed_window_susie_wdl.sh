@@ -45,7 +45,7 @@ fi
 rg -q '^workflow CheckpointedWindowSusieWorkflow' "$wdl"
 rg -q '^task RunCheckpointedWindowSusie' "$wdl"
 rg -q 'Rscript /opt/r/scripts/run_checkpointed_window_susie.R' "$wdl"
-default_runner_image='ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:554a3af851a96bc22d5579e1b4c06f5f2d7ae90f583c53449c8289d228b588f0'
+default_runner_image='ghcr.io/aou-multiomics-analysis/susier/checkpointed-window@sha256:6a51db8e605820f3f644b45621ffa6607b07daa73f80f27d644c2593fe10aae4'
 require_count "^[[:space:]]+String runner_image = \"${default_runner_image}\"$" 1
 require_count '^[[:space:]]+String runner_image$' 1
 

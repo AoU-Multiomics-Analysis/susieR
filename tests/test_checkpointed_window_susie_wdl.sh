@@ -104,10 +104,12 @@ rg -q '^[[:space:]]*preemptible: preemptible_attempts$' "$wdl"
 
 rg -Fq 'File window_id_values = write_lines([window_id])' "$wdl"
 rg -Fq 'File checkpoint_root_values = write_lines([checkpoint_root])' "$wdl"
-rg -Fq 'File covariate_files_values = write_lines(covariate_files)' "$wdl"
 rg -Fq 'File covariate_modalities_values = write_lines(covariate_modalities)' "$wdl"
-rg -Fq 'File keep_samples_values = write_lines(select_all([keep_samples]))' "$wdl"
-rg -Fq 'if IFS= read -r keep_samples < "~{keep_samples_values}" && [[ -n "$keep_samples" ]]; then' "$wdl"
+rg -Fq "covariate_files_csv=\"~{sep=',' covariate_files}\"" "$wdl"
+rg -Fq 'keep_samples_value="~{default="" keep_samples}"' "$wdl"
+rg -Fq 'if [[ -n "$keep_samples_value" ]]; then' "$wdl"
+require_count 'write_lines\(covariate_files\)' 0
+require_count 'write_lines\(select_all\(\[keep_samples\]\)\)' 0
 rg -Fq 'File runner_image_values = write_lines([runner_image])' "$wdl"
 rg -Fq 'CHECKPOINTED_SUSIE_RUNTIME_IMAGE="$runner_image"' "$wdl"
 rg -Fq 'runner image must end with @sha256 and 64 lowercase hex characters' "$wdl"

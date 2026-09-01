@@ -284,8 +284,12 @@ run_named_test("fit validator requires vector PIPs and positive model dimensions
 
 run_named_test("GCS object existence distinguishes not found from operational failure", {
   not_found_gsutil <- tempfile("fake-gsutil-not-found-")
+  silent_not_found_gsutil <- tempfile("fake-gsutil-silent-not-found-")
   failed_gsutil <- tempfile("fake-gsutil-failed-")
-  on.exit(unlink(c(not_found_gsutil, failed_gsutil)), add = TRUE)
+  on.exit(
+    unlink(c(not_found_gsutil, silent_not_found_gsutil, failed_gsutil)),
+    add = TRUE
+  )
   writeLines(
     c(
       "#!/bin/sh",
@@ -295,11 +299,15 @@ run_named_test("GCS object existence distinguishes not found from operational fa
     ),
     not_found_gsutil
   )
+  writeLines(c("#!/bin/sh", "exit 1"), silent_not_found_gsutil)
   writeLines(
     c("#!/bin/sh", "echo 'AccessDeniedException: quota or authentication failed' >&2", "exit 1"),
     failed_gsutil
   )
-  Sys.chmod(c(not_found_gsutil, failed_gsutil), mode = "0755")
+  Sys.chmod(
+    c(not_found_gsutil, silent_not_found_gsutil, failed_gsutil),
+    mode = "0755"
+  )
   missing_store <- new_checkpoint_store(
     "gs://test-bucket/checkpoints",
     gsutil = not_found_gsutil
@@ -308,6 +316,15 @@ run_named_test("GCS object existence distinguishes not found from operational fa
     missing_store$object_exists("analysis/window/missing.json"),
     FALSE,
     "GCS not-found result"
+  )
+  silent_missing_store <- new_checkpoint_store(
+    "gs://test-bucket/checkpoints",
+    gsutil = silent_not_found_gsutil
+  )
+  expect_identical_value(
+    silent_missing_store$object_exists("analysis/window/missing.json"),
+    FALSE,
+    "silent GCS not-found result"
   )
 
   failed_store <- new_checkpoint_store(
@@ -328,6 +345,10 @@ run_named_test("GCS object existence distinguishes not found from operational fa
   expect_true_value(
     grepl(expected_uri, conditionMessage(condition), fixed = TRUE),
     "GCS stat error URI"
+  )
+  expect_true_value(
+    grepl("AccessDeniedException", conditionMessage(condition), fixed = TRUE),
+    "GCS stat diagnostic"
   )
 })
 

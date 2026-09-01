@@ -70,10 +70,17 @@ new_checkpoint_store <- function(root, gsutil = "gsutil") {
           ),
           collapse = "|"
         )
-        if (grepl(not_found_pattern, result$output, ignore.case = TRUE)) {
+        silent_not_found <- identical(result$status, 1L) &&
+          !nzchar(trimws(result$output))
+        if (silent_not_found ||
+            grepl(not_found_pattern, result$output, ignore.case = TRUE)) {
           return(FALSE)
         }
-        stop_checkpoint_store_error(paste0("GCS stat failed for: ", uri))
+        diagnostic <- substr(trimws(result$output), 1L, 2000L)
+        stop_checkpoint_store_error(paste0(
+          "GCS stat failed for: ", uri,
+          if (nzchar(diagnostic)) paste0("\n", diagnostic) else ""
+        ))
       }
       file.exists(file.path(clean_root, relative_path))
     },

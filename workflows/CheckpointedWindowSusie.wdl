@@ -62,9 +62,7 @@ task RunCheckpointedWindowSusie {
 
   File window_id_values = write_lines([window_id])
   File checkpoint_root_values = write_lines([checkpoint_root])
-  File covariate_files_values = write_lines(covariate_files)
   File covariate_modalities_values = write_lines(covariate_modalities)
-  File keep_samples_values = write_lines(select_all([keep_samples]))
   File runner_image_values = write_lines([runner_image])
 
   command <<<
@@ -73,11 +71,6 @@ task RunCheckpointedWindowSusie {
     IFS= read -r window_id < "~{window_id_values}"
     IFS= read -r checkpoint_root < "~{checkpoint_root_values}"
     IFS= read -r runner_image < "~{runner_image_values}"
-
-    covariate_files=()
-    while IFS= read -r covariate_file; do
-      covariate_files+=("$covariate_file")
-    done < "~{covariate_files_values}"
 
     covariate_modalities=()
     while IFS= read -r covariate_modality; do
@@ -88,12 +81,13 @@ task RunCheckpointedWindowSusie {
       local IFS=,
       printf '%s' "$*"
     }
-    covariate_files_csv="$(comma_join "${covariate_files[@]}")"
+    covariate_files_csv="~{sep=',' covariate_files}"
     covariate_modalities_csv="$(comma_join "${covariate_modalities[@]}")"
 
     keep_samples_args=()
-    if IFS= read -r keep_samples < "~{keep_samples_values}" && [[ -n "$keep_samples" ]]; then
-      keep_samples_args=(--keep-samples "$keep_samples")
+    keep_samples_value="~{default="" keep_samples}"
+    if [[ -n "$keep_samples_value" ]]; then
+      keep_samples_args=(--keep-samples "$keep_samples_value")
     fi
 
     echo "START window ${window_id}"

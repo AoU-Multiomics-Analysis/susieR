@@ -1,0 +1,4 @@
+mode	exit_code	wall_seconds	entrypoint_seconds	entrypoint_without_fingerprints_seconds	genotype_residualization_seconds	phenotype_residualization_seconds	fit_seconds	output_processing_seconds	fingerprint_seconds	peak_rss_GiB	r_used_before_fit_MiB	variants	credible_sets	iterations	converged	exact_comparison_passed
+baseline	0	211.107144	210.185	184.615	87.60400000000001	0.6950000000000003	52.714	0.603999999999985	25.569999999999993	8.622757	2777.2000000000003	20000	3	4	TRUE	NA
+candidate	0	209.325919	208.658	182.911	87.10900000000001	0.730000000000004	51.06099999999998	0.8530000000000086	25.746999999999986	9.355789	2014.3	20000	3	4	TRUE	TRUE
+factored	0	121.820507	121.242	95.34700000000001	2.0109999999999957	0.00399999999999778	49.673	0.820999999999998	25.894999999999996	9.357071	2014.3	20000	3	4	TRUE	FALSE

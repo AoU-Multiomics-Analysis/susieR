@@ -1,0 +1,7 @@
+check	passed
+same_fields	TRUE
+same_z_attributes	TRUE
+all_fields_except_z_exact	TRUE
+same_credible_sets	TRUE
+same_PIPs_exact	TRUE
+same_final_RNG	TRUE

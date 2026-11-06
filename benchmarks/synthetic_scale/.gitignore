@@ -1,0 +1,15 @@
+# Keep generated inputs and full local runs on disk, outside version control.
+/inputs/
+/results/
+__pycache__/
+*.py[cod]
+*.rds
+*.parquet
+*.pgen
+*.pvar
+*.psam
+*.bgz
+*.tbi
+*.dylib
+*.log
+.DS_Store

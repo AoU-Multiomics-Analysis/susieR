@@ -1,0 +1,2 @@
+mode	blas_requested	threads_requested	samples	variants	pid	exit_code	wall_seconds	user_cpu_seconds	system_cpu_seconds	peak_rss_bytes	peak_rss_gib	platform
+production	openblas	1	10000	20000	75837	0	75.917426	68.314195	5.594138	7250591744	6.752640	darwin

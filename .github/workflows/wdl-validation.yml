@@ -6,11 +6,13 @@ on:
     branches: [ "main" ]
     paths:
       - ".github/workflows/wdl-validation.yml"
+      - "tests/test_covariate_explained_wdl.sh"
       - "workflows/**/*.wdl"
   pull_request:
     branches: [ "main" ]
     paths:
       - ".github/workflows/wdl-validation.yml"
+      - "tests/test_covariate_explained_wdl.sh"
       - "workflows/**/*.wdl"
 
 jobs:
@@ -23,6 +25,9 @@ jobs:
 
       - name: Install miniwdl
         run: pipx install miniwdl
+
+      - name: Check diagnostic outputs and Terra expression rules
+        run: bash tests/test_covariate_explained_wdl.sh
 
       - name: Check WDLs
         working-directory: workflows

@@ -10,9 +10,49 @@ ImportVariantList <- function(VariantListPath) {
     VariantList
 }
 
+# Read plain TSV fields as text and use the original base type conversion.
+# Other formats retain the original parser, including its warnings and errors.
+readQtlCovariateTable <- function(path) {
+  read_original <- function() {
+    read.table(path, check.names = FALSE, header = TRUE, stringsAsFactors = FALSE)
+  }
+  # Restrict this path to regular ASCII TSV input. Quotes, comments, other
+  # whitespace, encodings, and unequal field counts need read.table's rules.
+  parse_regular <- function() {
+    lines <- readLines(path)
+    lines <- lines[nzchar(lines)]
+    if (length(lines) < 2L ||
+        any(grepl("[^\t!-~]|['\"#]", lines, useBytes = TRUE)) ||
+        any(grepl("\t\t|^\t|\t$", lines))) {
+      return(NULL)
+    }
+    field_counts <- lengths(regmatches(lines, gregexpr("\t", lines, fixed = TRUE)))
+    if (field_counts[[1L]] == 0L || any(field_counts != field_counts[[1L]])) {
+      return(NULL)
+    }
+    parsed <- data.table::fread(
+      path, sep = "\t", header = TRUE, colClasses = "character",
+      na.strings = "NA", check.names = FALSE, data.table = FALSE
+    )
+    # fread replaces a literal NA header. Keep every explicit sample name.
+    names(parsed) <- strsplit(lines[[1L]], "\t", fixed = TRUE)[[1L]]
+    parsed[] <- purrr::map(parsed, ~ type.convert(.x, as.is = TRUE))
+    parsed
+  }
+  # A warning from either reader or type conversion makes the fast path
+  # uncertain. Let the original parser report the input's actual conditions.
+  parsed <- tryCatch(
+    parse_regular(),
+    warning = function(condition) NULL,
+    error = function(condition) NULL
+  )
+  if (is.null(parsed)) return(read_original())
+  parsed
+}
+
 # Load QTL covariates and orient them as a sample x covariate numeric matrix.
 importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE){
-  pc_matrix = read.table(covariates_path, check.names = FALSE, header = TRUE, stringsAsFactors = FALSE)
+  pc_matrix = readQtlCovariateTable(covariates_path)
   col_names <-  pc_matrix %>% pull(ID)
   pc_transpose = t(pc_matrix[,-1])
   colnames(pc_transpose) = pc_matrix$SampleID

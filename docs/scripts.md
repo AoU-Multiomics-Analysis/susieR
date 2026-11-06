@@ -6,7 +6,7 @@ The workflow entrypoint scripts live in `R/scripts/`. Shared helper functions li
 
 The main fine-mapping script. It loads genotype dosages, expression or phenotype data, covariates, and a list of phenotypes to fine-map, then runs susieR on each phenotype in the provided cis window. The feature coordinate is the midpoint of the phenotype BED interval, so 1 bp site/TSS intervals and already-expanded phenotype windows are centered consistently.
 
-Results are written to three Parquet files plus one variant-position diagnostic TSV:
+Results are written to three Parquet files and two diagnostic TSV files:
 
 | Output | Description |
 |---|---|
@@ -14,6 +14,7 @@ Results are written to three Parquet files plus one variant-position diagnostic 
 | `<out_prefix>.lbf_variable.parquet` | Log-Bayes factors per credible set. Corresponds to `SusielbfParquet`. |
 | `<out_prefix>.full_susie.parquet` | Fine-mapping statistics for all tested variants. Corresponds to `FullSusieParquet`. |
 | `<out_prefix>.variant_position_summary.tsv` | Per-phenotype summary of tested variant counts, upstream/downstream counts, min/max variant distance from the feature, and requested cis-window size. Corresponds to `VariantPositionSummary`. |
+| `<out_prefix>.covariate_explained_variants.tsv` | Per-phenotype list of variants almost fully explained by covariates. Corresponds to `CovariateExplainedVariants`. Contains headers even when no variants are flagged or no credible sets are found. |
 
 Key command-line arguments:
 
@@ -32,6 +33,60 @@ Key command-line arguments:
 | `--MAF` | Optional minor allele frequency cutoff. |
 | `--AncestryMetadata` | Optional ancestry assignment file for per-population MAF filtering. |
 | `--VariantList` | Optional single-column file of variants formatted as `chr_pos_ref_alt` to restrict analysis. |
+
+Ordinary covariate adjustment uses a factored calculation that avoids a dense
+sample-by-sample residual matrix. The same adjustment is used for phenotypes
+and genotypes. The covariate reader uses a faster path for ordinary TSV input
+and uses the original parser for unsupported or ambiguous formats. Marginal
+z-scores are calculated in bulk after the SuSiE fit. Unusual or singular input
+uses the native calculation. The fit still uses 10 effects.
+
+For compatibility, a residual SD at most `1e-8` times the original column
+scale triggers the original dense adjustment for both genotypes and phenotype.
+These fits also use native marginal z-scores. The scale is the larger of the
+original SD and absolute mean; an all-zero input does not trigger this guard.
+This threshold selects the calculation method. It does not filter variants.
+If a later phenotype triggers this guard after genotype reuse has started,
+the runner rebuilds the full merged window with the original calculation and
+reuses that result. This rare path retains the earlier fast cache as well as
+the rebuilt result and dense matrix, so it can use more memory than the original
+method. It preserves the previous numerical behavior for almost fully
+covariate-explained inputs.
+
+The diagnostic TSV contains `molecular_trait_id`, `variant`, `input_scale`,
+`residual_sd`, and `residual_sd_ratio`. It lists a variant when its input scale
+is positive and its residual SD is at most `1e-8` times that scale. The input is
+the dosage after the existing row-mean imputation and sample-mean subtraction,
+for the final aligned samples. The scale is the larger of its sample SD and
+absolute sample mean. The residual SD is measured after the selected covariate
+adjustment, including the original dense calculation when the guard uses it.
+`residual_sd_ratio` is the residual SD divided by the input scale. The list can
+include variants outside credible sets. Each saved fit also contains this
+diagnostic table as `covariate_explained_variants`.
+
+The primary credible-set Parquet has a logical
+`has_covariate_explained_variant` column. It is `TRUE` on every row of a
+credible set if any original member is in that phenotype's diagnostic list.
+The internal credible-set summary has the same column. Fits saved before this
+diagnostic field was added use `FALSE`. These annotations do not filter variants
+or change the existing fit statistics. The full-SuSiE Parquet columns and the
+checkpointed runner's table columns stay the same.
+
+One CPU remains the workflow default. The local synthetic benchmark used
+10,000 samples and 20,000 variants. Its results apply to that local test and
+do not establish cloud performance. The complete workflow has not been tested
+on Terra for this change.
+
+Run the regression tests from the repository root:
+
+```sh
+Rscript tests/run_tests.R
+```
+
+For a local test library, set `BENCH_LIBRARY=/path/to/library`. By default,
+tests use helpers in `R/utils`. Set `SUSIER_FUNCTIONS_PATH` to test another
+helper directory. GitHub Actions runs the tests against `/opt/r/lib` in the
+built image, with the repository test files mounted read-only.
 
 ## `R/scripts/run_checkpointed_window_susie.R`
 

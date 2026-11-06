@@ -1,0 +1,17 @@
+component	value
+R	4.3.1
+platform	aarch64-apple-darwin20
+OS	macOS 15.6.1
+BLAS	OpenBLAS 0.3.23
+threads	1
+susieR	0.16.6
+eQTLUtils	0.0.0.9000
+eQTLUtils_revision	26242562a4e244334fd9691d03bc1ef4d2d6c1d9
+dplyr	1.1.2
+tidyr	1.3.0
+readr	2.1.4
+arrow	18.1.0.1
+Rsamtools	2.16.0
+pgenlibr	0.7.0
+input_seed	20261105
+worker_seed	20261106

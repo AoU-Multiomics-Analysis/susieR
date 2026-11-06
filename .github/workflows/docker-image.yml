@@ -5,8 +5,6 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - ".github/workflows/docker-image.yml"
-      - "containers/SusieR/Dockerfile"
       - "R/scripts/susie.R"
       - "R/scripts/ComputeR2Susie.R"
       - "R/scripts/PrepSusieCVPCs.R"
@@ -14,8 +12,6 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
-      - ".github/workflows/docker-image.yml"
-      - "containers/SusieR/Dockerfile"
       - "R/scripts/susie.R"
       - "R/scripts/ComputeR2Susie.R"
       - "R/scripts/PrepSusieCVPCs.R"
@@ -66,6 +62,15 @@ jobs:
           docker run --rm susier:smoke-test Rscript /opt/r/scripts/susie.R --help
           docker run --rm susier:smoke-test Rscript /opt/r/scripts/ComputeR2Susie.R --help
           docker run --rm susier:smoke-test Rscript -e 'parse(file = "/opt/r/scripts/PrepSusieCVPCs.R")'
+
+      - name: Run SuSiE regression tests in the image
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/tests:/repo/tests:ro" \
+            --workdir /repo \
+            --env SUSIER_FUNCTIONS_PATH=/opt/r/lib \
+            susier:smoke-test Rscript tests/run_tests.R
 
       - name: Build and push docker containers
         if: github.event_name == 'push'

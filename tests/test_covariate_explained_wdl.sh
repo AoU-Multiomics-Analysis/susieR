@@ -27,7 +27,10 @@ require_output() {
       }
     ' "$wdl"
   )"
-  if ! printf '%s\n' "$outputs" | rg -Fqx -- "$declaration"; then
+  if ! printf '%s\n' "$outputs" | awk -v expected="$declaration" '
+    $0 == expected { found = 1 }
+    END { exit !found }
+  '; then
     printf '%s is missing the required %s output: %s\n' \
       "$wdl" "$scope" "$declaration" >&2
     exit 1
@@ -53,7 +56,10 @@ for wdl in workflows/susieR.wdl workflows/susieRonly.wdl; do
       in_workflow { sub(/#.*/, ""); print }
     ' "$wdl"
   )"
-  if printf '%s\n' "$workflow_text" | rg -n 'write_(lines|tsv|map|json)[[:space:]]*\('; then
+  if printf '%s\n' "$workflow_text" | awk '
+    /write_(lines|tsv|map|json)[[:space:]]*[(]/ { print NR ":" $0; found = 1 }
+    END { exit !found }
+  '; then
     printf '%s contains a workflow-scope file-writing function.\n' "$wdl" >&2
     exit 1
   fi

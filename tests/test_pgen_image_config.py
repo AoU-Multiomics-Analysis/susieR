@@ -65,6 +65,11 @@ class ImageContractTests(unittest.TestCase):
             r"[A-Za-z0-9_.:-]+=[A-Za-z0-9_.-]+", item
         ) for item in dependencies), "Every direct Conda dependency needs an exact version")
         pins = dict(item.rsplit("=", 1) for item in dependencies)
+        # Preserve the native versions from the successful CI installation.
+        # Older libdeflate/zlib pins conflict with the R 4.4.3 native libraries.
+        self.assertEqual({name: pins.get(name) for name in
+                          ("zlib", "zstd", "libdeflate")},
+                         {"zlib": "1.3.2", "zstd": "1.5.7", "libdeflate": "1.25"})
         for name in {
             "r-base", "r-tidyverse", "r-data.table", "r-optparse", "r-arrow",
             "r-devtools", "r-rfast", "r-matrixstats", "r-digest", "r-jsonlite",

@@ -29,6 +29,8 @@ option_list <- list(
     help="Cis distance (bp) added to each side of the phenotype BED interval midpoint [default \"%default\"]", metavar="number"),
   optparse::make_option(c("--reuse_genotype_matrix"), type="logical", default=FALSE,
     help="If true, reuse one residualized genotype matrix when selected phenotype windows merge into one region [default \"%default\"]", metavar="type"),
+  optparse::make_option(c("--memory_debug"), type="logical", default=FALSE,
+    help="If true, print detailed memory diagnostics [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--select_top_phenotype_per_cluster"), type="logical", default=FALSE,
     help="If true, fine-map only the strongest phenotype per LeafCutter cluster [default \"%default\"]", metavar="type"),
   optparse::make_option(c("--top_phenotype_pvalue_column"), type="character", default="qval",

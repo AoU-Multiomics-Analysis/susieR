@@ -42,6 +42,10 @@ check_batch_provenance <- function() {
     top_phenotype_pvalue_column = "qval", plink_memory_mb = 1024L))
   batch_files <- unlist(opt[c("pgen", "pvar", "psam")], use.names = FALSE)
   a <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(a$settings$memory_debug, FALSE))
+  opt$memory_debug <- TRUE
+  debug <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(debug$settings$memory_debug, TRUE))
   manifest <- file.path(directory, "provenance.json")
   jsonlite::write_json(a, manifest, auto_unbox = TRUE, na = "null")
   serialized <- jsonlite::read_json(manifest)
@@ -75,6 +79,27 @@ check_batch_provenance <- function() {
   stopifnot(variants$inputs$variant_list$present,
     identical(variants$settings$variant_filter_mode, "variant_list"))
 }
+check_memory_debug_cli <- function() {
+  parser <- optparse::OptionParser(option_list = batch_options)
+  defaults <- optparse::parse_args(parser, args = character(), print_help_and_exit = FALSE)
+  stopifnot("Memory diagnostics must be off by default" =
+              identical(defaults$memory_debug, FALSE))
+  enabled <- optparse::parse_args(parser, args = "--memory-debug", print_help_and_exit = FALSE)
+  stopifnot(identical(enabled$memory_debug, TRUE))
+  original <- options("susier.memory_debug")
+  on.exit(options(original), add = TRUE)
+  for (flag in c(FALSE, TRUE)) {
+    options(susier.memory_debug = !flag)
+    observed <- NULL
+    failed <- tryCatch(withCallingHandlers(
+      runPgenSusieBatch(list(memory_debug = flag)),
+      error = function(condition) observed <<- getOption("susier.memory_debug")
+    ), error = function(condition) condition)
+    stopifnot(inherits(failed, "error"), identical(observed, flag),
+              identical(getOption("susier.memory_debug"), !flag))
+  }
+}
+check_memory_debug_cli()
 if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "additional")) check_additional_ownership()
 if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "provenance")) check_batch_provenance()
 message("PGEN batch input tests passed")

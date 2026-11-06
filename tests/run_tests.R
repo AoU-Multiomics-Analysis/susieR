@@ -26,7 +26,7 @@ if (length(missing_packages) > 0L) {
 
 test_files <- c(
   "test_covariate_reader.R", "test_susie_performance.R", "test_finemap_paths.R",
-  "test_covariate_explained_outputs.R"
+  "test_covariate_explained_outputs.R", "test_memory_debug.R"
 )
 for (test_file in test_files) {
   test_path <- file.path(repo_dir, "tests", test_file)
@@ -40,4 +40,5 @@ run_covariate_reader_tests(repo_dir)
 run_susie_performance_tests(repo_dir)
 run_finemap_path_tests(repo_dir)
 run_covariate_explained_output_tests(repo_dir)
+run_memory_debug_tests(repo_dir)
 message("All SuSiE regression tests passed.")

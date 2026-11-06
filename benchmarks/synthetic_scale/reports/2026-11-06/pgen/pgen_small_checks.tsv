@@ -1,0 +1,20 @@
+check	passed
+global indexes, inclusive bounds, orientation and exact hardcalls	TRUE
+missing hardcalls remain missing	TRUE
+metadata strings preserve IID NA, leading zeros and allele NA	TRUE
+default result is a plain double matrix	TRUE
+chromosome prefixes are case insensitive	TRUE
+sample subset is restored to requested order	TRUE
+single variant keeps both matrix dimensions	TRUE
+empty region fails	TRUE
+unknown sample fails	TRUE
+duplicate requested samples fail	TRUE
+empty sample subset fails	TRUE
+reversed bounds fail	TRUE
+duplicate PSAM IID fails	TRUE
+PSAM and PGEN sample counts must match	TRUE
+query multiallelic record fails	TRUE
+multiallelic record outside query does not remove biallelic records	TRUE
+NA filter boundary expectations	TRUE
+mixed legacy missing codes change three filter decisions	TRUE
+normalization before filtering restores matched TSV and PGEN values	TRUE

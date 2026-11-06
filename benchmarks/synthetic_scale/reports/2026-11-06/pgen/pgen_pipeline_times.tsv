@@ -1,0 +1,3 @@
+mode	samples	variants	genotype_read_seconds	fit_seconds	entrypoint_seconds	wall_seconds	peak_rss_gib
+tabix_pipeline	10000	20000	25.189	33.406000000000006	72.114	72.688161	7.382416
+pgen_pipeline	10000	20000	2.01	34.382000000000005	49.694	50.330354	7.591553

@@ -1,0 +1,4 @@
+mode	storage_type	runs	median_reader_seconds	min_reader_seconds	max_reader_seconds	median_peak_rss_gib	matrix_gib
+pgen_integer	integer	1	1.318	1.318	1.318	2.590118	0.7470254823565483
+pgen_read	double	3	1.6610000000000005	1.66	1.666	4.166962	1.4920835420489311
+tabix_read	double	3	23.677	23.665	23.82	5.314865	1.4920835420489311

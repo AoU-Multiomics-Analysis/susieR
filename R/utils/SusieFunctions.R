@@ -242,6 +242,66 @@ merge_phenotype_windows <- function(phenotype_meta, phenotype_ids, cis_distance)
   dplyr::bind_rows(merged)
 }
 
+# Store the small covariate factor instead of a sample-by-sample matrix.
+emptyCovariateExplainedVariants <- function() {
+  tibble::tibble(variant_id = character(), input_scale = double(),
+                 residual_sd = double(), residual_sd_ratio = double())
+}
+
+createCovariateAdjustment <- function(covariates_matrix) {
+  state <- new.env(parent = emptyenv())
+  state$hat <- NULL
+  state$legacy_cache <- NULL
+  state$covariate_explained_variants <- emptyCovariateExplainedVariants()
+  list(
+    covariates = covariates_matrix,
+    projection = covariates_matrix %*% solve(crossprod(covariates_matrix)),
+    state = state
+  )
+}
+
+# Inputs must already follow the covariate sample order, as in the dense path.
+residualizeWithCovariates <- function(adjustment, values, force_dense = FALSE,
+                                      variant_ids = NULL) {
+  dense <- force_dense || !is.null(adjustment$state$hat)
+  if (dense) {
+    if (is.null(adjustment$state$hat)) {
+      adjustment$state$hat <- diag(nrow(adjustment$covariates)) -
+        adjustment$projection %*% t(adjustment$covariates)
+    }
+    residuals <- adjustment$state$hat %*% values
+    if (is.null(variant_ids)) return(residuals)
+  } else {
+    residuals <- values - adjustment$projection %*% crossprod(adjustment$covariates, values)
+  }
+  # SuSiE can amplify rounding errors when it scales an almost fully
+  # explained column. Compare column scales without a full squared matrix.
+  input_matrix <- if (is.null(dim(values))) matrix(values, ncol = 1L) else values
+  input_scale <- pmax(matrixStats::colSds(input_matrix), abs(colMeans(input_matrix)))
+  residual_sd <- matrixStats::colSds(residuals)
+  if (!dense && any(input_scale > 0 & residual_sd <= 1e-8 * input_scale, na.rm = TRUE)) {
+    # Keep the original multiplication dimensions and operation order for the
+    # complete input. A column subset can use different BLAS accumulation.
+    adjustment$state$hat <- diag(nrow(adjustment$covariates)) -
+      adjustment$projection %*% t(adjustment$covariates)
+    residuals <- adjustment$state$hat %*% values
+    if (!is.null(variant_ids)) residual_sd <- matrixStats::colSds(residuals)
+  }
+  if (!is.null(variant_ids)) {
+    if (length(variant_ids) != ncol(residuals)) {
+      stop("Variant IDs must match the genotype columns")
+    }
+    flagged <- which(input_scale > 0 & residual_sd <= 1e-8 * input_scale)
+    adjustment$state$covariate_explained_variants <- tibble::tibble(
+      variant_id = as.character(variant_ids[flagged]),
+      input_scale = unname(input_scale[flagged]),
+      residual_sd = unname(residual_sd[flagged]),
+      residual_sd_ratio = unname(residual_sd[flagged] / input_scale[flagged])
+    )
+  }
+  residuals
+}
+
 prepareReusableGenotype <- function(phenotype_ids,
                                     se,
                                     genotype_file,
@@ -250,7 +310,8 @@ prepareReusableGenotype <- function(phenotype_ids,
                                     ancestry_data = NULL,
                                     MAF = 0,
                                     variant_list = NULL,
-                                    additional_genotypes = NULL) {
+                                    additional_genotypes = NULL,
+                                    force_dense = FALSE) {
   phenotype_ids <- unname(unlist(phenotype_ids))
   if (!is.character(genotype_file)) {
     message("Reusable genotype matrix requested but genotype input is already pre-loaded; using per-phenotype path")
@@ -284,7 +345,7 @@ prepareReusableGenotype <- function(phenotype_ids,
   gene_vector <- eQTLUtils::extractPhentypeFromSE(first_phenotype, se, "counts")
   sample_ids <- gene_vector$genotype_id
   covariates_matrix <- cbind(covariates[sample_ids, ], 1)
-  hat <- diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
+  adjustment <- createCovariateAdjustment(covariates_matrix)
 
   genotype_matrix <- eQTLUtils::extractGenotypeMatrixFromDosage(
     chr = merged_windows$chromosome,
@@ -313,7 +374,8 @@ prepareReusableGenotype <- function(phenotype_ids,
   gc()
 
   message("Computing reusable gt_hat")
-  gt_hat <- hat %*% t(gt_std)
+  gt_hat <- residualizeWithCovariates(adjustment, t(gt_std), force_dense = force_dense,
+                                     variant_ids = variant_names)
   rm(gt_std)
   gc()
 
@@ -322,7 +384,10 @@ prepareReusableGenotype <- function(phenotype_ids,
     variant_names = variant_names,
     variant_info = parse_variant_ids(variant_names),
     sample_ids = sample_ids,
-    hat = hat
+    covariate_adjustment = adjustment,
+    dense = !is.null(adjustment$state$hat),
+    covariate_explained_variants = adjustment$state$covariate_explained_variants,
+    phenotype_ids = phenotype_ids
   )
 }
 
@@ -384,6 +449,26 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
   return(MergedGenotypes)
 }
 
+# Keep the original model settings and calculate marginal scores after fitting.
+fitSusieModel <- function(X, y, legacy = FALSE,
+                          covariate_explained_variants = emptyCovariateExplainedVariants()) {
+  message("Fitting SuSiE model")
+  fitted <- susieR::susie(X, y,
+                          L = 10,
+                          estimate_residual_variance = TRUE,
+                          estimate_prior_variance = TRUE,
+                          scaled_prior_variance = 0.1,
+                          verbose = TRUE,
+                          compute_univariate_zscore = legacy,
+                          min_abs_corr = 0.5)
+  if (!legacy) {
+    message("Calculating marginal z-scores")
+    fitted$z <- computeMarginalZScores(X, y)
+  }
+  fitted$covariate_explained_variants <- covariate_explained_variants
+  fitted
+}
+
 # Fine-map one phenotype by loading local cis dosages, residualizing expression
 # and genotypes against covariates, then fitting susieR.
 finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL){
@@ -397,6 +482,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
 
   if (!is.null(reusable_genotype)) {
     message("Using reusable residualized genotype matrix")
+    cache_state <- reusable_genotype$covariate_adjustment$state
+    if (!is.null(cache_state$legacy_cache)) {
+      reusable_genotype <- cache_state$legacy_cache
+    }
     sample_ids <- reusable_genotype$sample_ids
     gene_vector <- gene_vector %>%
       dplyr::filter(genotype_id %in% sample_ids)
@@ -405,7 +494,29 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
       stop("Reusable genotype matrix sample set does not match phenotype samples")
     }
     gene_vector <- gene_vector[sample_match, , drop = FALSE]
-    expression_vector <- reusable_genotype$hat %*% gene_vector$phenotype_value_std
+    expression_vector <- residualizeWithCovariates(reusable_genotype$covariate_adjustment,
+                                                  gene_vector$phenotype_value_std)
+    if (!reusable_genotype$dense &&
+        !is.null(reusable_genotype$covariate_adjustment$state$hat)) {
+      # A later response can require legacy arithmetic after a fast genotype
+      # cache was made. Rebuild the same full merged window, then subset it.
+      message("Rebuilding the reusable genotype matrix with the legacy covariate adjustment")
+      legacy_cache <- prepareReusableGenotype(
+        reusable_genotype$phenotype_ids, se, genotype_file, covariates,
+        cis_distance, ancestry_data = ancestry_data, MAF = MAF,
+        variant_list = variant_list, additional_genotypes = additional_genotypes,
+        force_dense = TRUE
+      )
+      if (!identical(legacy_cache$sample_ids, reusable_genotype$sample_ids) ||
+          !identical(legacy_cache$variant_names, reusable_genotype$variant_names)) {
+        stop("Legacy reusable genotype rebuild changed the sample or variant order")
+      }
+      cache_state$legacy_cache <- legacy_cache
+      cache_state$hat <- NULL
+      reusable_genotype <- legacy_cache
+      expression_vector <- residualizeWithCovariates(reusable_genotype$covariate_adjustment,
+                                                    gene_vector$phenotype_value_std)
+    }
     names(expression_vector) <- sample_ids
 
     phenotype_chr <- normalize_chr(gene_meta$chromosome)
@@ -440,14 +551,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
         requested_window_start = phenotype_start,
         requested_window_end = phenotype_end
       )
-      fitted <- susieR::susie(gt_hat, expression_vector,
-                              L = 10,
-                              estimate_residual_variance = TRUE,
-                              estimate_prior_variance = TRUE,
-                              scaled_prior_variance = 0.1,
-                              verbose = TRUE,
-                              compute_univariate_zscore = TRUE,
-                              min_abs_corr = 0.5)
+      explained_variants <- reusable_genotype$covariate_explained_variants %>%
+        dplyr::filter(variant_id %in% variant_names)
+      fitted <- fitSusieModel(gt_hat, expression_vector, legacy = reusable_genotype$dense,
+                              covariate_explained_variants = explained_variants)
       fitted$variant_id = variant_names
       return(fitted)
     }
@@ -471,10 +578,11 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     message('Using pre-loaded genotype matrix')
     genotype_matrix <- genotype_file
     }
-  # Residualize expression against covariates using a hat matrix.
+  # Residualize expression with the same covariates and intercept.
   message('Residualizing gene expression')
-  hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
-  expression_vector = hat %*% gene_vector$phenotype_value_std
+  adjustment <- createCovariateAdjustment(covariates_matrix)
+  expression_values <- gene_vector$phenotype_value_std
+  expression_vector <- residualizeWithCovariates(adjustment, expression_values)
   names(expression_vector) = gene_vector$genotype_id
 
   if (!is.null(additional_genotypes)) {
@@ -487,9 +595,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
    expression_vector <-  expression_vector[intersecting_samples, , drop = FALSE]
    names(expression_vector) <- rownames(expression_vector)
    covariates_matrix = covariates_matrix[names(expression_vector),]
-   hat = diag(nrow(covariates_matrix)) - covariates_matrix %*% solve(crossprod(covariates_matrix)) %*% t(covariates_matrix)
+   adjustment <- createCovariateAdjustment(covariates_matrix)
    subset_gene_vector <- gene_vector %>% filter(genotype_id %in% intersecting_samples)
-   expression_vector <- hat %*% subset_gene_vector$phenotype_value_std
+   expression_values <- subset_gene_vector$phenotype_value_std
+   expression_vector <- residualizeWithCovariates(adjustment, expression_values)
    names(expression_vector) <- subset_gene_vector$genotype_id  
   }
 
@@ -539,12 +648,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   gt_std <- standardize_rows(gt_matrix)   # still variants x samples
   rm(gt_matrix)
   gc()
-  # Apply hat: hat %*% gt_std (hat dims: n x n, gt_std: variants x n -> need to transpose carefully)
-  # Note: hat * gt_std must produce a matrix with same orientation as before
-  # If susie expects variants x samples, we need to compute gt_hat = t(hat %*% t(gt_std))
+  # The fit uses samples by variants; apply the small factor in that orientation.
   message("DEBUG: before computing gt_hat (local objects and sizes):")
   debug_list_locals(environment(), top_n = 100)
-  debug_print_specific(environment(), var_names = c("gt_std", "covariates_matrix", "hat"))
+  debug_print_specific(environment(), var_names = c("gt_std", "covariates_matrix", "adjustment"))
   # Estimate memory needed for gt_hat if gt_std exists
   if (exists("gt_std", envir = environment()) && !is.null(dim(get("gt_std", envir = environment())))) {
       p <- dim(get("gt_std", envir = environment()))[1]   # variants
@@ -555,20 +662,24 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   message("GC before gt_hat:")
   print(gc())
   message('Computing gt_hat')
-  gt_hat <- hat %*% t(gt_std)  # result: variants x samples
+  gt_hat <- residualizeWithCovariates(adjustment, t(gt_std), variant_ids = variant_names)
+  legacy <- !is.null(adjustment$state$hat)
+  if (legacy) {
+    # Genotypes can trigger the guard after the response was residualized.
+    # Repeat the response with the same original dense matrix in that case.
+    expression_names <- names(expression_vector)
+    expression_vector <- residualizeWithCovariates(adjustment, expression_values)
+    names(expression_vector) <- expression_names
+  }
+  explained_variants <- adjustment$state$covariate_explained_variants
   rm(gt_std)
+  rm(adjustment)
   gc()
 
 
   # Fit the SuSiE model on residualized genotypes and expression.
-  fitted <- susieR::susie(gt_hat, expression_vector,
-                          L = 10,
-                          estimate_residual_variance = TRUE, 
-                          estimate_prior_variance = TRUE,
-                          scaled_prior_variance = 0.1,
-                          verbose = TRUE,
-                          compute_univariate_zscore = TRUE,
-                          min_abs_corr = 0.5)
+  fitted <- fitSusieModel(gt_hat, expression_vector, legacy = legacy,
+                          covariate_explained_variants = explained_variants)
   fitted$variant_id = variant_names
   return(fitted)
 }
@@ -577,18 +688,26 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
 # and per-effect log-Bayes factors.
 extractResults <- function(susie_object){
   credible_sets = susie_object$sets$cs
+  flagged_variant_ids <- if (is.null(susie_object$covariate_explained_variants)) {
+    character()
+  } else {
+    susie_object$covariate_explained_variants$variant_id
+  }
   cs_list = list()
   susie_object$sets$purity = dplyr::as_tibble(susie_object$sets$purity) %>%
     dplyr::mutate(
       cs_id = rownames(susie_object$sets$purity),
       cs_size = NA,
       cs_log10bf = NA,
-      overlapped = NA
+      overlapped = NA,
+      has_covariate_explained_variant = FALSE
     )
   added_variants = c()
   for (index in seq_along(credible_sets)){
     cs_variants = credible_sets[[index]]
     cs_id = susie_object$sets$cs_index[[index]]
+    susie_object$sets$purity$has_covariate_explained_variant[index] <-
+      any(susie_object$variant_id[cs_variants] %in% flagged_variant_ids)
 
     is_overlapped = any(cs_variants %in% added_variants)
     susie_object$sets$purity$overlapped[index] = is_overlapped
@@ -614,7 +733,8 @@ extractResults <- function(susie_object){
         cs_min_r2 = min.abs.corr^2,
         low_purity = min.abs.corr < 0.5
       )  %>%
-      dplyr::select(cs_id, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity) 
+      dplyr::select(cs_id, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity,
+                    has_covariate_explained_variant)
   } else{
     purity_df = dplyr::tibble()
   }
@@ -648,7 +768,9 @@ extractResults <- function(susie_object){
   if(nrow(df) > 0 && nrow(purity_df) > 0 && ncol(lbf_df) > 10){ #ncol(lbf_df) <= 10 only if the number of variants in the region is < 10
     cs_df = purity_df
     variant_df = dplyr::left_join(posterior_df, df, by = "variant_id") %>%
-      dplyr::left_join(cs_df, by = "cs_id")
+      dplyr::left_join(cs_df, by = "cs_id") %>%
+      dplyr::mutate(has_covariate_explained_variant =
+                      dplyr::coalesce(has_covariate_explained_variant, FALSE))
   } else{
     cs_df = NULL
     variant_df = NULL

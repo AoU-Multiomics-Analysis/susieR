@@ -1,0 +1,9 @@
+stage	elapsed_seconds
+load_data	7.243
+phenotype_residualization	0.6950000000000003
+genotype_residualization	87.60400000000001
+input_fingerprints	25.569999999999993
+fit	52.714
+fine_mapping_total	198.52300000000002
+output_processing	0.603999999999985
+entrypoint_total	210.185

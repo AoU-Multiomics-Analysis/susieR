@@ -77,6 +77,7 @@ task susieR {
         File lbfParquet = "${OutputPrefix}.lbf_variable.parquet"
         File FullSusieParquet = "${OutputPrefix}.full_susie.parquet"
         File VariantPositionSummary = "${OutputPrefix}.variant_position_summary.tsv"
+        File CovariateExplainedVariants = "${OutputPrefix}.covariate_explained_variants.tsv"
         File SusieObject = "${OutputPrefix}_susie.rds"
     }
 }
@@ -131,6 +132,7 @@ workflow SusieROnlyWorkflow {
             File SusielbfParquet = susieR.lbfParquet
             File FullSusieParquet = susieR.FullSusieParquet
             File VariantPositionSummary = susieR.VariantPositionSummary
+            File CovariateExplainedVariants = susieR.CovariateExplainedVariants
             File SusieObject = susieR.SusieObject
         }
 }

@@ -1,0 +1,33 @@
+{
+  "source_input_dir": "<generated-input-directory>",
+  "samples": 10000,
+  "tsv_variants": 20000,
+  "pgen_variants": 20004,
+  "query_chromosome": "1",
+  "query_start": 100050,
+  "query_end": 1100000,
+  "first_chr1_pgen_index": 3,
+  "last_chr1_pgen_index": 20002,
+  "missing_convention": "NA; original -1 values were normalized before filtering",
+  "original_na_cells": 100000,
+  "original_sentinel_cells": 100000,
+  "normalized_hardcall_counts": {
+    "0": 107206063,
+    "1": 75549171,
+    "2": 17044766,
+    "missing": 200000
+  },
+  "observed_values_equal": true,
+  "missing_masks_equal": true,
+  "pgen_roundtrip_exact": true,
+  "pgen_roundtrip_variants_checked": 20000,
+  "pgen_roundtrip_cells_checked": 200000000,
+  "legacy_variants_retained": 20000,
+  "normalized_variants_retained": 20000,
+  "filter_masks_equal": true,
+  "filter_decisions_changed": 0,
+  "filter_expression": "rowSums(round(genotype, 0), na.rm = TRUE) != 0; evaluated by row",
+  "validation_scope": "Normalization and exact PGEN roundtrip checks cover every chr1 cell. Separate benchmark checks compare both complete reader outputs.",
+  "flanks": "PGEN/PVAR only: two chr2 records before chr1 and two after chr1",
+  "original_fixture_json": "fixture.json is an unchanged copy describing the source fixture"
+}

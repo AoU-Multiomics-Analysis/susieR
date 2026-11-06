@@ -26,6 +26,7 @@ FunctionPath <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
 # definitions, and debug utilities.
 source(file.path(FunctionPath, "ImportFunctions.R"))
 source(file.path(FunctionPath, "InitFunctions.R"))
+source(file.path(FunctionPath, "SusiePerformance.R"))
 source(file.path(FunctionPath, "SusieFunctions.R"))
 source(file.path(FunctionPath, "OptParser.R"))
 source(file.path(FunctionPath, "MemoryHelpers.R"))
@@ -46,7 +47,7 @@ list2env(data_list,envir = environment())
 message('Init empty dataframes')
 empty_variant_df <- InitEmptyVariantDf()
 empty_lbf_df <- InitEmptyLbfDf()
-empty_in_cs_variant_df <- InitEmptyInCSVariantDf()
+empty_in_cs_variant_df <- InitEmptyInCSVariantDf(include_covariate_diagnostics = TRUE)
 empty_cs_df <- InitEmptyCS()
 
 
@@ -108,6 +109,25 @@ results = purrr::map(selected_phenotypes, ~finemapPhenotype(., selected_qtl_grou
                                                               ))
 saveRDS(results,file = paste0(opt$out_prefix,'_susie.rds') )
 
+# Write diagnostics before the no-credible-set branch. Older fitted objects
+# have no diagnostic field and contribute no rows.
+covariate_explained_variants <- dplyr::bind_rows(
+  dplyr::tibble(molecular_trait_id = character(), variant = character(),
+                input_scale = double(), residual_sd = double(),
+                residual_sd_ratio = double()),
+  purrr::imap_dfr(results, function(fitted, phenotype_id) {
+    diagnostic <- fitted$covariate_explained_variants
+    if (is.null(diagnostic) || nrow(diagnostic) == 0L) return(NULL)
+    diagnostic %>%
+      dplyr::transmute(molecular_trait_id = phenotype_id, variant = variant_id,
+                       input_scale, residual_sd, residual_sd_ratio)
+  })
+)
+covariate_explained_report_file <- paste0(opt$out_prefix, ".covariate_explained_variants.tsv")
+message("Writing covariate-explained variant diagnostics: ",
+        nrow(covariate_explained_variants), " rows to ", covariate_explained_report_file)
+readr::write_tsv(covariate_explained_variants, covariate_explained_report_file)
+
 #Only proceed if the there are more than 0 phenotypes
 message("Number of overall unique group_ids: ", length(unique(phenotype_list$group_id)))
 message("Number of groups in the batch: ", length(selected_group_ids))
@@ -159,14 +179,16 @@ if(nrow(cs_df) > 0){
   cs_df = dplyr::left_join(cs_df, region_df, by = "phenotype_id") %>%
     dplyr::mutate(cs_index = cs_id) %>%
     dplyr::mutate(cs_id = paste(phenotype_id, cs_index, sep = "_")) %>%
-    dplyr::transmute(molecular_trait_id = phenotype_id, cs_id, cs_index, region, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity)
+    dplyr::transmute(molecular_trait_id = phenotype_id, cs_id, cs_index, region, cs_log10bf, cs_avg_r2, cs_min_r2, cs_size, low_purity,
+                     has_covariate_explained_variant)
   
   #Extract information about variants that belong to a credible set
 # The primary in-credible-set table keeps only variants from non-low-purity
 # credible sets.
   in_cs_variant_df <- dplyr::filter(variant_df, !is.na(cs_index) & !low_purity) %>%
     dplyr::transmute(molecular_trait_id = phenotype_id, variant = variant_id, chromosome = chr, position = pos, 
-                     ref, alt, cs_id, cs_index, region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean, posterior_sd, cs_log10bf)
+                     ref, alt, cs_id, cs_index, region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean, posterior_sd, cs_log10bf,
+                     has_covariate_explained_variant)
 } else{
   #Initialize empty tibbles with correct column names
   in_cs_variant_df = empty_in_cs_variant_df

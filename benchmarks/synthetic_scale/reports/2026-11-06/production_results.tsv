@@ -1,0 +1,2 @@
+samples	variants	entrypoint_seconds	wall_seconds	peak_rss_GiB	iterations	converged	credible_sets	max_PIP_difference_from_original	max_PIP_difference_from_accepted	max_z_difference_from_accepted
+10000	20000	75.227	75.917426	6.75264	4	TRUE	3	1.3965517631220337e-10	0	2.4513724383723456e-13

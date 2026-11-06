@@ -77,8 +77,9 @@ empty_lbf_df = dplyr::tibble(
 empty_lbf_df
 }
 
-# Return an empty credible-set variant table.
-InitEmptyInCSVariantDf <- function() {
+# Return an empty credible-set variant table. The main entry point enables
+# diagnostics; the checkpointed formatter keeps its existing output columns.
+InitEmptyInCSVariantDf <- function(include_covariate_diagnostics = FALSE) {
 empty_in_cs_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
   variant = character(),
@@ -98,6 +99,11 @@ empty_in_cs_variant_df = dplyr::tibble(
   posterior_sd = numeric(),
   cs_log10bf = numeric()
     )
+if (include_covariate_diagnostics) {
+  empty_in_cs_variant_df <- dplyr::mutate(
+    empty_in_cs_variant_df, has_covariate_explained_variant = logical()
+  )
+}
 empty_in_cs_variant_df
 }
 
@@ -112,7 +118,8 @@ empty_cs_df = dplyr::tibble(
   cs_avg_r2 = numeric(),
   cs_min_r2 = numeric(),
   cs_size = numeric(),
-  low_purity = numeric()
+  low_purity = numeric(),
+  has_covariate_explained_variant = logical()
 )
 empty_cs_df
 

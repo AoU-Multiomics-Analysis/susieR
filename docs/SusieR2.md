@@ -52,6 +52,12 @@ The planner sorts genes by chromosome and position. It derives each feature posi
 
 Seeds depend on the base seed, original gene ID, and original outcome ID. They do not depend on batch size, input order, or output paths. Changing batch size preserves the seed for each outcome. Each RDS contains a named list of that gene's outcome fits.
 
+The fitting stage reuses identical matrix-vector products, expected residual-error values, and raw column standard deviations within one fit. It also uses `matrixStats::colVars()` for SuSiE's constant-column warning check. The model settings, optimizer, convergence checks, and iteration logs are unchanged. Each fit uses private copies of the audited SuSiE functions; the installed namespace is unchanged. Cached input references are cleared after success or failure. Unrecognized package sources, unsupported matrix types, and unsupported model modes use the original SuSiE path. Source guards match the pinned image source; local source checks do not constitute an image or Terra execution test.
+
+Post-fit marginal scores reuse the same raw input means, standard deviations, and finite-value validation when the complete input matrix matches. Existing numerical fallback rules remain in place. These statistics stay local to the fit and are excluded from saved models. Each PGEN outcome's extracted tables are shared by its credible-set count and final output formatting; output schemas and ordering are unchanged.
+
+The [IKZF1 cis benchmark](../benchmarks/synthetic_scale/reports/2026-11-06-real-ikzf1/README.md) compared complete results for 8,895 samples and 23,376 fitted variants. All saved scientific artifacts matched byte for byte. Mean fit and marginal-score time decreased from 98.0 to 53.4 seconds; the gene step, including input-verification overhead, decreased from 121.9 to 78.2 seconds.
+
 ## Localization and commands
 
 All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Files remain typed inside chromosome structs until command rendering. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. These files become typed outputs for the fit tasks.

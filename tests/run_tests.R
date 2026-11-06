@@ -25,7 +25,8 @@ if (length(missing_packages) > 0L) {
 }
 
 test_files <- c(
-  "test_covariate_reader.R", "test_susie_performance.R", "test_finemap_paths.R",
+  "test_covariate_reader.R", "test_susie_performance.R", "test_susie_fit_caches.R",
+  "test_marginal_stat_reuse.R", "test_susie_native_fallback.R", "test_finemap_paths.R",
   "test_covariate_explained_outputs.R", "test_memory_debug.R"
 )
 for (test_file in test_files) {
@@ -38,6 +39,17 @@ for (test_file in test_files) {
 
 run_covariate_reader_tests(repo_dir)
 run_susie_performance_tests(repo_dir)
+run_susie_native_fallback_tests(repo_dir)
+fit_helpers <- new.env(parent = globalenv())
+functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH",
+                             unset = file.path(repo_dir, "R", "utils"))
+sys.source(file.path(functions_path, "SusiePerformance.R"), envir = fit_helpers)
+if (isTRUE(fit_helpers$.susieFitSourceSupported(asNamespace("susieR")))) {
+  run_susie_fit_cache_tests(repo_dir)
+  run_marginal_stat_reuse_tests(repo_dir)
+} else {
+  message("Installed SuSiE source uses native fallback; cache-specific tests skipped.")
+}
 run_finemap_path_tests(repo_dir)
 run_covariate_explained_output_tests(repo_dir)
 run_memory_debug_tests(repo_dir)

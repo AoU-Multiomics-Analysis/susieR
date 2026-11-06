@@ -1,6 +1,7 @@
 # Shared output formatting for the legacy and PGEN entry points.
 # Keep the native fitted objects and the existing output schemas unchanged.
-formatSusieOutputs <- function(results, region_df) {
+# Optional extractions must come from these same fitted outcomes.
+formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   outcome_ids <- names(results)
   if (!is.list(results) || (length(results) &&
       (is.null(outcome_ids) || anyNA(outcome_ids) || any(!nzchar(outcome_ids)) ||
@@ -11,6 +12,35 @@ formatSusieOutputs <- function(results, region_df) {
       anyNA(region_df$phenotype_id) || anyDuplicated(region_df$phenotype_id) ||
       !all(outcome_ids %in% region_df$phenotype_id)) {
     stop("region_df must map each unique outcome ID to one region", call. = FALSE)
+  }
+  if (!is.null(extracted_results)) {
+    extracted_ids <- names(extracted_results)
+    if (!is.list(extracted_results) || (length(extracted_results) &&
+        (is.null(extracted_ids) || anyNA(extracted_ids) || any(!nzchar(extracted_ids)) ||
+         anyDuplicated(extracted_ids)))) {
+      stop("extracted_results must be a named list with unique nonempty outcome IDs", call. = FALSE)
+    }
+    if (length(extracted_results) != length(results) || !setequal(extracted_ids, outcome_ids)) {
+      stop("extracted_results must contain exactly one extraction for each outcome", call. = FALSE)
+    }
+    required_tables <- c("cs_df", "variant_df", "lbf_df")
+    complete <- vapply(extracted_results, function(extracted) {
+      is.list(extracted) && all(required_tables %in% names(extracted)) &&
+        !anyDuplicated(names(extracted))
+    }, logical(1))
+    if (!all(complete)) {
+      stop("Each extraction must contain cs_df, variant_df, and lbf_df", call. = FALSE)
+    }
+    valid_tables <- vapply(extracted_results, function(extracted) {
+      all(vapply(extracted[required_tables], function(table) {
+        is.null(table) || is.data.frame(table)
+      }, logical(1)))
+    }, logical(1))
+    if (!all(valid_tables)) {
+      stop("Extracted tables must be data frames or NULL", call. = FALSE)
+    }
+    # Use fitted-outcome order even when supplied extractions have another order.
+    extracted_results <- extracted_results[outcome_ids]
   }
   empty_variant_df <- InitEmptyVariantDf()
   empty_lbf_df <- InitEmptyLbfDf()
@@ -28,7 +58,8 @@ formatSusieOutputs <- function(results, region_df) {
                          input_scale, residual_sd, residual_sd_ratio)
     })
   )
-  res <- purrr::map(results, extractResults) %>% purrr::transpose()
+  if (is.null(extracted_results)) extracted_results <- purrr::map(results, extractResults)
+  res <- purrr::transpose(extracted_results)
   variant_df <- purrr::map_df(res$variant_df, identity, .id = "phenotype_id")
   if (nrow(variant_df) > 0L) {
     variant_df <- variant_df %>%

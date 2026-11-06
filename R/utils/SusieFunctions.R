@@ -453,18 +453,20 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
 fitSusieModel <- function(X, y, legacy = FALSE,
                           covariate_explained_variants = emptyCovariateExplainedVariants()) {
   message("Fitting SuSiE model")
-  fitted <- susieR::susie(X, y,
+  postprocess <- if (legacy) NULL else function(fitted, stats) {
+    message("Calculating marginal z-scores")
+    fitted$z <- computeMarginalZScores(X, y, .x_stats = stats)
+    fitted
+  }
+  fitted <- runSusieWithFitOptimizations(X, y,
                           L = 10,
                           estimate_residual_variance = TRUE,
                           estimate_prior_variance = TRUE,
                           scaled_prior_variance = 0.1,
                           verbose = TRUE,
                           compute_univariate_zscore = legacy,
-                          min_abs_corr = 0.5)
-  if (!legacy) {
-    message("Calculating marginal z-scores")
-    fitted$z <- computeMarginalZScores(X, y)
-  }
+                          min_abs_corr = 0.5,
+                          .postprocess = postprocess)
   fitted$covariate_explained_variants <- covariate_explained_variants
   fitted
 }

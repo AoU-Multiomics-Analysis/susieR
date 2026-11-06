@@ -145,6 +145,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
   readr::write_tsv(empty_tables$covariate_explained_variants,
                    paste0(prefix, ".covariate_explained_variants.tsv"))
   results <- list()
+  extracted_results <- list()
   log_line(paste0("Gene start: ", gene_id, "; outcomes: ", length(outcomes)))
   for (id in outcome_ids) {
     outcome <- outcomes[[id]]
@@ -175,7 +176,8 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     results[[id]] <- fitted
     converged <- isTRUE(fitted$converged)
     status <- if (converged) "CONVERGED" else "NONCONVERGED"
-    exported_sets <- extractResults(fitted)$cs_df
+    extracted_results[[id]] <- extractResults(fitted)
+    exported_sets <- extracted_results[[id]]$cs_df
     count <- if (is.null(exported_sets)) 0L else as.integer(nrow(exported_sets))
     index <- dplyr::bind_rows(index, tibble::tibble(
       gene_id = gene_id, gene_key = gene_key, outcome_id = id,
@@ -188,7 +190,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
   regions <- tibble::tibble(
     phenotype_id = outcome_ids,
     region = vapply(outcomes, function(outcome) outcome$region, character(1)))
-  tables <- formatSusieOutputs(results, regions)
+  tables <- formatSusieOutputs(results, regions, extracted_results = extracted_results)
   files <- c(writeSusieOutputs(results, tables, prefix), extra_files)
   log_line(paste0("Gene complete: ", gene_id))
   hashed_files <- files[names(files) != "provenance"]

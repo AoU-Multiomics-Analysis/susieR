@@ -32,6 +32,18 @@ def load_yaml(path):
 
 
 class ImageContractTests(unittest.TestCase):
+    def test_package_recording_uses_supported_micromamba_json_output(self):
+        """Catch the unsupported list --explicit flag that stopped image CI."""
+        dockerfile = (IMAGE_DIR / "Dockerfile").read_text().replace("\\\n", " ")
+        records = re.findall(r"micromamba list\s+([^>]+)>\s*([^\s&]+)", dockerfile)
+        self.assertEqual(len(records), 1, "Record the installed package metadata once")
+        arguments, output = records[0]
+        self.assertIn("--json", shlex.split(arguments),
+                      "micromamba 1.5.3 supports JSON package metadata")
+        self.assertNotIn("--explicit", shlex.split(arguments),
+                         "micromamba 1.5.3 list does not support --explicit")
+        self.assertEqual(output, "/opt/conda/susier-v2-conda-packages.json")
+
     def test_config_job_installs_wdl_test_dependency_before_tests(self):
         """Catch a missing WDL Python module in the lightweight config job."""
         workflow = load_yaml(WORKFLOW)

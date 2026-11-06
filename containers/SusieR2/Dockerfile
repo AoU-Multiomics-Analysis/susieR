@@ -10,7 +10,7 @@ ENV SUSIER_EQTLUTILS_SOURCE_SHA=26242562a4e244334fd9691d03bc1ef4d2d6c1d9
 
 COPY --chown=$MAMBA_USER:$MAMBA_USER containers/SusieR2/environment.yml /tmp/environment.yml
 RUN micromamba install --yes --name base --strict-channel-priority --file /tmp/environment.yml && \
-    micromamba list --name base --explicit > /opt/conda/susier-v2-conda-explicit.txt && \
+    micromamba list --name base --json > /opt/conda/susier-v2-conda-packages.json && \
     micromamba clean --all --yes
 
 # Install only these checked archives. Conda supplies all their dependencies.

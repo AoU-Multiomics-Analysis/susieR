@@ -13,6 +13,12 @@ RUN micromamba install --yes --name base --strict-channel-priority --file /tmp/e
     micromamba list --name base --json > /opt/conda/susier-v2-conda-packages.json && \
     micromamba clean --all --yes
 
+# Check native headers before downloading or compiling the R source packages.
+RUN test -r /opt/conda/include/zlib.h && \
+    test -r /opt/conda/include/zstd.h && \
+    test -r /opt/conda/include/libdeflate.h && \
+    pkg-config --modversion zlib libzstd libdeflate
+
 # Install only these checked archives. Conda supplies all their dependencies.
 # Upstream tag 0.16.6 points to the fixed susieR commit below.
 RUN Rscript -e ' \

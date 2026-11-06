@@ -71,10 +71,20 @@ class ImageContractTests(unittest.TestCase):
             "r-assertthat", "r-caret", "r-igraph", "r-lobstr", "r-rcpp",
             "r-cpp11", "r-cpp11armadillo", "r-mixsqp", "r-reshape", "r-crayon",
             "cxx-compiler", "make", "pkg-config", "plink2", "htslib",
+            "zlib", "zstd", "libdeflate",
             "bioconductor-genomicranges", "bioconductor-summarizedexperiment",
             "bioconductor-rsamtools",
         }:
             self.assertIn(name, pins, f"Required image dependency is missing: {name}")
+
+    def test_native_headers_are_checked_before_source_installation(self):
+        """Catch missing compression development headers before R compilation."""
+        dockerfile = (IMAGE_DIR / "Dockerfile").read_text()
+        source_install = dockerfile.index("RUN Rscript -e")
+        for header in ("zlib.h", "zstd.h", "libdeflate.h"):
+            check = f"test -r /opt/conda/include/{header}"
+            self.assertIn(check, dockerfile, f"Check required native header: {header}")
+            self.assertLess(dockerfile.index(check), source_install)
 
     def test_image_copies_complete_explicit_runtime_source(self):
         """Catch missing CLI helpers and broad copies of unrelated source files."""

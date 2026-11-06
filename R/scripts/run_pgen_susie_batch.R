@@ -135,13 +135,13 @@ runPgenSusieBatch <- function(opt) {
   previous_memory_debug <- options(susier.memory_debug = isTRUE(opt$memory_debug))
   on.exit(options(previous_memory_debug), add = TRUE)
   required_names <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed",
-                      "qtl_results", "covariates", "sample_list")
+                      "qtl_results", "covariates")
   if (any(vapply(opt[required_names], is.null, logical(1)))) {
     stop("Supply all required PGEN, worklist and phenotype input arguments",
          call. = FALSE)
   }
   requireBatchLocalFiles(opt[required_names])
-  optional_names <- c("ancestry", "variant_list", "additional_genotypes")
+  optional_names <- c("sample_list", "ancestry", "variant_list", "additional_genotypes")
   optional_paths <- opt[optional_names]
   optional_paths <- optional_paths[!vapply(optional_paths, is.null, logical(1))]
   if (length(optional_paths)) requireBatchLocalFiles(optional_paths)
@@ -226,6 +226,12 @@ runPgenSusieBatch <- function(opt) {
   }
   batch_files <- paste0(pgen_prefix, c(".pgen", ".pvar", ".psam"))
   requireBatchLocalFiles(batch_files)
+  # Keep the complete genotype cohort for ancestry MAF. Only the phenotype
+  # metadata uses the inferred sample intersection.
+  reader <- openPgenReader(batch_files[[1L]], batch_files[[2L]], batch_files[[3L]])
+  on.exit(closePgenReader(reader), add = TRUE)
+  message("OPEN batch PGEN: ", reader$raw_sample_count, " samples, ",
+          nrow(reader$variants), " variants")
   legacy_options <- list(
     expression_matrix = opt$phenotype_bed, phenotype_list = opt$qtl_results,
     covariates = opt$covariates, genotype_matrix = batch_files[[1L]],
@@ -238,6 +244,9 @@ runPgenSusieBatch <- function(opt) {
     select_top_phenotype_per_cluster = isTRUE(opt$select_top_phenotype_per_cluster),
     top_phenotype_pvalue_column = opt$top_phenotype_pvalue_column
   )
+  if (is.null(opt$sample_list)) {
+    legacy_options$genotype_sample_ids <- reader$sample_ids
+  }
   data <- LoadData(legacy_options)
   additional_table <- if (is.null(opt$additional_genotypes)) NULL else
     ImportAdditionalGenotypes(opt$additional_genotypes)
@@ -260,11 +269,15 @@ runPgenSusieBatch <- function(opt) {
          call. = FALSE)
   }
   se <- makePgenBatchExperiment(data)
-  reader <- openPgenReader(batch_files[[1L]], batch_files[[2L]], batch_files[[3L]])
-  on.exit(closePgenReader(reader), add = TRUE)
-  message("OPEN batch PGEN: ", reader$raw_sample_count, " samples, ",
-          nrow(reader$variants), " variants")
   provenance <- makePgenBatchProvenance(opt, batch_id, batch_files, version)
+  provenance$settings$sample_selection <- if (is.null(opt$sample_list))
+    "genotype_phenotype_intersection" else "provided_list"
+  provenance$settings$sample_order <- if (is.null(opt$sample_list)) "psam" else "sample_list"
+  provenance$settings$sample_count <- ncol(se)
+  provenance$settings$sample_ids_sha256 <- digest::digest(
+    as.character(SummarizedExperiment::colData(se)$genotype_id),
+    algo = "sha256", serializeVersion = 2
+  )
   compact <- purrr::map(unique(worklist$gene_id), function(gene_id) {
     selected <- dplyr::filter(worklist, .data$gene_id == .env$gene_id)
     additional_genotypes <- additionalGenotypesForGene(additional_table, selected$phenotype_id)

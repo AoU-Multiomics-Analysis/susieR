@@ -1,22 +1,8 @@
 {
-  "SusieR2.ChromosomePgens": [
-    {
-      "chromosome": "1",
-      "pgen": "gs://YOUR_BUCKET/genotypes/chr1.pgen",
-      "pvar": "gs://YOUR_BUCKET/genotypes/chr1.pvar",
-      "psam": "gs://YOUR_BUCKET/genotypes/chr1.psam"
-    },
-    {
-      "chromosome": "2",
-      "pgen": "gs://YOUR_BUCKET/genotypes/chr2.pgen",
-      "pvar": "gs://YOUR_BUCKET/genotypes/chr2.pvar",
-      "psam": "gs://YOUR_BUCKET/genotypes/chr2.psam"
-    }
-  ],
+  "SusieR2.PgenManifest": "gs://YOUR_BUCKET/genotypes/pgen_manifest.tsv",
   "SusieR2.PhenotypeBed": "gs://YOUR_BUCKET/phenotypes/expression.bed",
   "SusieR2.QtlResults": "gs://YOUR_BUCKET/phenotypes/qtl_results.tsv",
   "SusieR2.Covariates": "gs://YOUR_BUCKET/phenotypes/covariates.tsv",
-  "SusieR2.SampleList": "gs://YOUR_BUCKET/phenotypes/sample_list.tsv",
   "SusieR2.LegacyMissingCode": "NA",
   "SusieR2.BatchSize": 50,
   "SusieR2.CisDistance": 1000000,

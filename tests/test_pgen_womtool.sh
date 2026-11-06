@@ -17,9 +17,12 @@ import sys
 
 with open(sys.argv[1]) as stream:
     inputs = json.load(stream)
-required = {"ChromosomePgens", "PhenotypeBed", "QtlResults", "Covariates",
-            "SampleList", "LegacyMissingCode"}
+required = {"PgenManifest", "PhenotypeBed", "QtlResults", "Covariates", "LegacyMissingCode"}
 missing = {"SusieR2." + name for name in required} - inputs.keys()
 assert not missing, "WOMtool did not extract required inputs: " + str(sorted(missing))
+actual_required = {name for name, description in inputs.items() if "optional" not in description}
+assert actual_required == {"SusieR2." + name for name in required}, "Unexpected required workflow inputs"
+assert inputs["SusieR2.SampleList"].startswith("File?"), "SampleList must be optional"
+assert "SusieR2.ChromosomePgens" not in inputs, "The old array input must be replaced by the manifest"
 print("PGEN WDL validation and input metadata checks passed")
 PY

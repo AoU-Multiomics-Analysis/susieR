@@ -1,0 +1,3 @@
+chromosome	pgen	pvar	psam
+1	gs://YOUR_BUCKET/genotypes/chr1.pgen	gs://YOUR_BUCKET/genotypes/chr1.pvar	gs://YOUR_BUCKET/genotypes/samples.psam
+2	gs://YOUR_BUCKET/genotypes/chr2.pgen	gs://YOUR_BUCKET/genotypes/chr2.pvar	gs://YOUR_BUCKET/genotypes/samples.psam

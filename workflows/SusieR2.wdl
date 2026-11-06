@@ -1,7 +1,7 @@
 version 1.0
 
-# WDL 1.0 has no keys(Map). An ordered array keeps chromosome IDs and Files
-# together. Planner indices refer to positions in this input array.
+# Planner indices refer to manifest row positions. The workflow promotes the
+# validated path fields to typed Files before supplying a chromosome to a batch.
 struct ChromosomePgen {
   String chromosome
   File pgen
@@ -11,11 +11,11 @@ struct ChromosomePgen {
 
 workflow SusieR2 {
   input {
-    Array[ChromosomePgen]+ ChromosomePgens
+    File PgenManifest
     File PhenotypeBed
     File QtlResults
     File Covariates
-    File SampleList
+    File? SampleList
     String LegacyMissingCode
     File? GeneMap
     File? Ancestry
@@ -41,12 +41,9 @@ workflow SusieR2 {
     Int MaxRetries = 1
   }
 
-  scatter (chromosome_pgen in ChromosomePgens) {
-    String chromosome = chromosome_pgen.chromosome
-  }
   call PlanPgenSusie {
     input:
-      chromosomes = chromosome,
+      pgen_manifest = PgenManifest,
       phenotype_bed = PhenotypeBed,
       qtl_results = QtlResults,
       gene_map = GeneMap,
@@ -60,6 +57,19 @@ workflow SusieR2 {
       preemptible_attempts = PreemptibleAttempts,
       max_retries = MaxRetries
   }
+
+  # The planner opens only the small manifest. These declarations make its
+  # genotype paths explicit File inputs that Cromwell localizes for each batch.
+  Array[Array[String]] pgen_rows = read_tsv(PlanPgenSusie.NormalizedManifest)
+  scatter (pgen_row in pgen_rows) {
+    ChromosomePgen chromosome_pgen = object {
+      chromosome: pgen_row[0],
+      pgen: pgen_row[1],
+      pvar: pgen_row[2],
+      psam: pgen_row[3]
+    }
+  }
+  Array[ChromosomePgen] ChromosomePgens = chromosome_pgen
 
   scatter (i in range(length(PlanPgenSusie.Worklists))) {
     # Keep the two array lookups separate for Dockstore's Cromwell parser.
@@ -136,7 +146,7 @@ workflow SusieR2 {
 
 task PlanPgenSusie {
   input {
-    Array[String]+ chromosomes
+    File pgen_manifest
     File phenotype_bed
     File qtl_results
     File? gene_map
@@ -165,11 +175,11 @@ task PlanPgenSusie {
         fi
       done
     }
-    require_readable '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}'
+    require_readable '~{sub(pgen_manifest, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}'
     args=(
       --phenotype-bed '~{sub(phenotype_bed, "'", "'\"'\"'")}'
       --qtl-results '~{sub(qtl_results, "'", "'\"'\"'")}'
-      --chromosomes-file chromosomes.txt
+      --pgen-manifest '~{sub(pgen_manifest, "'", "'\"'\"'")}'
       --batch-size '~{batch_size}'
       --cis-distance '~{cis_distance}'
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'
@@ -184,8 +194,6 @@ task PlanPgenSusie {
     for (( j=0; j<${#args[@]}; j++ )); do
       if [[ "${args[j]}" == --gene-map ]]; then require_readable "${args[j+1]}"; fi
     done
-    # Keep the generated File typed so Cromwell maps its command-time path.
-    cp '~{write_lines(chromosomes)}' chromosomes.txt
     Rscript /opt/r/scripts/plan_pgen_susie.R "${args[@]}"
     echo 'COMPLETE PGEN batch planning'
   >>>
@@ -196,6 +204,7 @@ task PlanPgenSusie {
     Array[Int] ChromosomeIndices = read_json("plan/batch_chromosome_indices.json")
     File ExpectedOutcomes = "plan/expected_outcomes.tsv"
     File BatchIndex = "plan/batch_index.tsv"
+    File NormalizedManifest = "plan/chromosome_pgens.tsv"
     File TaskStdout = stdout()
     File TaskStderr = stderr()
   }
@@ -216,7 +225,7 @@ task RunPgenSusieBatch {
     File phenotype_bed
     File qtl_results
     File covariates
-    File sample_list
+    File? sample_list
     String missing_code
     File? ancestry
     File? variant_list
@@ -252,7 +261,7 @@ task RunPgenSusieBatch {
         fi
       done
     }
-    require_readable '~{sub(pgen_files.pgen, "'", "'\"'\"'")}' '~{sub(pgen_files.pvar, "'", "'\"'\"'")}' '~{sub(pgen_files.psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}' '~{sub(sample_list, "'", "'\"'\"'")}'
+    require_readable '~{sub(pgen_files.pgen, "'", "'\"'\"'")}' '~{sub(pgen_files.pvar, "'", "'\"'\"'")}' '~{sub(pgen_files.psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
     args=(
       --pgen '~{sub(pgen_files.pgen, "'", "'\"'\"'")}'
       --pvar '~{sub(pgen_files.pvar, "'", "'\"'\"'")}'
@@ -261,7 +270,6 @@ task RunPgenSusieBatch {
       --phenotype-bed '~{sub(phenotype_bed, "'", "'\"'\"'")}'
       --qtl-results '~{sub(qtl_results, "'", "'\"'\"'")}'
       --covariates '~{sub(covariates, "'", "'\"'\"'")}'
-      --sample-list '~{sub(sample_list, "'", "'\"'\"'")}'
       '--missing-code=~{sub(missing_code, "'", "'\"'\"'")}'
       --cis-distance '~{cis_distance}'
       --maf '~{maf}'
@@ -270,6 +278,9 @@ task RunPgenSusieBatch {
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'
       --output-dir batch
     )
+    if [[ -n '~{sub(select_first([sample_list, ""]), "'", "'\"'\"'")}' ]]; then
+      args+=(--sample-list '~{sub(select_first([sample_list, ""]), "'", "'\"'\"'")}')
+    fi
     if [[ -n '~{sub(select_first([ancestry, ""]), "'", "'\"'\"'")}' ]]; then
       args+=(--ancestry '~{sub(select_first([ancestry, ""]), "'", "'\"'\"'")}')
     fi
@@ -287,7 +298,7 @@ task RunPgenSusieBatch {
     fi
     for (( j=0; j<${#args[@]}; j++ )); do
       case "${args[j]}" in
-        --ancestry|--variant-list|--additional-genotypes) require_readable "${args[j+1]}" ;;
+        --sample-list|--ancestry|--variant-list|--additional-genotypes) require_readable "${args[j+1]}" ;;
       esac
     done
     Rscript /opt/r/scripts/run_pgen_susie_batch.R "${args[@]}"

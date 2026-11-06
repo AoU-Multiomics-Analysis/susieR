@@ -30,6 +30,52 @@ pgenAutosome <- function(chromosome) {
   as.integer(stripped)
 }
 
+.validatePgenManifest <- function(manifest) {
+  columns <- c("chromosome", "pgen", "pvar", "psam")
+  if (!is.data.frame(manifest) || !identical(names(manifest), columns)) {
+    stop("PGEN manifest schema must be chromosome, pgen, pvar, psam in that order", call. = FALSE)
+  }
+  if (!nrow(manifest)) stop("PGEN manifest must contain at least one chromosome", call. = FALSE)
+  for (column in columns) pgenCheckIds(manifest[[column]], paste("PGEN manifest", column))
+  chromosomes <- pgenAutosome(manifest$chromosome)
+  if (anyDuplicated(chromosomes)) {
+    stop("PGEN manifest contains duplicate chromosome names or aliases", call. = FALSE)
+  }
+  for (column in c("pgen", "pvar", "psam")) {
+    # Inspect path text only. WDL promotes it to File before batch localization.
+    values <- manifest[[column]]
+    absolute <- startsWith(values, "/") |
+      grepl("^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]+(/|$)", values)
+    if (any(!absolute)) {
+      stop("PGEN manifest ", column, " paths must be absolute cloud or local paths", call. = FALSE)
+    }
+  }
+  tibble::as_tibble(manifest, .name_repair = "minimal")
+}
+
+# Read the small manifest only; genotype locations are not opened here.
+readPgenManifest <- function(manifest_file) {
+  manifest <- suppressWarnings(readr::read_tsv(
+    pgenLocalFile(manifest_file, "PGEN manifest"),
+    col_types = readr::cols(.default = readr::col_character()),
+    na = character(), trim_ws = FALSE, name_repair = "minimal", show_col_types = FALSE
+  ))
+  if (nrow(readr::problems(manifest))) stop("PGEN manifest TSV parse error", call. = FALSE)
+  .validatePgenManifest(manifest)
+}
+
+# WDL read_tsv() splits fields without CSV quote decoding. Preserve literal text.
+writePgenManifest <- function(manifest, output_file) {
+  manifest <- .validatePgenManifest(manifest)
+  if (!is.character(output_file) || length(output_file) != 1L || is.na(output_file) ||
+      !nzchar(output_file) || grepl("[\t\r\n]", output_file) ||
+      grepl("^[A-Za-z][A-Za-z0-9+.-]*://", output_file)) {
+    stop("Normalized PGEN manifest output must be a local path", call. = FALSE)
+  }
+  readr::write_tsv(manifest, output_file, col_names = FALSE, quote = "none", escape = "none")
+  invisible(output_file)
+}
+
 pgenRelativePath <- function(path) {
   # read_lines task outputs must remain paths relative to the execution directory.
   absolute <- strsplit(normalizePath(path, mustWork = TRUE), "/", fixed = TRUE)[[1]]

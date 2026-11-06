@@ -50,9 +50,41 @@ readQtlCovariateTable <- function(path) {
   parsed
 }
 
+# Check sample IDs before an intersection or data-frame conversion can hide duplicates.
+.validatePgenSampleIds <- function(sample_ids, label) {
+  if (!is.character(sample_ids) || !length(sample_ids) || anyNA(sample_ids) ||
+      any(!nzchar(sample_ids)) || any(grepl("[\r\n]", sample_ids)) ||
+      anyDuplicated(sample_ids)) {
+    stop(label, " must contain unique, nonempty sample ID strings", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# Select the genotype/molecular trait intersection without a covariate-based subset.
+inferPgenSampleMetadata <- function(genotype_sample_ids, molecular_sample_ids,
+                                    covariate_sample_ids) {
+  .validatePgenSampleIds(genotype_sample_ids, "Genotype sample IDs")
+  .validatePgenSampleIds(molecular_sample_ids, "Molecular trait sample IDs")
+  .validatePgenSampleIds(covariate_sample_ids, "Covariate sample IDs")
+  sample_ids <- genotype_sample_ids[genotype_sample_ids %in% molecular_sample_ids]
+  if (!length(sample_ids)) {
+    stop("No shared genotype and molecular trait sample IDs", call. = FALSE)
+  }
+  missing_covariates <- !sample_ids %in% covariate_sample_ids
+  if (any(missing_covariates)) {
+    stop("Covariates are missing retained sample IDs (", sum(missing_covariates),
+         " samples)", call. = FALSE)
+  }
+  tibble::tibble(sample_id = sample_ids, genotype_id = sample_ids, qtl_group = "ALL")
+}
+
 # Load QTL covariates and orient them as a sample x covariate numeric matrix.
-importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE){
+importQtlmapCovariates <- function(covariates_path,load_colnames = FALSE,
+                                    validate_sample_ids = FALSE){
   pc_matrix = readQtlCovariateTable(covariates_path)
+  if (isTRUE(validate_sample_ids)) {
+    .validatePgenSampleIds(names(pc_matrix)[-1L], "Covariate sample IDs")
+  }
   col_names <-  pc_matrix %>% pull(ID)
   pc_transpose = t(pc_matrix[,-1])
   colnames(pc_transpose) = pc_matrix$SampleID
@@ -274,18 +306,41 @@ LoadData <- function(opt_list) {
         stop('Genotype file is missing')
     }
      
-    expression_matrix = fread(opt_list$expression_matrix,header = TRUE) %>% dplyr::rename('phenotype_id' = 4)
+    infer_samples <- is.null(opt_list$sample_meta) && !is.null(opt_list$genotype_sample_ids)
+    expression_matrix = fread(opt_list$expression_matrix,header = TRUE)
+    if (infer_samples) {
+        # fread treats a literal NA header as missing. Keep exact TSV headers
+        # for sample inference without changing its parsing of phenotype values.
+        molecular_headers <- names(readr::read_tsv(
+            opt_list$expression_matrix, n_max = 0L,
+            col_types = readr::cols(.default = readr::col_character()),
+            na = character(), name_repair = "minimal", show_col_types = FALSE
+        ))
+        if (length(molecular_headers) != ncol(expression_matrix)) {
+            stop("Molecular trait headers do not match the matrix columns", call. = FALSE)
+        }
+        .validatePgenSampleIds(opt_list$genotype_sample_ids, "Genotype sample IDs")
+        .validatePgenSampleIds(molecular_headers[-(1:4)], "Molecular trait sample IDs")
+        names(expression_matrix) <- molecular_headers
+    }
+    expression_matrix = expression_matrix %>% dplyr::rename('phenotype_id' = 4)
     subset_matrix <- expression_matrix %>% select(1,2,3,4)
     print(colnames(subset_matrix))
     message('Loading covariates')
     
     if(!is.null(opt_list$cv_meta)) {
-        covariates_matrix = importQtlmapCovariates(opt_list$covariates,load_colnames = TRUE)
+        covariates_matrix = importQtlmapCovariates(opt_list$covariates,load_colnames = TRUE,
+                                                  validate_sample_ids = infer_samples)
     } else {
-        covariates_matrix = importQtlmapCovariates(opt_list$covariates,load_colnames = FALSE)
+        covariates_matrix = importQtlmapCovariates(opt_list$covariates,load_colnames = FALSE,
+                                                  validate_sample_ids = infer_samples)
     }
     exclude_cov = apply(covariates_matrix, 2, sd) != 0
-    covariates_matrix = covariates_matrix[,exclude_cov]
+    if (infer_samples) {
+        covariates_matrix = covariates_matrix[,exclude_cov, drop = FALSE]
+    } else {
+        covariates_matrix = covariates_matrix[,exclude_cov]
+    }
 
     # Convert BED columns into phenotype metadata required by eQTLUtils.
     # Use the interval midpoint so 1 bp site/TSS intervals and already-expanded
@@ -321,7 +376,7 @@ LoadData <- function(opt_list) {
     # Convert the sample list into the sample metadata shape required by
     # eQTLUtils; CV workflows can omit this because metadata is stored in CV RDS.
     message('Loading sample metadata')
-    if(is.null(opt_list$cv_meta) && is.null(opt_list$sample_meta)) {
+    if(is.null(opt_list$cv_meta) && is.null(opt_list$sample_meta) && !infer_samples) {
           stop('Sample metadata missing')
         }  
     if (!is.null(opt_list$sample_meta)) {
@@ -329,6 +384,13 @@ LoadData <- function(opt_list) {
                 dplyr::rename('sample_id' =1 ) %>% 
                 mutate(genotype_id = sample_id,qtl_group = 'ALL') %>% 
                 mutate(sample_id = as.character(sample_id),genotype_id = as.character(genotype_id))
+            }else if (infer_samples) {
+            sample_metadata <- inferPgenSampleMetadata(
+                opt_list$genotype_sample_ids, names(expression_matrix)[-(1:4)],
+                rownames(covariates_matrix)
+            )
+            message("Selected ", nrow(sample_metadata),
+                    " shared genotype and molecular trait samples in PSAM order")
             }else {
             sample_metadata <- NULL
         }

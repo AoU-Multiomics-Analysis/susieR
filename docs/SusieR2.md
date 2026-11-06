@@ -32,6 +32,7 @@ Initial PGEN support is for diploid, biallelic variants on autosomes 1–22. The
 | `BatchSize` | 50 genes |
 | `CisDistance` | 1000000 bases |
 | `BaseSeed` | 1 |
+| `MemoryDebug` | false |
 | `MAF` | 0 |
 | `SelectTopPhenotypePerCluster` | false |
 | `TopPhenotypePvalueColumn` | `qval` |
@@ -44,6 +45,8 @@ Initial PGEN support is for diploid, biallelic variants on autosomes 1–22. The
 | `PreemptibleAttempts` / `MaxRetries` | 3 / 1 |
 
 Select an image digest through `DockerImage` when a fixed image is required. Keep `PlinkMemoryMB` below the batch memory limit. Disk size must cover the localized chromosome files, extracted batch files, and gene outputs. CPU, memory, disk, and retry inputs are Terra runtime settings. PLINK extraction uses one thread.
+
+Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` to enable object-size reports and two extra garbage collections per fit. For a local PGEN batch, add `--memory-debug`. The legacy `susie.R` command accepts `--memory_debug true`. Direct R callers can use `options(susier.memory_debug = TRUE)`. The default keeps progress and error logs, variant diagnostics, and the three garbage collections after large matrices are removed. This setting does not change model calculations. A batch restores the caller's R option when it returns or fails.
 
 The planner sorts genes by chromosome and position. It derives each feature position from `floor((BED start + BED end) / 2)`. Cis windows use inclusive coordinates, with the query start clamped to 1. PLINK uses `--extract range` for these 1-based regions. Disjoint windows retain their gaps. Extraction retains the complete genotype sample cohort. Ancestry MAF filtering therefore runs before the phenotype sample subset. The fit keeps the existing phenotype missing-value behavior. The initial image and batch command use one BLAS thread for reproducible arithmetic.
 

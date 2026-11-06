@@ -24,6 +24,7 @@ workflow SusieR2 {
     Int BatchSize = 50
     Int CisDistance = 1000000
     Int BaseSeed = 1
+    Boolean MemoryDebug = false
     Float MAF = 0.0
     Boolean SelectTopPhenotypePerCluster = false
     String TopPhenotypePvalueColumn = "qval"
@@ -76,6 +77,7 @@ workflow SusieR2 {
         cis_distance = CisDistance,
         maf = MAF,
         base_seed = BaseSeed,
+        memory_debug = MemoryDebug,
         select_top_phenotype_per_cluster = SelectTopPhenotypePerCluster,
         top_phenotype_pvalue_column = TopPhenotypePvalueColumn,
         plink_memory_mb = PlinkMemoryMB,
@@ -211,6 +213,7 @@ task RunPgenSusieBatch {
     Int cis_distance
     Float maf
     Int base_seed
+    Boolean memory_debug
     Boolean select_top_phenotype_per_cluster
     String top_phenotype_pvalue_column
     Int plink_memory_mb
@@ -267,6 +270,9 @@ task RunPgenSusieBatch {
     fi
     if [[ ~{true="true" false="false" select_top_phenotype_per_cluster} == true ]]; then
       args+=(--select-top-phenotype-per-cluster)
+    fi
+    if [[ ~{true="true" false="false" memory_debug} == true ]]; then
+      args+=(--memory-debug)
     fi
     for (( j=0; j<${#args[@]}; j++ )); do
       case "${args[j]}" in

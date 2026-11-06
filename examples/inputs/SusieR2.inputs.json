@@ -21,6 +21,7 @@
   "SusieR2.BatchSize": 50,
   "SusieR2.CisDistance": 1000000,
   "SusieR2.BaseSeed": 1,
+  "SusieR2.MemoryDebug": false,
   "SusieR2.MAF": 0.0,
   "SusieR2.SelectTopPhenotypePerCluster": false,
   "SusieR2.TopPhenotypePvalueColumn": "qval",

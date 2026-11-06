@@ -58,6 +58,7 @@ makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version) {
   list(batch_id = batch_id, plink_version = plink_version, inputs = inputs,
     extracted_genotypes = purrr::map(setNames(batch_files, c("pgen", "pvar", "psam")), file_record),
     settings = list(maf = opt$maf, variant_filter_mode = filter_mode,
+      memory_debug = isTRUE(opt$memory_debug),
       cis_distance = opt$cis_distance, missing_code = opt$missing_code,
       select_top_phenotype_per_cluster = isTRUE(opt$select_top_phenotype_per_cluster),
       top_phenotype_pvalue_column = opt$top_phenotype_pvalue_column,
@@ -131,6 +132,8 @@ makePgenBatchExperiment <- function(data) {
 }
 
 runPgenSusieBatch <- function(opt) {
+  previous_memory_debug <- options(susier.memory_debug = isTRUE(opt$memory_debug))
+  on.exit(options(previous_memory_debug), add = TRUE)
   required_names <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed",
                       "qtl_results", "covariates", "sample_list")
   if (any(vapply(opt[required_names], is.null, logical(1)))) {
@@ -317,6 +320,8 @@ batch_options <- list(
   batchOption("ancestry"), batchOption("variant-list"),
   batchOption("additional-genotypes"), batchOption("plink2", default = "plink2"),
   batchOption("plink-memory-mb", "integer", 1024L),
+  optparse::make_option("--memory-debug", action = "store_true", default = FALSE,
+                        dest = "memory_debug", help = "Print detailed memory diagnostics"),
   optparse::make_option("--select-top-phenotype-per-cluster", action = "store_true",
                         default = FALSE, dest = "select_top_phenotype_per_cluster"),
   batchOption("top-phenotype-pvalue-column", default = "qval")

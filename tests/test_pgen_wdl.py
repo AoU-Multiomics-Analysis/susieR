@@ -63,6 +63,14 @@ class PgenWdlTests(unittest.TestCase):
                          {'chromosome': 'String', 'pgen': 'File', 'pvar': 'File', 'psam': 'File'})
         self.assertIsNone(inputs['LegacyMissingCode'].expr)
         self.assertEqual(inputs['BatchSize'].expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 50)
+        self.assertIsInstance(inputs['MemoryDebug'].type, WDL.Type.Boolean)
+        self.assertFalse(inputs['MemoryDebug'].expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value)
+        batch_call = next(node for node in walk(self.doc.workflow)
+                          if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        for enabled in (False, True):
+            env = WDL.Env.Bindings().bind('MemoryDebug', WDL.Value.Boolean(enabled))
+            self.assertEqual(batch_call.inputs['memory_debug'].eval(env, WDL.StdLib.Base('1.0')).value,
+                             enabled)
         for name in ('GeneMap', 'Ancestry', 'VariantList', 'AdditionalGenotypes'):
             self.assertIsInstance(inputs[name].type, WDL.Type.File)
             self.assertTrue(inputs[name].type.optional)
@@ -221,6 +229,7 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
                 self.assertEqual(args[args.index('--batch-size') + 1], '100')
             elif task.name == 'RunPgenSusieBatch':
                 self.assertEqual(args[0], '/opt/r/scripts/run_pgen_susie_batch.R')
+                self.assertEqual('--memory-debug' in args, optional)
                 self.assertIn('--missing-code=' + localized['missing_code'].value, args)
                 self.assertNotIn('--missing-code', args)
                 for name, value in localized['pgen_files'].value.items():

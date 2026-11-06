@@ -41,6 +41,7 @@ message('Functions Loaded')
 
 option_list <- Optlist()
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
+options(susier.memory_debug = isTRUE(opt$memory_debug))
 
 # LoadData centralizes all WDL-provided inputs and returns named objects used
 # throughout this script.

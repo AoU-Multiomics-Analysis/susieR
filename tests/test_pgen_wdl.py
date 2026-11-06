@@ -44,6 +44,12 @@ def has_file_type(typ):
     return False
 
 
+class CommandStdLib(WDL.StdLib.Base):
+    # Evaluate task-command writers after the test has localized File values.
+    def _virtualize_filename(self, filename):
+        return filename
+
+
 class PgenWdlTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -104,8 +110,14 @@ class PgenWdlTests(unittest.TestCase):
                        WDL.Value.from_json(WDL.Type.Array(WDL.Type.Int()), [1, 1, 0]))
         call = next(node for node in walk(self.doc.workflow)
                     if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        index = next(node for node in walk(self.doc.workflow)
+                     if isinstance(node, WDL.Tree.Decl) and node.name == 'chromosome_index')
+        self.assertIsInstance(index.type, WDL.Type.Int)
         for i, chromosome in enumerate(('1', '1', '2')):
-            selected = call.inputs['pgen_files'].eval(env.bind('i', WDL.Value.Int(i)), WDL.StdLib.Base('1.0'))
+            iteration_env = env.bind('i', WDL.Value.Int(i))
+            chromosome_index = index.expr.eval(iteration_env, WDL.StdLib.Base('1.0'))
+            iteration_env = iteration_env.bind(index.name, chromosome_index)
+            selected = call.inputs['pgen_files'].eval(iteration_env, WDL.StdLib.Base('1.0'))
             self.assertEqual(selected.value['chromosome'].value, chromosome)
             for ext in ('pgen', 'pvar', 'psam'):
                 self.assertIsInstance(selected.value[ext], WDL.Value.File)
@@ -113,6 +125,29 @@ class PgenWdlTests(unittest.TestCase):
 
     def test_no_workflow_file_writers(self):
         self.assertEqual(workflow_writers(self.doc.workflow), [])
+
+    def test_command_file_lists_preserve_generated_file_types(self):
+        # Cromwell maps a generated File to its container path at the final
+        # command placeholder. A String wrapper would hide that File mapping.
+        writers = []
+        for task in self.doc.tasks:
+            for part in task.command.parts:
+                if not isinstance(part, WDL.Expr.Placeholder):
+                    continue
+                for node in walk(part.expr):
+                    if isinstance(node, WDL.Expr.Apply) and node.function_name == 'write_lines':
+                        writers.append((task.name, str(node.arguments[0])))
+                        self.assertIs(part.expr, node)
+                        self.assertIsInstance(part.expr.type, WDL.Type.File)
+                        expected_item_type = WDL.Type.String if task.name == 'PlanPgenSusie' else WDL.Type.File
+                        self.assertIsInstance(node.arguments[0].type.item_type, expected_item_type)
+        self.assertCountEqual(writers, [
+            ('PlanPgenSusie', 'chromosomes'),
+            ('AggregatePgenSusie', 'summary_files'),
+            ('AggregatePgenSusie', 'credible_set_files'),
+            ('AggregatePgenSusie', 'index_files'),
+            ('AggregatePgenSusie', 'diagnostic_files'),
+        ])
 
     def test_static_guard_rejects_writers_in_all_workflow_scopes(self):
         # Test the guard itself: nested workflow expressions must not escape it.
@@ -193,7 +228,7 @@ class PgenWdlTests(unittest.TestCase):
             env = WDL.Env.Bindings()
             for name, value in localized.items():
                 env = env.bind(name, value)
-            command = task.command.eval(env, WDL.StdLib.Base('1.0')).value
+            command = task.command.eval(env, CommandStdLib('1.0', write_dir=str(cwd))).value
             (cwd / 'command.sh').write_text(command)
             bindir = cwd / 'bin'
             bindir.mkdir()
@@ -278,6 +313,11 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
             for failure in ('uri', 'missing'):
                 with self.subTest(task=task.name, failure=failure):
                     self.execute(task, broken=(name, failure))
+
+    def test_aggregate_file_lists_reject_unresolved_cloud_paths(self):
+        for name in ('summary_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
+            with self.subTest(file_list=name):
+                self.execute(self.tasks['AggregatePgenSusie'], broken=(name, 'uri'))
 
 
 if __name__ == '__main__':

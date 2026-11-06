@@ -62,9 +62,11 @@ workflow SusieR2 {
   }
 
   scatter (i in range(length(PlanPgenSusie.Worklists))) {
+    # Keep the two array lookups separate for Dockstore's Cromwell parser.
+    Int chromosome_index = PlanPgenSusie.ChromosomeIndices[i]
     call RunPgenSusieBatch {
       input:
-        pgen_files = ChromosomePgens[PlanPgenSusie.ChromosomeIndices[i]],
+        pgen_files = ChromosomePgens[chromosome_index],
         worklist = PlanPgenSusie.Worklists[i],
         phenotype_bed = PlanPgenSusie.PhenotypeBeds[i],
         qtl_results = QtlResults,
@@ -174,7 +176,8 @@ task PlanPgenSusie {
     for (( j=0; j<${#args[@]}; j++ )); do
       if [[ "${args[j]}" == --gene-map ]]; then require_readable "${args[j+1]}"; fi
     done
-    printf '%s\n' '~{sub(sep("\n", chromosomes), "'", "'\"'\"'")}' > chromosomes.txt
+    # Keep the generated File typed so Cromwell maps its command-time path.
+    cp '~{write_lines(chromosomes)}' chromosomes.txt
     Rscript /opt/r/scripts/plan_pgen_susie.R "${args[@]}"
     echo 'COMPLETE PGEN batch planning'
   >>>
@@ -335,13 +338,15 @@ task AggregatePgenSusie {
       done
     }
     require_readable '~{sub(expected_outcomes, "'", "'\"'\"'")}'
-    printf '%s\n' '~{sub(sep("\n", summary_files), "'", "'\"'\"'")}' > summary_files.txt
+    # Command-time writers receive localized Files. Direct File placeholders
+    # also let Cromwell map each engine-generated list into the container.
+    cp '~{write_lines(summary_files)}' summary_files.txt
     while IFS= read -r path; do require_readable "$path"; done < summary_files.txt
-    printf '%s\n' '~{sub(sep("\n", credible_set_files), "'", "'\"'\"'")}' > credible_set_files.txt
+    cp '~{write_lines(credible_set_files)}' credible_set_files.txt
     while IFS= read -r path; do require_readable "$path"; done < credible_set_files.txt
-    printf '%s\n' '~{sub(sep("\n", index_files), "'", "'\"'\"'")}' > index_files.txt
+    cp '~{write_lines(index_files)}' index_files.txt
     while IFS= read -r path; do require_readable "$path"; done < index_files.txt
-    printf '%s\n' '~{sub(sep("\n", diagnostic_files), "'", "'\"'\"'")}' > diagnostic_files.txt
+    cp '~{write_lines(diagnostic_files)}' diagnostic_files.txt
     while IFS= read -r path; do require_readable "$path"; done < diagnostic_files.txt
     Rscript /opt/r/scripts/aggregate_pgen_susie.R \
       --expected-outcomes '~{sub(expected_outcomes, "'", "'\"'\"'")}' \

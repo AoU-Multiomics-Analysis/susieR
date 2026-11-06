@@ -64,6 +64,8 @@ All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. File
 
 Each task uses named CLI arguments. Optional arguments are added only when their Files are present. The aggregate task writes newline-delimited lists of the already localized companion Files inside its command. Cloud URIs in a table are metadata and cannot cause automatic localization. Required inputs must be supplied as explicit WDL Files. The commands and R scripts check that local input files are readable before computation. They report an unresolved cloud URI as a localization error.
 
+The command placeholders use WDL 1.0 `write_lines()` to create these lists after input localization. Their generated paths remain typed Files until command rendering, so Cromwell can map them into the container. No file-writing function runs at workflow scope. CI validates the complete PGEN descriptor and input metadata with pinned WOMtool 85, in addition to miniwdl and the command-localization tests.
+
 ## Outputs and retries
 
 The workflow returns these combined tables:

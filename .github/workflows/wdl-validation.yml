@@ -8,6 +8,7 @@ on:
       - ".github/workflows/wdl-validation.yml"
       - "tests/test_covariate_explained_wdl.sh"
       - "tests/test_pgen_wdl.py"
+      - "tests/test_pgen_womtool.sh"
       - "workflows/**/*.wdl"
   pull_request:
     branches: [ "main" ]
@@ -15,6 +16,7 @@ on:
       - ".github/workflows/wdl-validation.yml"
       - "tests/test_covariate_explained_wdl.sh"
       - "tests/test_pgen_wdl.py"
+      - "tests/test_pgen_womtool.sh"
       - "workflows/**/*.wdl"
 
 jobs:
@@ -27,6 +29,23 @@ jobs:
 
       - name: Install miniwdl
         run: python3 -m pip install miniwdl==1.14.2
+
+      - name: Set up Java for Cromwell validation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Check PGEN descriptor with Cromwell's parser
+        env:
+          WOMTOOL_JAR: ${{ runner.temp }}/womtool-85.jar
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output "$WOMTOOL_JAR" \
+            https://github.com/broadinstitute/cromwell/releases/download/85/womtool-85.jar
+          echo "53e0d6201933a5c335437dcafd62625e9f241995d450dfd1b5c0ca37a834f89b  $WOMTOOL_JAR" | sha256sum --check -
+          bash tests/test_pgen_womtool.sh .
 
       - name: Check diagnostic outputs and Terra expression rules
         run: bash tests/test_covariate_explained_wdl.sh

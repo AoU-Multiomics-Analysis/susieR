@@ -30,6 +30,52 @@ pgenAutosome <- function(chromosome) {
   as.integer(stripped)
 }
 
+.validatePgenManifest <- function(manifest) {
+  columns <- c("chromosome", "pgen", "pvar", "psam")
+  if (!is.data.frame(manifest) || !identical(names(manifest), columns)) {
+    stop("PGEN manifest schema must be chromosome, pgen, pvar, psam in that order", call. = FALSE)
+  }
+  if (!nrow(manifest)) stop("PGEN manifest must contain at least one chromosome", call. = FALSE)
+  for (column in columns) pgenCheckIds(manifest[[column]], paste("PGEN manifest", column))
+  chromosomes <- pgenAutosome(manifest$chromosome)
+  if (anyDuplicated(chromosomes)) {
+    stop("PGEN manifest contains duplicate chromosome names or aliases", call. = FALSE)
+  }
+  for (column in c("pgen", "pvar", "psam")) {
+    # Inspect path text only. WDL promotes it to File before batch localization.
+    values <- manifest[[column]]
+    absolute <- startsWith(values, "/") |
+      grepl("^[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]]+(/|$)", values)
+    if (any(!absolute)) {
+      stop("PGEN manifest ", column, " paths must be absolute cloud or local paths", call. = FALSE)
+    }
+  }
+  tibble::as_tibble(manifest, .name_repair = "minimal")
+}
+
+# Read the small manifest only; genotype locations are not opened here.
+readPgenManifest <- function(manifest_file) {
+  manifest <- suppressWarnings(readr::read_tsv(
+    pgenLocalFile(manifest_file, "PGEN manifest"),
+    col_types = readr::cols(.default = readr::col_character()),
+    na = character(), trim_ws = FALSE, name_repair = "minimal", show_col_types = FALSE
+  ))
+  if (nrow(readr::problems(manifest))) stop("PGEN manifest TSV parse error", call. = FALSE)
+  .validatePgenManifest(manifest)
+}
+
+# WDL read_tsv() splits fields without CSV quote decoding. Preserve literal text.
+writePgenManifest <- function(manifest, output_file) {
+  manifest <- .validatePgenManifest(manifest)
+  if (!is.character(output_file) || length(output_file) != 1L || is.na(output_file) ||
+      !nzchar(output_file) || grepl("[\t\r\n]", output_file) ||
+      grepl("^[A-Za-z][A-Za-z0-9+.-]*://", output_file)) {
+    stop("Normalized PGEN manifest output must be a local path", call. = FALSE)
+  }
+  readr::write_tsv(manifest, output_file, col_names = FALSE, quote = "none", escape = "none")
+  invisible(output_file)
+}
+
 pgenRelativePath <- function(path) {
   # read_lines task outputs must remain paths relative to the execution directory.
   absolute <- strsplit(normalizePath(path, mustWork = TRUE), "/", fixed = TRUE)[[1]]
@@ -478,4 +524,79 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
   readr::write_tsv(diagnostic, files[["diagnostics"]])
   message("Aggregated ", nrow(index), " outcomes; NONCONVERGED: ", sum(index$status == "NONCONVERGED"))
   invisible(files)
+}
+
+# Artifact locations are output metadata. Only the combined outcome index is read.
+writeChromosomeGeneManifests <- function(outcome_index_file, gene_rds_uris,
+                                        gene_parquet_uris, gene_tsv_uris,
+                                        gene_log_uris, gene_provenance_uris,
+                                        output_dir) {
+  index <- pgenReadTextTable(outcome_index_file, logical_columns = "converged")
+  identity_columns <- c("chromosome", "gene_id", "gene_key", "batch_id", "outcome_id", "phenotype_id")
+  pgenRequireColumns(index, c(identity_columns, "status", "converged"), "Combined outcome index")
+  if (!nrow(index)) stop("Combined outcome index must not be empty", call. = FALSE)
+  for (column in identity_columns) pgenCheckIds(index[[column]], paste("Outcome index", column))
+  if (anyDuplicated(index$outcome_id) || anyDuplicated(index$phenotype_id)) {
+    stop("Combined outcome index contains duplicate outcome or phenotype IDs", call. = FALSE)
+  }
+  if (anyNA(index$status) || any(!index$status %in% c("CONVERGED", "NONCONVERGED")) ||
+      anyNA(index$converged) || any(index$converged != (index$status == "CONVERGED"))) {
+    stop("Combined outcome index requires successful statuses and matching converged booleans", call. = FALSE)
+  }
+  expected_gene_keys <- vapply(index$gene_id, function(gene_id) {
+    paste0("gene-", digest::digest(charToRaw(enc2utf8(gene_id)), algo = "sha256", serialize = FALSE))
+  }, character(1), USE.NAMES = FALSE)
+  if (any(index$gene_key != expected_gene_keys)) {
+    stop("Outcome index gene_key does not match the original gene_id", call. = FALSE)
+  }
+  genes <- index %>%
+    dplyr::mutate(chromosome = as.character(pgenAutosome(chromosome))) %>%
+    dplyr::distinct(chromosome, gene_id, gene_key, batch_id)
+  if (anyDuplicated(genes$gene_id)) {
+    stop("Each gene must have exactly one chromosome and batch in the outcome index", call. = FALSE)
+  }
+  roles <- tibble::tibble(
+    column = c("rds_uri", "summary_parquet_uri", "lbf_parquet_uri", "full_parquet_uri",
+               "covariate_explained_variants_uri", "variant_position_summary_uri",
+               "outcome_index_uri", "log_uri", "provenance_uri"),
+    suffix = c("_susie.rds", ".parquet", ".lbf_variable.parquet", ".full_susie.parquet",
+               ".covariate_explained_variants.tsv", ".variant_position_summary.tsv",
+               ".outcome_index.tsv", ".log", ".provenance.json"),
+    group = c("rds", "parquet", "parquet", "parquet", "tsv", "tsv", "tsv", "log", "provenance"))
+  uri_groups <- list(rds = gene_rds_uris, parquet = gene_parquet_uris,
+                     tsv = gene_tsv_uris, log = gene_log_uris, provenance = gene_provenance_uris)
+  for (group in names(uri_groups)) {
+    uris <- uri_groups[[group]]
+    if (!is.character(uris) || anyNA(uris) || any(!nzchar(uris)) || any(grepl("[\t\r\n]", uris))) {
+      stop("Artifact URI metadata must contain nonempty single-line strings for group: ", group, call. = FALSE)
+    }
+    # basename() parses text only. URI metadata must never reach filesystem helpers.
+    supplied_basenames <- basename(uris)
+    if (anyDuplicated(supplied_basenames)) {
+      stop("Duplicate artifact URI role in group: ", group, call. = FALSE)
+    }
+    expected_basenames <- unlist(lapply(roles$suffix[roles$group == group], function(suffix) {
+      paste0(genes$gene_key, suffix)
+    }), use.names = FALSE)
+    if (any(!supplied_basenames %in% expected_basenames)) {
+      stop("Foreign artifact or incorrect URI metadata group: ", group, call. = FALSE)
+    }
+    if (!setequal(supplied_basenames, expected_basenames)) {
+      stop("Missing artifact URI roles in group: ", group, call. = FALSE)
+    }
+  }
+  for (i in seq_len(nrow(roles))) {
+    uris <- uri_groups[[roles$group[[i]]]]
+    positions <- match(paste0(genes$gene_key, roles$suffix[[i]]), basename(uris))
+    genes[[roles$column[[i]]]] <- uris[positions]
+  }
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  chromosomes <- sort(unique(as.integer(genes$chromosome)))
+  files <- stats::setNames(file.path(output_dir, paste0("chr", chromosomes, ".gene_outputs.tsv")),
+                          as.character(chromosomes))
+  for (chromosome in names(files)) {
+    readr::write_tsv(dplyr::filter(genes, .data$chromosome == .env$chromosome), files[[chromosome]])
+  }
+  message("Wrote gene-output manifests for ", length(files), " chromosomes and ", nrow(genes), " genes")
+  files
 }

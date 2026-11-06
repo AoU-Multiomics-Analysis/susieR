@@ -6,15 +6,15 @@ The complete workflow has **not been tested on Terra**. Local WDL checks and com
 
 ## Inputs
 
-Copy [the input example](../examples/inputs/SusieR2.inputs.json) and replace each placeholder cloud path. The example includes chromosomes 1 and 2. Add an entry for each chromosome that contains a selected phenotype.
+Copy [the input example](../examples/inputs/SusieR2.inputs.json) and replace each placeholder cloud path. Supply a headered PGEN TSV using [the manifest example](../examples/inputs/SusieR2.pgen_manifest.tsv). Its four columns, in order, are `chromosome`, `pgen`, `pvar`, and `psam`. Add one row for each chromosome that contains a selected phenotype. A shared PSAM path can appear in several rows. Genotype paths must be absolute cloud or local paths; they are not resolved relative to the manifest.
 
 | Input | Type | Use |
 |---|---|---|
-| `ChromosomePgens` | Array of `ChromosomePgen` structs | Each entry has a chromosome string and three typed Files: `pgen`, `pvar`, and `psam`. Use one entry per chromosome. |
+| `PgenManifest` | File | Headered TSV with chromosome and matching PGEN, PVAR, and PSAM locations. Replaces the previous `ChromosomePgens` array input. |
 | `PhenotypeBed` | File | Phenotype BED with its original header, first four feature columns, and sample columns. |
 | `QtlResults` | File | QTL results for the existing phenotype selection rules (`qval < 0.05`). |
 | `Covariates` | File | Covariate table for the existing data loader. |
-| `SampleList` | File | Sample list for the existing data loader. |
+| `SampleList` | Optional File | Explicit sample list for the existing data loader. If omitted, use the genotype/phenotype sample-ID intersection in PSAM order. |
 | `LegacyMissingCode` | String, required | Use `NA` or `-1`. Specify how the legacy genotype code represents missing values. The workflow does not infer this policy. |
 | `GeneMap` | Optional File | TSV with `phenotype_id` and `gene_id`. Without this input, each selected phenotype is its own gene and outcome. |
 | `Ancestry` | Optional File | Ancestry table for ancestry MAF filtering. |
@@ -23,7 +23,9 @@ Copy [the input example](../examples/inputs/SusieR2.inputs.json) and replace eac
 
 Initial PGEN support is for diploid, biallelic variants on autosomes 1–22. The planner accepts chromosome aliases such as `1` and `chr1`. A gene cannot span chromosomes. The planner rejects missing chromosome inputs, duplicate chromosome IDs, ambiguous mappings, and duplicate phenotype IDs.
 
-`ChromosomePgens` is an ordered array because WDL 1.0 does not have a `keys(Map)` function. A workflow scatter extracts only the chromosome strings. The planner receives those strings and no PGEN Files. It writes each batch's zero-based index into the input array. The fit scatter uses that index to select the typed PGEN, PVAR, and PSAM Files. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
+The planner validates the manifest without opening its genotype locations and preserves its row order. It writes a small normalized TSV. WDL reads that table and converts each PGEN, PVAR, and PSAM location into a typed File inside a `ChromosomePgen` struct. These Files are explicit batch inputs and are localized by Cromwell. No genotype URI is passed to an R script as an unlocalized local filename. Each batch's zero-based chromosome index refers to the manifest row order. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
+
+When `SampleList` is omitted, sample selection uses IDs rather than phenotype values. Genotype-only and phenotype-only samples are excluded, while phenotype missing values retain their existing handling. Covariates must cover every retained sample; they do not silently reduce the cohort. A supplied list keeps its existing order and selection behavior. The PGEN reader and ancestry MAF calculation retain the complete genotype cohort before the phenotype subset. Additional-genotype sample restrictions still apply afterward. Provenance records the initial selection mode, PSAM/list order rule, sample count, and cohort hash before any additional-genotype restriction.
 
 ## Settings
 
@@ -75,8 +77,15 @@ The workflow returns these combined tables:
 - `OutcomeIndex`: every expected outcome, including outcomes with no credible sets and fits that did not converge.
 - `CovariateExplainedVariants`: covariate-explained variant diagnostics.
 - `ExpectedOutcomes` and `BatchIndex`: planner tables for checking batch ownership.
+- `ChromosomeGeneManifests`: one TSV per processed chromosome, named `chr<N>.gene_outputs.tsv`.
 
 Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
+
+Each chromosome manifest has one row per gene. Its columns are `chromosome`, `gene_id`, `gene_key`, `batch_id`, `rds_uri`, `summary_parquet_uri`, `lbf_parquet_uri`, `full_parquet_uri`, `covariate_explained_variants_uri`, `variant_position_summary_uri`, `outcome_index_uri`, `log_uri`, and `provenance_uri`. Chromosome values use `1` through `22`. Original gene IDs are preserved. A gene with several outcomes has one row and one RDS containing those outcome fits. Genes with no credible sets or nonconverged outcomes remain in the manifests; their linked outcome index gives the per-outcome status.
+
+The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The locations are output-only string metadata: the aggregate task never opens or localizes those gene files. It reads the existing small batch files and its validated outcome index, checks all nine artifact roles, and writes the manifests in the same task. No extra VM, gene-file copy, output-directory guess, or new workflow input is needed. Files that the aggregate task opens remain typed WDL Files.
+
+For a direct call to `aggregate_pgen_susie.R`, supply all five optional metadata-list arguments together: `--gene-rds-uris-file`, `--gene-parquet-uris-file`, `--gene-tsv-uris-file`, `--gene-log-uris-file`, and `--gene-provenance-uris-file`. Each argument names a local newline-delimited list of completed output locations. These list contents are metadata, never file inputs to open. The WDL creates all five lists during command rendering. Direct CLI calls without them keep their previous outputs. Use an image containing the updated aggregation script when running the updated WDL.
 
 For `AdditionalGenotypes`, each gene uses the union of feature rows for its selected phenotype IDs. Every outcome for that gene receives the same union, as in the legacy per-gene task. Features from other genes are excluded. Source row order, sample order, and missing codes are preserved. A gene with no matching rows still uses the additional file's sample columns for the legacy sample intersection.
 

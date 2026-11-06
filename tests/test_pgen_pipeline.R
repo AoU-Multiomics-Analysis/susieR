@@ -96,6 +96,18 @@ run_pipeline_checks <- function() {
   readr::write_tsv(tibble::tibble(sample_id = sample(sample_ids)), sample_list)
   chromosomes <- file.path(directory, "chromosomes.txt")
   writeLines("chr1", chromosomes)
+  pgen_manifest <- file.path(directory, "pgen_manifest.tsv")
+  readr::write_tsv(tibble::tibble(chromosome = "chr1", pgen = pgen, pvar = pvar, psam = psam),
+                    pgen_manifest)
+  # The automatic cohort excludes both genotype-only and phenotype-only IDs.
+  intersection_bed <- dplyr::select(bed, -dplyr::all_of(tail(sample_ids, 1L))) |>
+    dplyr::mutate(trait_only = c(0, 1, 2, 3))
+  intersection_bed_file <- file.path(directory, "intersection.bed")
+  readr::write_tsv(intersection_bed, intersection_bed_file)
+  intersection_ids <- sample_ids[sample_ids %in% names(intersection_bed)[-(1:4)]]
+  stopifnot(length(intersection_ids) == 119L)
+  intersection_sample_list <- file.path(directory, "intersection_samples.tsv")
+  readr::write_tsv(tibble::tibble(sample_id = intersection_ids), intersection_sample_list)
   # Chromosome structs need not be in genomic order. The planner reports the
   # input array index, while grouping and the original region text stay stable.
   index_plan <- file.path(directory, "index_plan")
@@ -106,7 +118,7 @@ run_pipeline_checks <- function() {
     c(1L, 1L)))
   base_batch_args <- c("--pgen", pgen, "--pvar", pvar, "--psam", psam,
                        "--qtl-results", qtl, "--covariates", covariates,
-                       "--sample-list", sample_list, "--cis-distance", "100",
+                       "--cis-distance", "100",
                        "--base-seed", "82", "--plink2", plink)
   additional_bed <- file.path(directory, "additional.tsv")
   additional_ids <- c("chr1_3011_A_T", "chr2_1111_A_T", "chr1_1181_A_T")
@@ -121,19 +133,28 @@ run_pipeline_checks <- function() {
   readr::write_tsv(dplyr::bind_cols(tibble::tibble(
     variant_id = additional_ids, phenotype_id = c("outcomeB2", "outcomeA", "outcomeB1"),
     feature_type = "SV"), tibble::as_tibble(additional_values)), additional_bed, na = "NA")
-  run_layout <- function(size, missing_code, additional = NULL) {
+  run_layout <- function(size, missing_code, additional = NULL, sample_mode = "provided") {
     label <- paste0("layout_", size, "_", gsub("-", "minus", missing_code, fixed = TRUE),
-                    if (is.null(additional)) "" else "_additional")
+                    if (is.null(additional)) "" else "_additional",
+                    if (sample_mode == "provided") "" else paste0("_", sample_mode))
+    phenotype_input <- if (sample_mode == "provided") phenotype_bed else intersection_bed_file
+    sample_args <- switch(sample_mode,
+      provided = c("--sample-list", sample_list),
+      inferred = character(),
+      explicit_intersection = c("--sample-list", intersection_sample_list),
+      stop("Unknown sample mode"))
     plan_dir <- file.path(directory, label, "plan")
     invoke("plan_pgen_susie.R", c(
-      "--phenotype-bed", phenotype_bed, "--qtl-results", qtl,
-      "--chromosomes-file", chromosomes, "--cis-distance", "100",
+      "--phenotype-bed", phenotype_input, "--qtl-results", qtl,
+      "--pgen-manifest", pgen_manifest, "--cis-distance", "100",
       "--batch-size", as.character(size), "--gene-map", gene_map,
       "--output-dir", plan_dir), paste0(label, "_plan"))
     stopifnot("Planner must emit typed chromosome index metadata" =
                 file.exists(file.path(plan_dir, "batch_chromosome_indices.json")))
     stopifnot(all(jsonlite::read_json(file.path(plan_dir, "batch_chromosome_indices.json"),
                                      simplifyVector = TRUE) == 0L))
+    normalized <- readLines(file.path(plan_dir, "chromosome_pgens.tsv"), warn = FALSE)
+    stopifnot(identical(normalized, paste("chr1", pgen, pvar, psam, sep = "\t")))
     worklists <- readLines(file.path(plan_dir, "batch_worklists.txt"))
     beds <- readLines(file.path(plan_dir, "batch_phenotype_beds.txt"))
     batch_dirs <- character(length(worklists))
@@ -141,6 +162,7 @@ run_pipeline_checks <- function() {
     for (i in seq_along(worklists)) {
       batch_dirs[[i]] <- file.path(directory, label, paste0("run_", i))
       invoke("run_pgen_susie_batch.R", c(base_batch_args,
+        sample_args,
         if (!is.null(additional)) c("--additional-genotypes", additional),
         "--worklist", worklists[[i]], "--phenotype-bed", beds[[i]],
         paste0("--missing-code=", missing_code), "--output-dir", batch_dirs[[i]]),
@@ -178,17 +200,48 @@ run_pipeline_checks <- function() {
       writeLines(file.path(batch_dirs, name), path)
       path
     })
+    gene_files <- unlist(lapply(batch_dirs, function(path) {
+      list.files(file.path(path, "genes"), recursive = TRUE, full.names = TRUE)
+    }), use.names = FALSE)
+    metadata_patterns <- c(rds = "_susie[.]rds$", parquet = "[.]parquet$",
+      tsv = "[.]tsv$", log = "[.]log$", provenance = "[.]provenance[.]json$")
+    metadata_args <- unlist(purrr::imap(metadata_patterns, function(pattern, role) {
+      path <- file.path(directory, paste0(label, "_gene_", role, ".uris"))
+      # Reversed file order must not change which gene owns each output.
+      writeLines(rev(gene_files[grepl(pattern, gene_files)]), path)
+      c(paste0("--gene-", role, "-uris-file"), path)
+    }), use.names = FALSE)
     aggregate_dir <- file.path(directory, label, "aggregate")
     invoke("aggregate_pgen_susie.R", c(
       "--expected-outcomes", file.path(plan_dir, "expected_outcomes.tsv"),
       "--summary-files", list_paths[["summary"]], "--credible-set-files", list_paths[["cs"]],
       "--index-files", list_paths[["index"]], "--diagnostic-files", list_paths[["diagnostic"]],
-      "--output-dir", aggregate_dir), paste0(label, "_aggregate"))
+      metadata_args, "--output-dir", aggregate_dir), paste0(label, "_aggregate"))
+    manifests <- list.files(file.path(aggregate_dir, "gene_manifests"), full.names = TRUE)
+    stopifnot(identical(basename(manifests), "chr1.gene_outputs.tsv"))
+    manifest <- readr::read_tsv(manifests[[1L]],
+      col_types = readr::cols(.default = readr::col_character()), show_col_types = FALSE)
+    stopifnot(nrow(manifest) == 3L,
+      setequal(manifest$gene_id, c("gene A/one", "geneB", "gene:C")),
+      all(manifest$chromosome == "1"),
+      setequal(manifest$rds_uri, gene_files[grepl("_susie[.]rds$", gene_files)]))
+    manifest_uris <- unlist(manifest[grepl("_uri$", names(manifest))], use.names = FALSE)
+    stopifnot(length(manifest_uris) == 27L, setequal(manifest_uris, gene_files),
+      all(file.exists(manifest_uris)))
     index <- readr::read_tsv(file.path(aggregate_dir, "outcome_index.tsv"), show_col_types = FALSE)
     stopifnot(nrow(index) == 4L, setequal(index$outcome_id, phenotype_ids),
               !any(index$status == "FAILED"),
               identical(names(fits[sort(names(fits))]), sort(phenotype_ids)))
-    list(fits = fits[sort(names(fits))], index = index,
+    provenance <- lapply(gene_files[grepl("[.]provenance[.]json$", gene_files)],
+      jsonlite::read_json, simplifyVector = TRUE)
+    expected_count <- if (sample_mode == "provided") 120L else 119L
+    expected_mode <- if (sample_mode == "inferred") "genotype_phenotype_intersection" else "provided_list"
+    for (record in provenance) {
+      stopifnot(record$settings$sample_count == expected_count,
+        identical(record$settings$sample_selection, expected_mode),
+        identical(record$inputs$sample_list$present, sample_mode != "inferred"))
+    }
+    list(fits = fits[sort(names(fits))], index = index, provenance = provenance,
          summary = arrow::read_parquet(file.path(aggregate_dir, "susie.parquet")),
          credible_sets = arrow::read_parquet(file.path(aggregate_dir, "credible_sets.parquet")))
   }
@@ -196,6 +249,9 @@ run_pipeline_checks <- function() {
   invoke("run_pgen_susie_batch.R", c(base_batch_args, "--pgen", "gs://bucket/unlocalized.pgen",
     "--worklist", gene_map, "--phenotype-bed", phenotype_bed, "--missing-code=NA",
     "--output-dir", file.path(directory, "invalid")), "cloud_path", "localization error")
+  invoke("run_pgen_susie_batch.R", c(base_batch_args, "--sample-list", "gs://bucket/unlocalized.samples",
+    "--worklist", gene_map, "--phenotype-bed", phenotype_bed, "--missing-code=NA",
+    "--output-dir", file.path(directory, "invalid_samples")), "cloud_samples", "localization error")
   additional_pair <- run_layout(2L, "NA", additional_bed)
   additional_single <- run_layout(1L, "NA", additional_bed)
   stopifnot("Additional features must not depend on batch size" =
@@ -226,6 +282,19 @@ run_pipeline_checks <- function() {
   }
   compare_summary(first$summary, single$summary)
   compare_summary(first$credible_sets, single$credible_sets)
+  for (additional in list(NULL, additional_bed)) {
+    inferred <- run_layout(100L, "NA", additional, sample_mode = "inferred")
+    explicit <- run_layout(100L, "NA", additional, sample_mode = "explicit_intersection")
+    stopifnot("Automatic and explicit intersection cohorts must give identical fits" =
+      identical(inferred$fits, explicit$fits))
+    compare_summary(inferred$summary, explicit$summary)
+    compare_summary(inferred$credible_sets, explicit$credible_sets)
+    inferred_hashes <- vapply(inferred$provenance, function(record) record$settings$sample_ids_sha256,
+      character(1))
+    explicit_hashes <- vapply(explicit$provenance, function(record) record$settings$sample_ids_sha256,
+      character(1))
+    stopifnot(identical(inferred_hashes, explicit_hashes))
+  }
   # Reference the current real Tabix loader with the same values and fit seeds.
   for (missing_code in c("NA", "-1")) {
     doses <- hardcalls
@@ -271,7 +340,8 @@ run_pipeline_checks <- function() {
     }
   }
   message("PGEN pipeline tests passed: real PLINK unions, exact Tabix fit parity, ",
-          "batch sizes 1/2/100, both missing codes, separate gene artifacts and complete aggregation")
+          "batch sizes 1/2/100, both missing codes, separate gene artifacts, complete aggregation, ",
+          "chromosome gene manifests, PGEN input manifest, and inferred sample intersections")
   passed <- TRUE
 }
 run_pipeline_checks()

@@ -10,6 +10,7 @@ options <- list(
   make_option("--phenotype-bed", type = "character"),
   make_option("--qtl-results", type = "character"),
   make_option("--chromosomes-file", type = "character"),
+  make_option("--pgen-manifest", type = "character"),
   make_option("--cis-distance", type = "double"),
   make_option("--output-dir", type = "character"),
   make_option("--batch-size", type = "double", default = 50),
@@ -18,10 +19,16 @@ options <- list(
   make_option("--top-phenotype-pvalue-column", type = "character", default = "qval")
 )
 opt <- parse_args(OptionParser(option_list = options), convert_hyphens_to_underscores = TRUE)
-required <- c("phenotype_bed", "qtl_results", "chromosomes_file", "cis_distance", "output_dir")
+required <- c("phenotype_bed", "qtl_results", "cis_distance", "output_dir")
 missing <- required[vapply(required, function(name) is.null(opt[[name]]), logical(1))]
 if (length(missing)) stop("Missing required arguments: ", paste(missing, collapse = ", "), call. = FALSE)
-chromosomes <- readLines(pgenLocalFile(opt$chromosomes_file, "Chromosome list"), warn = FALSE)
+if (is.null(opt$pgen_manifest) == is.null(opt$chromosomes_file)) {
+  stop("Supply exactly one of --pgen-manifest or --chromosomes-file", call. = FALSE)
+}
+manifest <- if (!is.null(opt$pgen_manifest)) readPgenManifest(opt$pgen_manifest) else NULL
+chromosomes <- if (is.null(manifest)) {
+  readLines(pgenLocalFile(opt$chromosomes_file, "Chromosome list"), warn = FALSE)
+} else manifest$chromosome
 message("Planning PGEN SuSiE batches")
 planPgenBatches(
   phenotype_bed = opt$phenotype_bed, qtl_results = opt$qtl_results,
@@ -30,4 +37,7 @@ planPgenBatches(
   select_top_phenotype_per_cluster = opt$select_top_phenotype_per_cluster,
   top_phenotype_pvalue_column = opt$top_phenotype_pvalue_column
 )
+if (!is.null(manifest)) {
+  writePgenManifest(manifest, file.path(opt$output_dir, "chromosome_pgens.tsv"))
+}
 message("PGEN batch planning complete")

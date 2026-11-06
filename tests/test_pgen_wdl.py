@@ -17,10 +17,18 @@ import WDL
 
 ROOT = pathlib.Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parents[1]
 WRITERS = {'write_lines', 'write_tsv', 'write_map', 'write_json'}
-LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files', '--chromosomes-file')
-FILE_NAMES = {'phenotype_bed', 'qtl_results', 'gene_map', 'worklist', 'covariates', 'sample_list',
+GENE_URI_INPUTS = {
+    'gene_rds_uris': 'GeneRds',
+    'gene_parquet_uris': 'GeneParquets',
+    'gene_tsv_uris': 'GeneTsvs',
+    'gene_log_uris': 'GeneLogs',
+    'gene_provenance_uris': 'GeneProvenance',
+}
+GENE_URI_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in GENE_URI_INPUTS}
+LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files') + tuple(GENE_URI_FLAGS)
+FILE_NAMES = {'pgen_manifest', 'phenotype_bed', 'qtl_results', 'gene_map', 'worklist', 'covariates', 'sample_list',
               'ancestry', 'variant_list', 'additional_genotypes', 'expected_outcomes'}
-OPTIONAL_FILES = {'gene_map', 'ancestry', 'variant_list', 'additional_genotypes'}
+OPTIONAL_FILES = {'gene_map', 'sample_list', 'ancestry', 'variant_list', 'additional_genotypes'}
 
 
 def walk(node):
@@ -49,6 +57,9 @@ class CommandStdLib(WDL.StdLib.Base):
     def _virtualize_filename(self, filename):
         return filename
 
+    def _devirtualize_filename(self, filename):
+        return filename
+
 
 class PgenWdlTests(unittest.TestCase):
     @classmethod
@@ -62,7 +73,15 @@ class PgenWdlTests(unittest.TestCase):
     def test_workflow_types_and_defaults(self):
         self.assertEqual(self.doc.effective_wdl_version, '1.0')
         inputs = {decl.name: decl for decl in self.doc.workflow.inputs}
-        chrom_type = inputs['ChromosomePgens'].type
+        self.assertIsInstance(inputs['PgenManifest'].type, WDL.Type.File)
+        self.assertIsNone(inputs['PgenManifest'].expr)
+        self.assertNotIn('ChromosomePgens', inputs)
+        required = {name for name, decl in inputs.items()
+                    if decl.expr is None and not decl.type.optional}
+        self.assertEqual(required, {'PgenManifest', 'PhenotypeBed', 'QtlResults',
+                                    'Covariates', 'LegacyMissingCode'})
+        chrom_type = next(node.type for node in walk(self.doc.workflow)
+                          if isinstance(node, WDL.Tree.Decl) and node.name == 'ChromosomePgens')
         self.assertIsInstance(chrom_type, WDL.Type.Array)
         self.assertEqual(str(chrom_type.item_type), 'ChromosomePgen')
         self.assertEqual({k: str(v) for k, v in chrom_type.item_type.members.items()},
@@ -77,34 +96,106 @@ class PgenWdlTests(unittest.TestCase):
             env = WDL.Env.Bindings().bind('MemoryDebug', WDL.Value.Boolean(enabled))
             self.assertEqual(batch_call.inputs['memory_debug'].eval(env, WDL.StdLib.Base('1.0')).value,
                              enabled)
-        for name in ('GeneMap', 'Ancestry', 'VariantList', 'AdditionalGenotypes'):
+        for name in ('SampleList', 'GeneMap', 'Ancestry', 'VariantList', 'AdditionalGenotypes'):
             self.assertIsInstance(inputs[name].type, WDL.Type.File)
             self.assertTrue(inputs[name].type.optional)
         for task in self.doc.tasks:
             # No pre-command declarations can turn File inputs into strings.
             self.assertFalse(task.postinputs)
         planner_files = {d.name for d in self.tasks['PlanPgenSusie'].inputs if has_file_type(d.type)}
-        self.assertEqual(planner_files, {'phenotype_bed', 'qtl_results', 'gene_map'})
+        self.assertEqual(planner_files, {'pgen_manifest', 'phenotype_bed', 'qtl_results', 'gene_map'})
+        planner_outputs = {decl.name: decl for decl in self.tasks['PlanPgenSusie'].outputs}
+        self.assertIsInstance(planner_outputs['NormalizedManifest'].type, WDL.Type.File)
         for name in ('summary_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
             decl = next(d for d in self.tasks['AggregatePgenSusie'].inputs if d.name == name)
             self.assertIsInstance(decl.type.item_type, WDL.Type.File)
         # Output paths remain typed, including per-gene artifacts and diagnostics.
         outputs = {d.name: str(d.type) for d in self.doc.workflow.outputs}
-        for name in ('GeneRds', 'GeneParquets', 'GeneTsvs', 'GeneLogs', 'GeneProvenance', 'PlinkLogs'):
+        for name in ('GeneRds', 'GeneParquets', 'GeneTsvs', 'GeneLogs', 'GeneProvenance',
+                     'PlinkLogs', 'ChromosomeGeneManifests'):
             self.assertEqual(outputs[name], 'Array[File]')
+
+    def test_gene_manifest_metadata_keeps_completed_output_uris(self):
+        task = self.tasks['AggregatePgenSusie']
+        declarations = {decl.name: decl for decl in task.inputs}
+        call = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'AggregatePgenSusie')
+        outputs = {decl.name: decl for decl in task.outputs}
+        self.assertEqual(str(outputs['ChromosomeGeneManifests'].type), 'Array[File]')
+        for name, output_name in GENE_URI_INPUTS.items():
+            with self.subTest(metadata=name):
+                declaration = declarations[name]
+                self.assertEqual(str(declaration.type), 'Array[String]')
+                uris = ['gs://bucket/outputs/first ' + name,
+                        "gs://bucket/outputs/second 'quoted' $(touch PWNED) `touch PWNED` " + name]
+                source_type = WDL.Type.Array(WDL.Type.Array(WDL.Type.File()))
+                source = WDL.Value.from_json(source_type, [[uris[0]], [uris[1]]])
+                env = WDL.Env.Bindings().bind('RunPgenSusieBatch.' + output_name, source)
+                # File outputs become text only for output-manifest metadata.
+                # They are not files that this task opens or localizes.
+                evaluated = call.inputs[name].eval(env, WDL.StdLib.Base('1.0'))
+                self.assertIsInstance(evaluated.type.item_type, WDL.Type.File)
+                metadata = evaluated.coerce(declaration.type)
+                self.assertEqual(metadata.json, uris)
+
+                def reject_localization(file):
+                    self.fail('Output URI metadata must not be localized: ' + file.value)
+
+                rewritten = WDL.Value.rewrite_paths(metadata, reject_localization)
+                self.assertEqual(rewritten.json, uris)
 
     def test_example_inputs_match_wdl_types(self):
         inputs = json.loads((ROOT / 'examples/inputs/SusieR2.inputs.json').read_text())
         WDL.values_from_json(inputs, self.doc.workflow.available_inputs,
                              self.doc.workflow.required_inputs, namespace='SusieR2')
+        self.assertNotIn('SusieR2.ChromosomePgens', inputs)
+        explicit = {**inputs, 'SusieR2.SampleList': 'gs://bucket/optional-samples.tsv'}
+        WDL.values_from_json(explicit, self.doc.workflow.available_inputs,
+                             self.doc.workflow.required_inputs, namespace='SusieR2')
+        absent = {name: value for name, value in inputs.items() if name != 'SusieR2.SampleList'}
+        WDL.values_from_json(absent, self.doc.workflow.available_inputs,
+                             self.doc.workflow.required_inputs, namespace='SusieR2')
+
+    def manifest_files(self):
+        rows = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Decl) and node.name == 'pgen_rows')
+        bundle = next(node for node in walk(self.doc.workflow)
+                      if isinstance(node, WDL.Tree.Decl) and node.name == 'chromosome_pgen')
+        array_type = next(node.type for node in walk(self.doc.workflow)
+                          if isinstance(node, WDL.Tree.Decl) and node.name == 'ChromosomePgens')
+        self.assertIsInstance(rows.expr, WDL.Expr.Apply)
+        self.assertEqual(rows.expr.function_name, 'read_tsv')
+        values = [[chrom, *['gs://bucket/' + chrom + " 'quoted' \"double\" $(touch PWNED) `touch PWNED`." + ext
+                            for ext in ('pgen', 'pvar', 'psam')]] for chrom in ('2', '1')]
+        with tempfile.TemporaryDirectory(prefix='susier-manifest-rows-') as temporary:
+            normalized = pathlib.Path(temporary) / 'chromosome_pgens.tsv'
+            normalized.write_text(''.join('\t'.join(row) + '\n' for row in values))
+            env = WDL.Env.Bindings().bind('PlanPgenSusie.NormalizedManifest',
+                                          WDL.Value.File(str(normalized)))
+            parsed = rows.expr.eval(env, CommandStdLib('1.0'))
+        self.assertEqual(parsed.json, values)
+        files = []
+        for row in parsed.value:
+            env = WDL.Env.Bindings().bind('pgen_row', row)
+            value = bundle.expr.eval(env, WDL.StdLib.Base('1.0')).coerce(bundle.type)
+            self.assertEqual(value.value['chromosome'].value, row.value[0].value)
+            for field, original in zip(('pgen', 'pvar', 'psam'), row.value[1:]):
+                self.assertIsInstance(value.value[field], WDL.Value.File)
+                self.assertEqual(value.value[field].value, original.value)
+            files.append(value)
+        return WDL.Value.Array(array_type.item_type, files)
+
+    def test_manifest_paths_become_files_before_batch_localization(self):
+        files = self.manifest_files()
+        self.assertEqual(files.type.item_type.members,
+                         next(decl.type for decl in self.tasks['RunPgenSusieBatch'].inputs
+                              if decl.name == 'pgen_files').members)
+        for file_bundle in files.value:
+            self.execute(self.tasks['RunPgenSusieBatch'], overrides={'pgen_files': file_bundle})
 
     def test_batch_indices_select_matching_typed_chromosome_files(self):
         # Input order differs from genomic order; two batches reuse chromosome 1.
-        typ = next(d.type for d in self.doc.workflow.inputs if d.name == 'ChromosomePgens')
-        chromosomes = [{'chromosome': chrom, **{ext: 'gs://bucket/chr' + chrom + '.' + ext
-                                               for ext in ('pgen', 'pvar', 'psam')}}
-                       for chrom in ('2', '1')]
-        files = WDL.Value.from_json(typ, chromosomes)
+        files = self.manifest_files()
         env = WDL.Env.Bindings().bind('ChromosomePgens', files)
         env = env.bind('PlanPgenSusie.ChromosomeIndices',
                        WDL.Value.from_json(WDL.Type.Array(WDL.Type.Int()), [1, 1, 0]))
@@ -121,7 +212,8 @@ class PgenWdlTests(unittest.TestCase):
             self.assertEqual(selected.value['chromosome'].value, chromosome)
             for ext in ('pgen', 'pvar', 'psam'):
                 self.assertIsInstance(selected.value[ext], WDL.Value.File)
-                self.assertEqual(selected.value[ext].value, 'gs://bucket/chr' + chromosome + '.' + ext)
+                self.assertEqual(selected.value[ext].value,
+                                 files.value[(1, 1, 0)[i]].value[ext].value)
 
     def test_no_workflow_file_writers(self):
         self.assertEqual(workflow_writers(self.doc.workflow), [])
@@ -139,14 +231,16 @@ class PgenWdlTests(unittest.TestCase):
                         writers.append((task.name, str(node.arguments[0])))
                         self.assertIs(part.expr, node)
                         self.assertIsInstance(part.expr.type, WDL.Type.File)
-                        expected_item_type = WDL.Type.String if task.name == 'PlanPgenSusie' else WDL.Type.File
+                        name = str(node.arguments[0])
+                        metadata = name in GENE_URI_INPUTS
+                        expected_item_type = WDL.Type.String if metadata else WDL.Type.File
                         self.assertIsInstance(node.arguments[0].type.item_type, expected_item_type)
         self.assertCountEqual(writers, [
-            ('PlanPgenSusie', 'chromosomes'),
             ('AggregatePgenSusie', 'summary_files'),
             ('AggregatePgenSusie', 'credible_set_files'),
             ('AggregatePgenSusie', 'index_files'),
             ('AggregatePgenSusie', 'diagnostic_files'),
+            *[('AggregatePgenSusie', name) for name in GENE_URI_INPUTS],
         ])
 
     def test_static_guard_rejects_writers_in_all_workflow_scopes(self):
@@ -187,9 +281,9 @@ class PgenWdlTests(unittest.TestCase):
                 value = 'gs://bucket/' + name
             elif isinstance(typ, WDL.Type.Array) and isinstance(typ.item_type, WDL.Type.File):
                 value = ['gs://bucket/' + name + '/one', 'gs://bucket/' + name + '/two']
-            elif name == 'chromosomes':
-                # Invalid chromosome IDs test shell quoting; the R planner validates IDs.
-                value = ['2', "1 'one' 'two' $(touch PWNED) `touch PWNED`"]
+            elif name in GENE_URI_INPUTS:
+                value = ['gs://bucket/outputs/' + name + '/one',
+                         "gs://bucket/outputs/" + name + "/two 'quoted' $(touch PWNED) `touch PWNED`"]
             elif isinstance(typ, WDL.Type.Boolean):
                 value = optional
             elif isinstance(typ, WDL.Type.Int):
@@ -204,10 +298,11 @@ class PgenWdlTests(unittest.TestCase):
             raw[name] = WDL.Value.from_json(typ, value)
         return raw
 
-    def execute(self, task, optional=True, broken=None):
+    def execute(self, task, optional=True, broken=None, overrides=None):
         with tempfile.TemporaryDirectory(prefix='susier-wdl-') as temporary:
             cwd = pathlib.Path(temporary)
             raw = self.inputs(task, optional)
+            raw.update(overrides or {})
             mapping = {}
 
             def localize(file):
@@ -218,6 +313,9 @@ class PgenWdlTests(unittest.TestCase):
                 return mapping[file.value]
 
             localized = {name: WDL.Value.rewrite_paths(value, localize) for name, value in raw.items()}
+            for name in GENE_URI_INPUTS.keys() & raw.keys():
+                self.assertEqual(localized[name].json, raw[name].json)
+                self.assertTrue(all(uri not in mapping for uri in raw[name].json))
             if broken:
                 # Mutate a File only after constructing the proper localized environment.
                 name = broken[0]
@@ -260,7 +358,8 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
             self.assertNotIn('gs://', ' '.join(args))
             if task.name == 'PlanPgenSusie':
                 self.assertEqual(args[0], '/opt/r/scripts/plan_pgen_susie.R')
-                self.assertEqual(payload['lists']['--chromosomes-file'], localized['chromosomes'].json)
+                self.assertNotIn('--chromosomes-file', args)
+                self.assertEqual(args[args.index('--pgen-manifest') + 1], localized['pgen_manifest'].value)
                 self.assertEqual(args[args.index('--batch-size') + 1], '100')
             elif task.name == 'RunPgenSusieBatch':
                 self.assertEqual(args[0], '/opt/r/scripts/run_pgen_susie_batch.R')
@@ -273,9 +372,15 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
             else:
                 self.assertEqual(args[0], '/opt/r/scripts/aggregate_pgen_susie.R')
                 for flag, paths in payload['lists'].items():
-                    self.assertEqual(paths, localized[flag[2:].replace('-', '_')].json)
-                    for path in paths:
-                        self.assertTrue(pathlib.Path(path).is_file())
+                    if flag in GENE_URI_FLAGS:
+                        self.assertEqual(paths, raw[GENE_URI_FLAGS[flag]].json)
+                    else:
+                        self.assertEqual(paths, localized[flag[2:].replace('-', '_')].json)
+                        for path in paths:
+                            self.assertTrue(pathlib.Path(path).is_file())
+                for flag, name in GENE_URI_FLAGS.items():
+                    self.assertIn(flag, args)
+                    self.assertEqual(payload['lists'][flag], raw[name].json)
             for name, value in localized.items():
                 if name in FILE_NAMES:
                     flag = '--' + name.replace('_', '-')
@@ -318,6 +423,16 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
         for name in ('summary_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
             with self.subTest(file_list=name):
                 self.execute(self.tasks['AggregatePgenSusie'], broken=(name, 'uri'))
+
+    def test_optional_sample_list_rejects_unresolved_or_missing_file(self):
+        for failure in ('uri', 'missing'):
+            with self.subTest(failure=failure):
+                self.execute(self.tasks['RunPgenSusieBatch'], broken=('sample_list', failure))
+
+    def test_planner_rejects_unresolved_or_missing_manifest(self):
+        for failure in ('uri', 'missing'):
+            with self.subTest(failure=failure):
+                self.execute(self.tasks['PlanPgenSusie'], broken=('pgen_manifest', failure))
 
 
 if __name__ == '__main__':

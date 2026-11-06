@@ -72,6 +72,7 @@ class ImageContractTests(unittest.TestCase):
                          {"zlib": "1.3.2", "zstd": "1.5.7", "libdeflate": "1.25"})
         for name in {
             "r-base", "r-tidyverse", "r-data.table", "r-optparse", "r-arrow",
+            "r-r.utils",
             "r-devtools", "r-rfast", "r-matrixstats", "r-digest", "r-jsonlite",
             "r-assertthat", "r-caret", "r-igraph", "r-lobstr", "r-rcpp",
             "r-cpp11", "r-cpp11armadillo", "r-mixsqp", "r-reshape", "r-crayon",
@@ -109,6 +110,8 @@ class ImageContractTests(unittest.TestCase):
             self.assertIn(source, dockerfile)
         self.assertIn("dependencies = FALSE", dockerfile)
         self.assertIn('algo = "sha256"', dockerfile)
+        self.assertIn('"R.utils"', dockerfile,
+                      "Check the fread compressed-input runtime dependency during image build")
 
     def test_ci_rebuilds_only_for_contained_source(self):
         """Catch image builds caused by tests, WDL, docs or unrelated R files."""

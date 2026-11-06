@@ -47,7 +47,7 @@ RUN Rscript -e ' \
     invisible(lapply(c("tidyverse", "data.table", "optparse", "arrow", "devtools", \
                        "Rfast", "matrixStats", "digest", "jsonlite", "caret", \
                        "SummarizedExperiment", "Rsamtools", "eQTLUtils", "susieR", \
-                       "pgenlibr"), function(package) stopifnot(requireNamespace(package, quietly = TRUE))))'
+                       "pgenlibr", "R.utils"), function(package) stopifnot(requireNamespace(package, quietly = TRUE))))'
 
 USER root
 RUN mkdir -p /opt/r/lib /opt/r/scripts

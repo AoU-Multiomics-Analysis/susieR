@@ -30,3 +30,8 @@ workflows:
   - subclass: WDL
     primaryDescriptorPath: /workflows/CheckpointedWindowSusie.wdl
     name: "CheckpointedWindowSusie"
+  - subclass: WDL
+    primaryDescriptorPath: /workflows/SusieR2.wdl
+    testParameterFiles:
+      - /examples/inputs/SusieR2.inputs.json
+    name: "SusieR2"

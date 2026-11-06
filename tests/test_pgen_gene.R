@@ -5,11 +5,12 @@ run_pgen_gene_tests <- function(repo_dir) {
   suppressPackageStartupMessages(library(stringr))
   suppressPackageStartupMessages(library(purrr))
   source(file.path(repo_dir, "tests", "test_helpers.R"), local = TRUE)
+  functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH",
+                               unset = file.path(repo_dir, "R", "utils"))
   for (filename in c("InitFunctions.R", "ImportFunctions.R", "MemoryHelpers.R",
                      "SusiePerformance.R", "SusieFunctions.R", "PgenFunctions.R",
                      "SusieOutputFunctions.R", "PgenGeneFunctions.R")) {
-    path <- file.path(repo_dir, "R", "utils", filename)
-    if (file.exists(path)) source(path, local = TRUE)
+    source(file.path(functions_path, filename), local = TRUE)
   }
   for (name in c("formatSusieOutputs", "writeSusieOutputs", "finemapPgenPhenotype",
                  "geneArtifactKey", "geneOutcomeSeed", "runPgenGene")) {

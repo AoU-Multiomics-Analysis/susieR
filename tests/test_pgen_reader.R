@@ -1,8 +1,9 @@
 # Small real PGEN fixtures test the public reader contract.
 run_pgen_reader_tests <- function(repo_dir) {
   source(file.path(repo_dir, "tests", "test_helpers.R"), local = TRUE)
-  implementation <- file.path(repo_dir, "R", "utils", "PgenFunctions.R")
-  if (file.exists(implementation)) source(implementation, local = TRUE)
+  functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH",
+                               unset = file.path(repo_dir, "R", "utils"))
+  source(file.path(functions_path, "PgenFunctions.R"), local = TRUE)
   if (!exists("openPgenReader", mode = "function")) {
     stop("Missing reader function: openPgenReader", call. = FALSE)
   }

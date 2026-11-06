@@ -183,6 +183,29 @@ run_pgen_batch_tests <- function(repo_dir) {
             nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 1,
             identical(read_tsv("aggregate/outcome_index.tsv")$status, index$status),
             nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1)
+  # Additional features can belong to this gene while being on another chromosome.
+  for (variant_id in c("2_10_A_G", "chr2_10_A_G", "chr2_10_A_G_extra",
+                       "chrchr2_10_A_G", "CHRchr2_10_A_G")) {
+    emit(sum = mutate(summary, variant = variant_id, chromosome = "2"))
+    aggregate()
+    retained <- arrow::read_parquet("aggregate/susie.parquet")
+    stopifnot(identical(retained$variant, variant_id), retained$chromosome == "2",
+              retained$outcome_id == "a")
+  }
+  # Variant chromosome metadata must agree with the ID, not the gene chromosome.
+  for (invalid_summary in list(
+    mutate(summary, variant = "chr2_10_A_G"),
+    mutate(summary, chromosome = NA_character_),
+    mutate(summary, variant = NA_character_),
+    mutate(summary, variant = "chr2"),
+    mutate(summary, variant = "chr2_missing_A_G"),
+    mutate(summary, variant = "chr2_10__G"),
+    mutate(summary, variant = "chr2_10_A_"),
+    mutate(summary, variant = "chr_10_A_G"))) {
+    emit(sum = invalid_summary)
+    error(aggregate(), "chromosome|variant|ID|autosome")
+  }
+  emit()
   # A complete status index cannot hide missing or unrelated high-purity variants.
   summary_cases <- list(
     missing_high_purity_summary = list(sum = summary[FALSE, ]),

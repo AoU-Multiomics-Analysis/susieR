@@ -272,7 +272,7 @@ pgenOwnershipKey <- function(table) {
   do.call(paste0, lapply(columns, function(column) paste0(nchar(table[[column]], type = "bytes"), ":", table[[column]])))
 }
 
-pgenCheckOwnership <- function(table, expected, label) {
+pgenCheckOwnership <- function(table, expected, label, variant_chromosome = FALSE) {
   columns <- c("batch_id", "gene_id", "outcome_id", "phenotype_id")
   pgenRequireColumns(table, columns, label)
   for (column in columns) pgenCheckIds(table[[column]], paste(label, column))
@@ -283,9 +283,22 @@ pgenCheckOwnership <- function(table, expected, label) {
       (anyNA(table$molecular_trait_id) || any(table$molecular_trait_id != table$outcome_id))) {
     stop(label, " molecular_trait_id does not match outcome ownership", call. = FALSE)
   }
-  if ("chromosome" %in% names(table) && nrow(table) &&
-      any(pgenAutosome(as.character(table$chromosome)) != pgenAutosome(expected$chromosome[match_index]))) {
-    stop(label, " chromosome does not match expected outcome", call. = FALSE)
+  if ("chromosome" %in% names(table) && nrow(table)) {
+    chromosome <- expected$chromosome[match_index]
+    table_chromosome <- as.character(table$chromosome)
+    if (variant_chromosome) {
+      # Summary chromosomes describe variants, including gene-owned additional features.
+      pgenCheckIds(table$variant, paste(label, "variant ID"))
+      if (any(!grepl("^[^_]+_[0-9]+_[^_]+_.+$", table$variant))) {
+        stop(label, " has malformed variant IDs", call. = FALSE)
+      }
+      chromosome <- sub("^(?i:chr)+", "", sub("_.*$", "", table$variant), perl = TRUE)
+      table_chromosome <- sub("^(?i:chr)+", "", table_chromosome, perl = TRUE)
+    }
+    if (any(pgenAutosome(table_chromosome) != pgenAutosome(chromosome))) {
+      stop(label, " chromosome does not match expected ",
+           if (variant_chromosome) "variant ID" else "outcome", call. = FALSE)
+    }
   }
   keys
 }
@@ -394,7 +407,7 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
         for (column in intersect(c("molecular_trait_id", "cs_id"), names(table))) table[[column]] <- character()
         for (column in intersect(c("low_purity", "has_covariate_explained_variant"), names(table))) table[[column]] <- logical()
       }
-      pgenCheckOwnership(table, own_expected, kind)
+      pgenCheckOwnership(table, own_expected, kind, variant_chromosome = kind == "summary")
       text_columns <- intersect(c("molecular_trait_id", "variant", "ref", "alt", "cs_id", "region"), names(table))
       for (column in text_columns) pgenCheckIds(table[[column]], paste(kind, "text schema", column))
       if (nrow(table) && "variant" %in% names(table)) {

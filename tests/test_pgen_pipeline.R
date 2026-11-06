@@ -15,19 +15,27 @@ source(file.path(scripts_dir, "run_pgen_susie_batch.R"))
 source(file.path(repo_dir, "tests", "test_pgen_batch_inputs.R"))
 
 run_pipeline_checks <- function() {
+  previous_options <- options(warning.length = 8170)
+  on.exit(options(previous_options), add = TRUE)
   plink <- Sys.getenv("PLINK2", unset = Sys.which("plink2"))
   stopifnot("Set PLINK2 to a real PLINK 2 executable" = nzchar(plink))
-  directory <- tempfile("pgen pipeline 'quoted' $literal ")
+  directory <- tempfile("pgen pipeline 'quoted' $literal ", tmpdir = dirname(tempdir()))
   dir.create(directory)
-  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  passed <- FALSE
+  on.exit(if (passed) unlink(directory, recursive = TRUE) else
+    message("Pipeline fixture and child logs retained at: ", directory), add = TRUE)
   rscript <- file.path(R.home("bin"), "Rscript")
   invoke <- function(script, arguments, label, expected_error = NULL) {
     log <- file.path(directory, paste0(label, ".log"))
     status <- suppressWarnings(system2(rscript, shQuote(c(file.path(scripts_dir, script), arguments)),
                                       stdout = log, stderr = log))
-    output <- paste(readLines(log, warn = FALSE), collapse = "\n")
+    output_lines <- readLines(log, warn = FALSE)
+    output <- paste(output_lines, collapse = "\n")
     if (is.null(expected_error)) {
-      if (!identical(status, 0L)) stop(label, " failed:\n", output, call. = FALSE)
+      if (!identical(status, 0L)) {
+        cat(tail(output_lines, 80L), sep = "\n", file = stderr())
+        stop(label, " failed; child log: ", log, call. = FALSE)
+      }
     } else {
       stopifnot(status != 0L, grepl(expected_error, output, fixed = TRUE))
     }
@@ -101,10 +109,13 @@ run_pipeline_checks <- function() {
                        "--sample-list", sample_list, "--cis-distance", "100",
                        "--base-seed", "82", "--plink2", plink)
   additional_bed <- file.path(directory, "additional.tsv")
-  additional_ids <- c("chr1_3011_A_T", "chr1_1111_A_T", "chr1_1181_A_T")
+  additional_ids <- c("chr1_3011_A_T", "chr2_1111_A_T", "chr1_1181_A_T")
   additional_samples <- rev(sample_ids[-1L])
   additional_values <- matrix(rbinom(3L * length(additional_samples), 2L, .3), nrow = 3L,
     dimnames = list(additional_ids, additional_samples))
+  # The chr2 feature has the strong causal profile for the chr1 outcomeA. Its
+  # duplicate cis profile keeps both records in the same high-purity set.
+  additional_values[2L, ] <- value_at(1120L)[additional_samples]
   additional_values[1L, 3L] <- NA_real_
   additional_values[3L, 5L] <- -1
   readr::write_tsv(dplyr::bind_cols(tibble::tibble(
@@ -189,6 +200,10 @@ run_pipeline_checks <- function() {
   additional_single <- run_layout(1L, "NA", additional_bed)
   stopifnot("Additional features must not depend on batch size" =
     identical(additional_pair$fits, additional_single$fits))
+  stopifnot("The gene-owned chr2 feature must reach the aggregated credible-set summary" =
+    any(additional_pair$summary$variant == "chr2_1111_A_T" &
+          additional_pair$summary$outcome_id == "outcomeA" &
+          additional_pair$summary$chromosome == "2"))
   for (id in phenotype_ids) {
     expected_additional <- if (id == "outcomeA") additional_ids[2L] else
       if (id %in% c("outcomeB1", "outcomeB2")) additional_ids[c(1L, 3L)] else character()
@@ -257,5 +272,6 @@ run_pipeline_checks <- function() {
   }
   message("PGEN pipeline tests passed: real PLINK unions, exact Tabix fit parity, ",
           "batch sizes 1/2/100, both missing codes, separate gene artifacts and complete aggregation")
+  passed <- TRUE
 }
 run_pipeline_checks()

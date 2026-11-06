@@ -7,11 +7,72 @@ suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(stringr))
 suppressPackageStartupMessages(library(purrr))
 functions_dir <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
-for (filename in c("ImportFunctions.R", "InitFunctions.R", "SusiePerformance.R",
+source_files <- vapply(sys.frames(), function(frame) {
+  if (is.null(frame$ofile)) "" else frame$ofile
+}, character(1))
+batch_script_path <- if (any(nzchar(source_files))) tail(source_files[nzchar(source_files)], 1L) else {
+  sub("^--file=", "", commandArgs()[grepl("^--file=", commandArgs())][[1L]])
+}
+pipeline_function_files <- c("ImportFunctions.R", "InitFunctions.R", "SusiePerformance.R",
                    "MemoryHelpers.R", "SusieFunctions.R", "PgenFunctions.R",
                    "SusieOutputFunctions.R", "PgenGeneFunctions.R",
-                   "PgenBatchFunctions.R")) {
+                   "PgenBatchFunctions.R")
+for (filename in pipeline_function_files) {
   source(file.path(functions_dir, filename))
+}
+
+additionalGenotypesForGene <- function(additional_table, phenotype_ids) {
+  if (is.null(additional_table)) return(NULL)
+  # Use the old per-gene loader conversion. Keep source row/sample order and
+  # missing codes, including the sample columns when there are no feature rows.
+  additional_table |>
+    dplyr::filter(.data$phenotype_id %in% phenotype_ids) |>
+    dplyr::select(-2, -3) |>
+    tibble::column_to_rownames("variant_id") |>
+    data.matrix()
+}
+
+makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version) {
+  # Cache by local path across roles. Hash scientific inputs and extracted files
+  # once per batch, before the gene loop; never hash a chromosome for each gene.
+  hashes <- new.env(parent = emptyenv())
+  file_record <- function(path) {
+    if (is.null(path)) return(list(present = FALSE, sha256 = NA_character_))
+    path <- normalizePath(path, mustWork = TRUE)
+    if (!exists(path, envir = hashes, inherits = FALSE)) {
+      assign(path, digest::digest(file = path, algo = "sha256"), envir = hashes)
+    }
+    list(present = TRUE, basename = basename(path), size_bytes = file.info(path)$size,
+         sha256 = get(path, envir = hashes, inherits = FALSE))
+  }
+  roles <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed", "qtl_results",
+             "covariates", "sample_list", "ancestry", "variant_list", "additional_genotypes")
+  inputs <- purrr::map(setNames(roles, roles), ~ file_record(opt[[.x]]))
+  scripts_dir <- dirname(normalizePath(batch_script_path, mustWork = TRUE))
+  source_paths <- c(file.path(functions_dir, pipeline_function_files),
+    file.path(scripts_dir, c("plan_pgen_susie.R", "run_pgen_susie_batch.R",
+                            "aggregate_pgen_susie.R")))
+  pipeline <- purrr::map(setNames(source_paths, basename(source_paths)), file_record)
+  filter_mode <- if (!is.null(opt$variant_list)) "variant_list" else
+    if (!is.null(opt$ancestry) && opt$maf > 0) "ancestry_maf" else "none"
+  list(batch_id = batch_id, plink_version = plink_version, inputs = inputs,
+    extracted_genotypes = purrr::map(setNames(batch_files, c("pgen", "pvar", "psam")), file_record),
+    settings = list(maf = opt$maf, variant_filter_mode = filter_mode,
+      cis_distance = opt$cis_distance, missing_code = opt$missing_code,
+      select_top_phenotype_per_cluster = isTRUE(opt$select_top_phenotype_per_cluster),
+      top_phenotype_pvalue_column = opt$top_phenotype_pvalue_column,
+      base_seed = opt$base_seed,
+      seed_algorithm = "susier-gene-outcome-seed-v1:UTF8-byte-length:SHA256-first7hex",
+      additional_genotype_scope = "union_of_selected_phenotypes_within_gene",
+      plink_threads = 1L, plink_memory_mb = opt$plink_memory_mb),
+    source = list(pipeline = pipeline,
+      runtime_image = Sys.getenv("SUSIER_RUNTIME_IMAGE", unset = "local"),
+      susie_source_sha = Sys.getenv("SUSIER_SUSIER_SOURCE_SHA", unset = "unavailable"),
+      eqtlutils_source_sha = Sys.getenv("SUSIER_EQTLUTILS_SOURCE_SHA", unset = "unavailable"),
+      r_version = as.character(getRversion())),
+    susie_version = as.character(utils::packageVersion("susieR")),
+    eqtlutils_version = as.character(utils::packageVersion("eQTLUtils")),
+    pgenlibr_version = as.character(utils::packageVersion("pgenlibr")))
 }
 
 requireBatchLocalFiles <- function(paths) {
@@ -168,11 +229,15 @@ runPgenSusieBatch <- function(opt) {
     sample_meta = opt$sample_list, cv_meta = NULL, out_prefix = batch_id,
     cisdistance = opt$cis_distance, n_folds = NULL, VariantList = opt$variant_list,
     MAF = opt$maf, AncestryMetadata = opt$ancestry,
-    AdditionalGenotypesBed = opt$additional_genotypes,
+    # Parse the additional table once below, before its ownership columns would
+    # be removed by LoadData. Do not allocate a second full batch matrix.
+    AdditionalGenotypesBed = NULL,
     select_top_phenotype_per_cluster = isTRUE(opt$select_top_phenotype_per_cluster),
     top_phenotype_pvalue_column = opt$top_phenotype_pvalue_column
   )
   data <- LoadData(legacy_options)
+  additional_table <- if (is.null(opt$additional_genotypes)) NULL else
+    ImportAdditionalGenotypes(opt$additional_genotypes)
   selected_ids <- as.character(data$phenotype_list$phenotype_id)
   if (!setequal(selected_ids, worklist$phenotype_id)) {
     stop("Batch worklist does not match the phenotypes selected by the current loader",
@@ -196,25 +261,16 @@ runPgenSusieBatch <- function(opt) {
   on.exit(closePgenReader(reader), add = TRUE)
   message("OPEN batch PGEN: ", reader$raw_sample_count, " samples, ",
           nrow(reader$variants), " variants")
-  hashed_paths <- c(batch_files, unlist(opt[c("worklist", "phenotype_bed",
-                                             "qtl_results", "covariates",
-                                             "sample_list")], use.names = FALSE))
-  input_hashes <- purrr::map_chr(hashed_paths, ~ digest::digest(
-    file = .x, algo = "sha256", serialize = FALSE
-  ))
-  names(input_hashes) <- basename(hashed_paths)
-  provenance <- list(batch_id = batch_id, plink_version = version,
-                      missing_code = opt$missing_code, input_sha256 = input_hashes,
-                      susie_version = as.character(utils::packageVersion("susieR")),
-                      pgenlibr_version = as.character(utils::packageVersion("pgenlibr")))
+  provenance <- makePgenBatchProvenance(opt, batch_id, batch_files, version)
   compact <- purrr::map(unique(worklist$gene_id), function(gene_id) {
     selected <- dplyr::filter(worklist, .data$gene_id == .env$gene_id)
+    additional_genotypes <- additionalGenotypesForGene(additional_table, selected$phenotype_id)
     outcomes <- purrr::map(seq_len(nrow(selected)), function(i) {
       list(phenotype_id = selected$phenotype_id[[i]], se = se,
            covariates = data$covariates_matrix, cis_distance = opt$cis_distance,
            ancestry_data = data$AncestryDf, MAF = data$MAF_threshold,
            variant_list = data$variant_list,
-           additional_genotypes = data$additional_genotypes,
+           additional_genotypes = additional_genotypes,
            region = selected$region[[i]])
     })
     names(outcomes) <- selected$outcome_id

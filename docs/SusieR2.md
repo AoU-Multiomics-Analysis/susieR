@@ -67,6 +67,10 @@ The workflow returns these combined tables:
 
 Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
 
+For `AdditionalGenotypes`, each gene uses the union of feature rows for its selected phenotype IDs. Every outcome for that gene receives the same union, as in the legacy per-gene task. Features from other genes are excluded. Source row order, sample order, and missing codes are preserved. A gene with no matching rows still uses the additional file's sample columns for the legacy sample intersection.
+
+Each gene's provenance records scientific files by argument role, with explicit presence and SHA256 values. This includes optional ancestry, variant-list, and additional-genotype files. Source chromosome files and extracted batch files are hashed once per batch. The record includes MAF, effective variant-filter mode, cis distance, phenotype selection, missing-code policy, seed settings, package versions, and SHA256 values for the pipeline scripts and functions. Variant lists take precedence over ancestry MAF. The image reference comes from the typed WDL image input; local runs record `local` unless `SUSIER_RUNTIME_IMAGE` is set. Upstream source SHAs come from the image environment when available. An image tag records the requested reference; use a digest for a fixed image identity.
+
 The aggregator reads explicit batch summary, credible-set, index, and diagnostic Files. It does not read gene RDS files. It rejects missing or duplicate outcomes, failed statuses, foreign outcomes, unreadable inputs, and incompatible table schemas. Fits that did not converge remain visible in the index.
 
 Cromwell retries operate on complete batch tasks. There is no durable checkpoint for a completed gene within a preempted batch. A restarted batch repeats its genes. Use smaller batches when the cost of repeating a batch is too high.

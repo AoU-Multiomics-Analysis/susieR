@@ -12,6 +12,7 @@ suppressPackageStartupMessages(library(tidyr))
 suppressPackageStartupMessages(library(purrr))
 suppressPackageStartupMessages(library(stringr))
 source(file.path(scripts_dir, "run_pgen_susie_batch.R"))
+source(file.path(repo_dir, "tests", "test_pgen_batch_inputs.R"))
 
 run_pipeline_checks <- function() {
   plink <- Sys.getenv("PLINK2", unset = Sys.which("plink2"))
@@ -99,8 +100,19 @@ run_pipeline_checks <- function() {
                        "--qtl-results", qtl, "--covariates", covariates,
                        "--sample-list", sample_list, "--cis-distance", "100",
                        "--base-seed", "82", "--plink2", plink)
-  run_layout <- function(size, missing_code) {
-    label <- paste0("layout_", size, "_", gsub("-", "minus", missing_code, fixed = TRUE))
+  additional_bed <- file.path(directory, "additional.tsv")
+  additional_ids <- c("chr1_3011_A_T", "chr1_1111_A_T", "chr1_1181_A_T")
+  additional_samples <- rev(sample_ids[-1L])
+  additional_values <- matrix(rbinom(3L * length(additional_samples), 2L, .3), nrow = 3L,
+    dimnames = list(additional_ids, additional_samples))
+  additional_values[1L, 3L] <- NA_real_
+  additional_values[3L, 5L] <- -1
+  readr::write_tsv(dplyr::bind_cols(tibble::tibble(
+    variant_id = additional_ids, phenotype_id = c("outcomeB2", "outcomeA", "outcomeB1"),
+    feature_type = "SV"), tibble::as_tibble(additional_values)), additional_bed, na = "NA")
+  run_layout <- function(size, missing_code, additional = NULL) {
+    label <- paste0("layout_", size, "_", gsub("-", "minus", missing_code, fixed = TRUE),
+                    if (is.null(additional)) "" else "_additional")
     plan_dir <- file.path(directory, label, "plan")
     invoke("plan_pgen_susie.R", c(
       "--phenotype-bed", phenotype_bed, "--qtl-results", qtl,
@@ -118,6 +130,7 @@ run_pipeline_checks <- function() {
     for (i in seq_along(worklists)) {
       batch_dirs[[i]] <- file.path(directory, label, paste0("run_", i))
       invoke("run_pgen_susie_batch.R", c(base_batch_args,
+        if (!is.null(additional)) c("--additional-genotypes", additional),
         "--worklist", worklists[[i]], "--phenotype-bed", beds[[i]],
         paste0("--missing-code=", missing_code), "--output-dir", batch_dirs[[i]]),
         paste0(label, "_batch_", i))
@@ -172,6 +185,17 @@ run_pipeline_checks <- function() {
   invoke("run_pgen_susie_batch.R", c(base_batch_args, "--pgen", "gs://bucket/unlocalized.pgen",
     "--worklist", gene_map, "--phenotype-bed", phenotype_bed, "--missing-code=NA",
     "--output-dir", file.path(directory, "invalid")), "cloud_path", "localization error")
+  additional_pair <- run_layout(2L, "NA", additional_bed)
+  additional_single <- run_layout(1L, "NA", additional_bed)
+  stopifnot("Additional features must not depend on batch size" =
+    identical(additional_pair$fits, additional_single$fits))
+  for (id in phenotype_ids) {
+    expected_additional <- if (id == "outcomeA") additional_ids[2L] else
+      if (id %in% c("outcomeB1", "outcomeB2")) additional_ids[c(1L, 3L)] else character()
+    actual_ids <- additional_pair$fits[[id]]$variant_id
+    stopifnot(setequal(intersect(actual_ids, additional_ids), expected_additional),
+      !any(setdiff(additional_ids, expected_additional) %in% actual_ids))
+  }
   first <- run_layout(2L, "NA")
   single <- run_layout(1L, "NA")
   hundred <- run_layout(100L, "NA")
@@ -212,6 +236,23 @@ run_pipeline_checks <- function() {
       reference <- .pgenGeneWithSeed(geneOutcomeSeed(82L, gene_id, id),
         finemapPhenotype(id, se, dosage_bgz, data$covariates_matrix, 100))
       stopifnot(identical(reference, expected_fits[[id]]))
+      if (missing_code == "NA") {
+        # Recreate the old per-gene task: its BED contains every selected outcome
+        # for this gene, so LoadData supplies their union to each outcome.
+        gene_ids <- phenotype_ids[readr::read_tsv(gene_map, show_col_types = FALSE)$gene_id == gene_id]
+        gene_bed <- file.path(directory, "legacy_gene.bed")
+        readr::write_tsv(dplyr::filter(bed, phenotype_id %in% gene_ids), gene_bed)
+        gene_data <- LoadData(list(expression_matrix = gene_bed, phenotype_list = qtl,
+          covariates = covariates, genotype_matrix = dosage_bgz, sample_meta = sample_list,
+          cisdistance = 100, out_prefix = "reference", MAF = 0,
+          AdditionalGenotypesBed = additional_bed))
+        gene_se <- makePgenBatchExperiment(gene_data)
+        gene_reference <- .pgenGeneWithSeed(geneOutcomeSeed(82L, gene_id, id),
+          finemapPhenotype(id, gene_se, dosage_bgz, gene_data$covariates_matrix, 100,
+            additional_genotypes = gene_data$additional_genotypes))
+        stopifnot("Gene-local additional features must match the legacy Tabix fit" =
+          identical(gene_reference, additional_pair$fits[[id]]))
+      }
     }
   }
   message("PGEN pipeline tests passed: real PLINK unions, exact Tabix fit parity, ",

@@ -178,12 +178,34 @@ run_pipeline_checks <- function() {
       writeLines(file.path(batch_dirs, name), path)
       path
     })
+    gene_files <- unlist(lapply(batch_dirs, function(path) {
+      list.files(file.path(path, "genes"), recursive = TRUE, full.names = TRUE)
+    }), use.names = FALSE)
+    metadata_patterns <- c(rds = "_susie[.]rds$", parquet = "[.]parquet$",
+      tsv = "[.]tsv$", log = "[.]log$", provenance = "[.]provenance[.]json$")
+    metadata_args <- unlist(purrr::imap(metadata_patterns, function(pattern, role) {
+      path <- file.path(directory, paste0(label, "_gene_", role, ".uris"))
+      # Reversed file order must not change which gene owns each output.
+      writeLines(rev(gene_files[grepl(pattern, gene_files)]), path)
+      c(paste0("--gene-", role, "-uris-file"), path)
+    }), use.names = FALSE)
     aggregate_dir <- file.path(directory, label, "aggregate")
     invoke("aggregate_pgen_susie.R", c(
       "--expected-outcomes", file.path(plan_dir, "expected_outcomes.tsv"),
       "--summary-files", list_paths[["summary"]], "--credible-set-files", list_paths[["cs"]],
       "--index-files", list_paths[["index"]], "--diagnostic-files", list_paths[["diagnostic"]],
-      "--output-dir", aggregate_dir), paste0(label, "_aggregate"))
+      metadata_args, "--output-dir", aggregate_dir), paste0(label, "_aggregate"))
+    manifests <- list.files(file.path(aggregate_dir, "gene_manifests"), full.names = TRUE)
+    stopifnot(identical(basename(manifests), "chr1.gene_outputs.tsv"))
+    manifest <- readr::read_tsv(manifests[[1L]],
+      col_types = readr::cols(.default = readr::col_character()), show_col_types = FALSE)
+    stopifnot(nrow(manifest) == 3L,
+      setequal(manifest$gene_id, c("gene A/one", "geneB", "gene:C")),
+      all(manifest$chromosome == "1"),
+      setequal(manifest$rds_uri, gene_files[grepl("_susie[.]rds$", gene_files)]))
+    manifest_uris <- unlist(manifest[grepl("_uri$", names(manifest))], use.names = FALSE)
+    stopifnot(length(manifest_uris) == 27L, setequal(manifest_uris, gene_files),
+      all(file.exists(manifest_uris)))
     index <- readr::read_tsv(file.path(aggregate_dir, "outcome_index.tsv"), show_col_types = FALSE)
     stopifnot(nrow(index) == 4L, setequal(index$outcome_id, phenotype_ids),
               !any(index$status == "FAILED"),
@@ -271,7 +293,8 @@ run_pipeline_checks <- function() {
     }
   }
   message("PGEN pipeline tests passed: real PLINK unions, exact Tabix fit parity, ",
-          "batch sizes 1/2/100, both missing codes, separate gene artifacts and complete aggregation")
+          "batch sizes 1/2/100, both missing codes, separate gene artifacts, complete aggregation, ",
+          "and chromosome gene manifests")
   passed <- TRUE
 }
 run_pipeline_checks()

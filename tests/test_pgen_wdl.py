@@ -17,7 +17,15 @@ import WDL
 
 ROOT = pathlib.Path(sys.argv.pop(1)).resolve() if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parents[1]
 WRITERS = {'write_lines', 'write_tsv', 'write_map', 'write_json'}
-LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files', '--chromosomes-file')
+GENE_URI_INPUTS = {
+    'gene_rds_uris': 'GeneRds',
+    'gene_parquet_uris': 'GeneParquets',
+    'gene_tsv_uris': 'GeneTsvs',
+    'gene_log_uris': 'GeneLogs',
+    'gene_provenance_uris': 'GeneProvenance',
+}
+GENE_URI_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in GENE_URI_INPUTS}
+LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files', '--chromosomes-file') + tuple(GENE_URI_FLAGS)
 FILE_NAMES = {'phenotype_bed', 'qtl_results', 'gene_map', 'worklist', 'covariates', 'sample_list',
               'ancestry', 'variant_list', 'additional_genotypes', 'expected_outcomes'}
 OPTIONAL_FILES = {'gene_map', 'ancestry', 'variant_list', 'additional_genotypes'}
@@ -90,8 +98,38 @@ class PgenWdlTests(unittest.TestCase):
             self.assertIsInstance(decl.type.item_type, WDL.Type.File)
         # Output paths remain typed, including per-gene artifacts and diagnostics.
         outputs = {d.name: str(d.type) for d in self.doc.workflow.outputs}
-        for name in ('GeneRds', 'GeneParquets', 'GeneTsvs', 'GeneLogs', 'GeneProvenance', 'PlinkLogs'):
+        for name in ('GeneRds', 'GeneParquets', 'GeneTsvs', 'GeneLogs', 'GeneProvenance',
+                     'PlinkLogs', 'ChromosomeGeneManifests'):
             self.assertEqual(outputs[name], 'Array[File]')
+
+    def test_gene_manifest_metadata_keeps_completed_output_uris(self):
+        task = self.tasks['AggregatePgenSusie']
+        declarations = {decl.name: decl for decl in task.inputs}
+        call = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'AggregatePgenSusie')
+        outputs = {decl.name: decl for decl in task.outputs}
+        self.assertEqual(str(outputs['ChromosomeGeneManifests'].type), 'Array[File]')
+        for name, output_name in GENE_URI_INPUTS.items():
+            with self.subTest(metadata=name):
+                declaration = declarations[name]
+                self.assertEqual(str(declaration.type), 'Array[String]')
+                uris = ['gs://bucket/outputs/first ' + name,
+                        "gs://bucket/outputs/second 'quoted' $(touch PWNED) `touch PWNED` " + name]
+                source_type = WDL.Type.Array(WDL.Type.Array(WDL.Type.File()))
+                source = WDL.Value.from_json(source_type, [[uris[0]], [uris[1]]])
+                env = WDL.Env.Bindings().bind('RunPgenSusieBatch.' + output_name, source)
+                # File outputs become text only for output-manifest metadata.
+                # They are not files that this task opens or localizes.
+                evaluated = call.inputs[name].eval(env, WDL.StdLib.Base('1.0'))
+                self.assertIsInstance(evaluated.type.item_type, WDL.Type.File)
+                metadata = evaluated.coerce(declaration.type)
+                self.assertEqual(metadata.json, uris)
+
+                def reject_localization(file):
+                    self.fail('Output URI metadata must not be localized: ' + file.value)
+
+                rewritten = WDL.Value.rewrite_paths(metadata, reject_localization)
+                self.assertEqual(rewritten.json, uris)
 
     def test_example_inputs_match_wdl_types(self):
         inputs = json.loads((ROOT / 'examples/inputs/SusieR2.inputs.json').read_text())
@@ -139,7 +177,9 @@ class PgenWdlTests(unittest.TestCase):
                         writers.append((task.name, str(node.arguments[0])))
                         self.assertIs(part.expr, node)
                         self.assertIsInstance(part.expr.type, WDL.Type.File)
-                        expected_item_type = WDL.Type.String if task.name == 'PlanPgenSusie' else WDL.Type.File
+                        name = str(node.arguments[0])
+                        metadata = name in GENE_URI_INPUTS
+                        expected_item_type = WDL.Type.String if task.name == 'PlanPgenSusie' or metadata else WDL.Type.File
                         self.assertIsInstance(node.arguments[0].type.item_type, expected_item_type)
         self.assertCountEqual(writers, [
             ('PlanPgenSusie', 'chromosomes'),
@@ -147,6 +187,7 @@ class PgenWdlTests(unittest.TestCase):
             ('AggregatePgenSusie', 'credible_set_files'),
             ('AggregatePgenSusie', 'index_files'),
             ('AggregatePgenSusie', 'diagnostic_files'),
+            *[('AggregatePgenSusie', name) for name in GENE_URI_INPUTS],
         ])
 
     def test_static_guard_rejects_writers_in_all_workflow_scopes(self):
@@ -187,6 +228,9 @@ class PgenWdlTests(unittest.TestCase):
                 value = 'gs://bucket/' + name
             elif isinstance(typ, WDL.Type.Array) and isinstance(typ.item_type, WDL.Type.File):
                 value = ['gs://bucket/' + name + '/one', 'gs://bucket/' + name + '/two']
+            elif name in GENE_URI_INPUTS:
+                value = ['gs://bucket/outputs/' + name + '/one',
+                         "gs://bucket/outputs/" + name + "/two 'quoted' $(touch PWNED) `touch PWNED`"]
             elif name == 'chromosomes':
                 # Invalid chromosome IDs test shell quoting; the R planner validates IDs.
                 value = ['2', "1 'one' 'two' $(touch PWNED) `touch PWNED`"]
@@ -218,6 +262,9 @@ class PgenWdlTests(unittest.TestCase):
                 return mapping[file.value]
 
             localized = {name: WDL.Value.rewrite_paths(value, localize) for name, value in raw.items()}
+            for name in GENE_URI_INPUTS.keys() & raw.keys():
+                self.assertEqual(localized[name].json, raw[name].json)
+                self.assertTrue(all(uri not in mapping for uri in raw[name].json))
             if broken:
                 # Mutate a File only after constructing the proper localized environment.
                 name = broken[0]
@@ -273,9 +320,15 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
             else:
                 self.assertEqual(args[0], '/opt/r/scripts/aggregate_pgen_susie.R')
                 for flag, paths in payload['lists'].items():
-                    self.assertEqual(paths, localized[flag[2:].replace('-', '_')].json)
-                    for path in paths:
-                        self.assertTrue(pathlib.Path(path).is_file())
+                    if flag in GENE_URI_FLAGS:
+                        self.assertEqual(paths, raw[GENE_URI_FLAGS[flag]].json)
+                    else:
+                        self.assertEqual(paths, localized[flag[2:].replace('-', '_')].json)
+                        for path in paths:
+                            self.assertTrue(pathlib.Path(path).is_file())
+                for flag, name in GENE_URI_FLAGS.items():
+                    self.assertIn(flag, args)
+                    self.assertEqual(payload['lists'][flag], raw[name].json)
             for name, value in localized.items():
                 if name in FILE_NAMES:
                     flag = '--' + name.replace('_', '-')

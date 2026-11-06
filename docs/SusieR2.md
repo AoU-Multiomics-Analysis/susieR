@@ -75,8 +75,15 @@ The workflow returns these combined tables:
 - `OutcomeIndex`: every expected outcome, including outcomes with no credible sets and fits that did not converge.
 - `CovariateExplainedVariants`: covariate-explained variant diagnostics.
 - `ExpectedOutcomes` and `BatchIndex`: planner tables for checking batch ownership.
+- `ChromosomeGeneManifests`: one TSV per processed chromosome, named `chr<N>.gene_outputs.tsv`.
 
 Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
+
+Each chromosome manifest has one row per gene. Its columns are `chromosome`, `gene_id`, `gene_key`, `batch_id`, `rds_uri`, `summary_parquet_uri`, `lbf_parquet_uri`, `full_parquet_uri`, `covariate_explained_variants_uri`, `variant_position_summary_uri`, `outcome_index_uri`, `log_uri`, and `provenance_uri`. Chromosome values use `1` through `22`. Original gene IDs are preserved. A gene with several outcomes has one row and one RDS containing those outcome fits. Genes with no credible sets or nonconverged outcomes remain in the manifests; their linked outcome index gives the per-outcome status.
+
+The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The locations are output-only string metadata: the aggregate task never opens or localizes those gene files. It reads the existing small batch files and its validated outcome index, checks all nine artifact roles, and writes the manifests in the same task. No extra VM, gene-file copy, output-directory guess, or new workflow input is needed. Files that the aggregate task opens remain typed WDL Files.
+
+For a direct call to `aggregate_pgen_susie.R`, supply all five optional metadata-list arguments together: `--gene-rds-uris-file`, `--gene-parquet-uris-file`, `--gene-tsv-uris-file`, `--gene-log-uris-file`, and `--gene-provenance-uris-file`. Each argument names a local newline-delimited list of completed output locations. These list contents are metadata, never file inputs to open. The WDL creates all five lists during command rendering. Direct CLI calls without them keep their previous outputs. Use an image containing the updated aggregation script when running the updated WDL.
 
 For `AdditionalGenotypes`, each gene uses the union of feature rows for its selected phenotype IDs. Every outcome for that gene receives the same union, as in the legacy per-gene task. Features from other genes are excluded. Source row order, sample order, and missing codes are preserved. A gene with no matching rows still uses the additional file's sample columns for the legacy sample intersection.
 

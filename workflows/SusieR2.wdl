@@ -99,6 +99,13 @@ workflow SusieR2 {
       credible_set_files = RunPgenSusieBatch.CredibleSets,
       index_files = RunPgenSusieBatch.OutcomeIndex,
       diagnostic_files = RunPgenSusieBatch.Diagnostics,
+      # Completed output locations are string metadata for manifests only.
+      # The aggregate task never opens or localizes these URI values.
+      gene_rds_uris = flatten(RunPgenSusieBatch.GeneRds),
+      gene_parquet_uris = flatten(RunPgenSusieBatch.GeneParquets),
+      gene_tsv_uris = flatten(RunPgenSusieBatch.GeneTsvs),
+      gene_log_uris = flatten(RunPgenSusieBatch.GeneLogs),
+      gene_provenance_uris = flatten(RunPgenSusieBatch.GeneProvenance),
       docker_image = DockerImage,
       memory_gb = AggregateMemoryGB,
       disk_gb = AggregateDiskGB,
@@ -118,6 +125,7 @@ workflow SusieR2 {
     Array[File] GeneTsvs = flatten(RunPgenSusieBatch.GeneTsvs)
     Array[File] GeneLogs = flatten(RunPgenSusieBatch.GeneLogs)
     Array[File] GeneProvenance = flatten(RunPgenSusieBatch.GeneProvenance)
+    Array[File] ChromosomeGeneManifests = AggregatePgenSusie.ChromosomeGeneManifests
     Array[File] BatchLogs = RunPgenSusieBatch.TaskStdout
     Array[File] BatchErrors = RunPgenSusieBatch.TaskStderr
     Array[File] PlinkLogs = flatten(RunPgenSusieBatch.PlinkLogs)
@@ -316,6 +324,12 @@ task AggregatePgenSusie {
     Array[File] credible_set_files
     Array[File] index_files
     Array[File] diagnostic_files
+    # These completed output paths are metadata, not local input filenames.
+    Array[String] gene_rds_uris
+    Array[String] gene_parquet_uris
+    Array[String] gene_tsv_uris
+    Array[String] gene_log_uris
+    Array[String] gene_provenance_uris
     String docker_image
     Int memory_gb
     Int disk_gb
@@ -348,12 +362,23 @@ task AggregatePgenSusie {
     while IFS= read -r path; do require_readable "$path"; done < index_files.txt
     cp '~{write_lines(diagnostic_files)}' diagnostic_files.txt
     while IFS= read -r path; do require_readable "$path"; done < diagnostic_files.txt
+    # Preserve output URI metadata unchanged. Do not open or localize its paths.
+    cp '~{write_lines(gene_rds_uris)}' gene_rds_uris.txt
+    cp '~{write_lines(gene_parquet_uris)}' gene_parquet_uris.txt
+    cp '~{write_lines(gene_tsv_uris)}' gene_tsv_uris.txt
+    cp '~{write_lines(gene_log_uris)}' gene_log_uris.txt
+    cp '~{write_lines(gene_provenance_uris)}' gene_provenance_uris.txt
     Rscript /opt/r/scripts/aggregate_pgen_susie.R \
       --expected-outcomes '~{sub(expected_outcomes, "'", "'\"'\"'")}' \
       --summary-files summary_files.txt \
       --credible-set-files credible_set_files.txt \
       --index-files index_files.txt \
       --diagnostic-files diagnostic_files.txt \
+      --gene-rds-uris-file gene_rds_uris.txt \
+      --gene-parquet-uris-file gene_parquet_uris.txt \
+      --gene-tsv-uris-file gene_tsv_uris.txt \
+      --gene-log-uris-file gene_log_uris.txt \
+      --gene-provenance-uris-file gene_provenance_uris.txt \
       --output-dir aggregate
     echo 'COMPLETE PGEN batch aggregation'
   >>>
@@ -362,6 +387,7 @@ task AggregatePgenSusie {
     File CredibleSets = "aggregate/credible_sets.parquet"
     File OutcomeIndex = "aggregate/outcome_index.tsv"
     File Diagnostics = "aggregate/covariate_explained_variants.tsv"
+    Array[File] ChromosomeGeneManifests = glob("aggregate/gene_manifests/chr*.gene_outputs.tsv")
     File TaskStdout = stdout()
     File TaskStderr = stderr()
   }

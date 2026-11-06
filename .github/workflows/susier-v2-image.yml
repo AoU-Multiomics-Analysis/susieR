@@ -1,0 +1,106 @@
+name: SuSiE PGEN image CI
+
+# Only a change to source installed in the image starts an automatic build.
+# Use workflow_dispatch to test changes to the image recipe or tests themselves.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "R/utils/ImportFunctions.R"
+      - "R/utils/InitFunctions.R"
+      - "R/utils/MemoryHelpers.R"
+      - "R/utils/OptParser.R"
+      - "R/utils/SusiePerformance.R"
+      - "R/utils/SusieFunctions.R"
+      - "R/utils/PgenFunctions.R"
+      - "R/utils/SusieOutputFunctions.R"
+      - "R/utils/PgenGeneFunctions.R"
+      - "R/utils/PgenBatchFunctions.R"
+      - "R/scripts/plan_pgen_susie.R"
+      - "R/scripts/run_pgen_susie_batch.R"
+      - "R/scripts/aggregate_pgen_susie.R"
+      - "R/scripts/susie.R"
+  pull_request:
+    branches: ["main", "codex/susier-performance"]
+    paths:
+      - "R/utils/ImportFunctions.R"
+      - "R/utils/InitFunctions.R"
+      - "R/utils/MemoryHelpers.R"
+      - "R/utils/OptParser.R"
+      - "R/utils/SusiePerformance.R"
+      - "R/utils/SusieFunctions.R"
+      - "R/utils/PgenFunctions.R"
+      - "R/utils/SusieOutputFunctions.R"
+      - "R/utils/PgenGeneFunctions.R"
+      - "R/utils/PgenBatchFunctions.R"
+      - "R/scripts/plan_pgen_susie.R"
+      - "R/scripts/run_pgen_susie_batch.R"
+      - "R/scripts/aggregate_pgen_susie.R"
+      - "R/scripts/susie.R"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: susier-pgen-image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check image and build boundaries
+        run: |
+          python3 -m pip install PyYAML==6.0.2 miniwdl==1.14.2
+          python3 tests/test_pgen_image_config.py
+          python3 tests/test_pgen_wdl.py
+
+  image:
+    needs: config
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image for installed-code tests
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: containers/SusieR2/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: susier-pgen:smoke-test
+          cache-from: type=gha,scope=susier-pgen
+          cache-to: type=gha,mode=max,scope=susier-pgen
+      - name: Test installed PLINK batch and legacy parity
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$PWD/tests:/repo/tests:ro" \
+            --workdir /repo \
+            susier-pgen:smoke-test bash tests/test_pgen_container.sh
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish checked image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: containers/SusieR2/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/aou-multiomics-analysis/susier/pgen:main
+            ghcr.io/aou-multiomics-analysis/susier/pgen:latest
+            ghcr.io/aou-multiomics-analysis/susier/pgen:sha-${{ github.sha }}
+          cache-from: type=gha,scope=susier-pgen

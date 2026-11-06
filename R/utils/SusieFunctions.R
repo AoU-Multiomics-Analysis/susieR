@@ -453,18 +453,20 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
 fitSusieModel <- function(X, y, legacy = FALSE,
                           covariate_explained_variants = emptyCovariateExplainedVariants()) {
   message("Fitting SuSiE model")
-  fitted <- susieR::susie(X, y,
+  postprocess <- if (legacy) NULL else function(fitted, stats) {
+    message("Calculating marginal z-scores")
+    fitted$z <- computeMarginalZScores(X, y, .x_stats = stats)
+    fitted
+  }
+  fitted <- runSusieWithFitOptimizations(X, y,
                           L = 10,
                           estimate_residual_variance = TRUE,
                           estimate_prior_variance = TRUE,
                           scaled_prior_variance = 0.1,
                           verbose = TRUE,
                           compute_univariate_zscore = legacy,
-                          min_abs_corr = 0.5)
-  if (!legacy) {
-    message("Calculating marginal z-scores")
-    fitted$z <- computeMarginalZScores(X, y)
-  }
+                          min_abs_corr = 0.5,
+                          .postprocess = postprocess)
   fitted$covariate_explained_variants <- covariate_explained_variants
   fitted
 }
@@ -625,11 +627,13 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   nonzero_idx <- which(rowSums(round(gt_matrix,0), na.rm = TRUE) != 0)
   if (length(nonzero_idx) == 0) stop("No variant with alt alleles")
   gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
+  if (isTRUE(getOption("susier.memory_debug", FALSE))) {
     message("DEBUG: before imputation (local objects and sizes):")
     debug_list_locals(environment(), top_n = 100)
     debug_print_specific(environment(), var_names = c("gt_matrix", "covariates_matrix"))
     message("GC before imputation:")
     print(gc())
+  }
   # Impute missing values using row means and keep variant IDs before matrix
   # operations drop or reorder row names.
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
@@ -649,18 +653,20 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   rm(gt_matrix)
   gc()
   # The fit uses samples by variants; apply the small factor in that orientation.
-  message("DEBUG: before computing gt_hat (local objects and sizes):")
-  debug_list_locals(environment(), top_n = 100)
-  debug_print_specific(environment(), var_names = c("gt_std", "covariates_matrix", "adjustment"))
-  # Estimate memory needed for gt_hat if gt_std exists
-  if (exists("gt_std", envir = environment()) && !is.null(dim(get("gt_std", envir = environment())))) {
+  if (isTRUE(getOption("susier.memory_debug", FALSE))) {
+    message("DEBUG: before computing gt_hat (local objects and sizes):")
+    debug_list_locals(environment(), top_n = 100)
+    debug_print_specific(environment(), var_names = c("gt_std", "covariates_matrix", "adjustment"))
+    # Estimate memory needed for gt_hat if gt_std exists
+    if (exists("gt_std", envir = environment()) && !is.null(dim(get("gt_std", envir = environment())))) {
       p <- dim(get("gt_std", envir = environment()))[1]   # variants
       n <- dim(get("gt_std", envir = environment()))[2]   # samples
       est_bytes <- as.numeric(n) * as.numeric(p) * 8
       message(sprintf("Estimated gt_hat memory: %s bytes (%.2f MB)", format(est_bytes, big.mark = ","), est_bytes / 1024^2))
     }
-  message("GC before gt_hat:")
-  print(gc())
+    message("GC before gt_hat:")
+    print(gc())
+  }
   message('Computing gt_hat')
   gt_hat <- residualizeWithCovariates(adjustment, t(gt_std), variant_ids = variant_names)
   legacy <- !is.null(adjustment$state$hat)

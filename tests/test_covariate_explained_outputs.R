@@ -39,7 +39,7 @@ run_covariate_explained_output_tests <- function(repo_dir = ".") {
   no_sets$sets$purity <- fit$sets$purity[0, , drop = FALSE]
 
   # Run only the entry point's output stage. Model fitting/input loading have
-  # separate tests. A child process permits the real no-set quit() branch.
+  # separate tests. A child process exercises the shared formatter and writer calls.
   driver <- file.path(test_dir, "export_driver.R")
   writeLines(c(
     "args <- commandArgs(trailingOnly = TRUE)",
@@ -51,6 +51,7 @@ run_covariate_explained_output_tests <- function(repo_dir = ".") {
     "suppressPackageStartupMessages(library(purrr))",
     "source(file.path(args[[1L]], 'InitFunctions.R'))",
     "source(file.path(args[[1L]], 'SusieFunctions.R'))",
+    "source(file.path(args[[1L]], 'SusieOutputFunctions.R'))",
     "results <- readRDS(args[[3L]])",
     "opt <- list(out_prefix = args[[4L]])",
     "region_df <- tibble(phenotype_id = names(results), region = 'chr1_1_2000')",
@@ -64,11 +65,11 @@ run_covariate_explained_output_tests <- function(repo_dir = ".") {
     "      grepl('^empty_', as.character(expression[[2L]]))) eval(expression)",
     "}",
     "first_export <- which(vapply(expressions, function(expression) {",
-    "  is.call(expression) && identical(expression[[1L]], as.name('saveRDS')) &&",
-    "    identical(expression[[2L]], as.name('results'))",
+    "  is.call(expression) && identical(expression[[1L]], as.name('<-')) &&",
+    "    identical(expression[[2L]], as.name('tables'))",
     "}, logical(1)))[[1L]]",
     "eval(as.expression(expressions[seq.int(first_export, length(expressions))]))",
-    "saveRDS(cs_df, paste0(opt$out_prefix, '.cs_summary.rds'))"
+    "saveRDS(tables$cs_df, paste0(opt$out_prefix, '.cs_summary.rds'))"
   ), driver)
   run_export <- function(results, label) {
     fixture_path <- file.path(test_dir, paste0(label, ".rds"))

@@ -1,0 +1,34 @@
+{
+  "SusieR2.ChromosomePgens": [
+    {
+      "chromosome": "1",
+      "pgen": "gs://YOUR_BUCKET/genotypes/chr1.pgen",
+      "pvar": "gs://YOUR_BUCKET/genotypes/chr1.pvar",
+      "psam": "gs://YOUR_BUCKET/genotypes/chr1.psam"
+    },
+    {
+      "chromosome": "2",
+      "pgen": "gs://YOUR_BUCKET/genotypes/chr2.pgen",
+      "pvar": "gs://YOUR_BUCKET/genotypes/chr2.pvar",
+      "psam": "gs://YOUR_BUCKET/genotypes/chr2.psam"
+    }
+  ],
+  "SusieR2.PhenotypeBed": "gs://YOUR_BUCKET/phenotypes/expression.bed",
+  "SusieR2.QtlResults": "gs://YOUR_BUCKET/phenotypes/qtl_results.tsv",
+  "SusieR2.Covariates": "gs://YOUR_BUCKET/phenotypes/covariates.tsv",
+  "SusieR2.SampleList": "gs://YOUR_BUCKET/phenotypes/sample_list.tsv",
+  "SusieR2.LegacyMissingCode": "NA",
+  "SusieR2.BatchSize": 50,
+  "SusieR2.CisDistance": 1000000,
+  "SusieR2.BaseSeed": 1,
+  "SusieR2.MAF": 0.0,
+  "SusieR2.SelectTopPhenotypePerCluster": false,
+  "SusieR2.TopPhenotypePvalueColumn": "qval",
+  "SusieR2.DockerImage": "ghcr.io/aou-multiomics-analysis/susier/pgen:main",
+  "SusieR2.Cpu": 1,
+  "SusieR2.BatchMemoryGB": 16,
+  "SusieR2.BatchDiskGB": 100,
+  "SusieR2.PlinkMemoryMB": 1024,
+  "SusieR2.PreemptibleAttempts": 3,
+  "SusieR2.MaxRetries": 1
+}

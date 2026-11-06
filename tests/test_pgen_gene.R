@@ -16,6 +16,45 @@ run_pgen_gene_tests <- function(repo_dir) {
                  "geneArtifactKey", "geneOutcomeSeed", "runPgenGene")) {
     if (!exists(name, mode = "function")) stop("Missing gene function: ", name)
   }
+  # Repeating extraction in the formatter must fail the call-count checks.
+  # Changing output order, types, values, or serialization must fail parity.
+  compare_reused_outputs <- function(results, regions, directory) {
+    extracted <- purrr::map(results, extractResults)
+    fresh <- formatSusieOutputs(results, regions)
+    production_extract <- extractResults
+    extraction_environment <- environment(formatSusieOutputs)
+    extraction_calls <- 0L
+    tryCatch({
+      assign("extractResults", function(fitted) {
+        extraction_calls <<- extraction_calls + 1L
+        production_extract(fitted)
+      }, envir = extraction_environment)
+      reused <- formatSusieOutputs(results, regions, extracted_results = extracted)
+    }, finally = {
+      assign("extractResults", production_extract, envir = extraction_environment)
+    })
+    stopifnot(extraction_calls == 0L)
+    expect_identical_value(reused, fresh, "reused output tables")
+    expect_identical_value(
+      formatSusieOutputs(results, regions, extracted_results = rev(extracted)),
+      fresh, "named extraction order")
+    dir.create(directory, recursive = TRUE, showWarnings = FALSE)
+    fresh_files <- writeSusieOutputs(results, fresh, file.path(directory, "fresh"))
+    reused_files <- writeSusieOutputs(results, reused, file.path(directory, "reused"))
+    expect_identical_value(names(reused_files), names(fresh_files), "output file types")
+    expect_identical_value(readRDS(reused_files[["rds"]]), results, "complete saved fits")
+    for (name in names(fresh_files)) {
+      read_bytes <- function(path) readBin(path, "raw", n = file.info(path)$size)
+      expect_identical_value(read_bytes(reused_files[[name]]),
+                             read_bytes(fresh_files[[name]]), paste(name, "file bytes"))
+    }
+    for (name in c("summary", "lbf", "full")) {
+      expect_identical_value(arrow::read_parquet(reused_files[[name]]),
+                             arrow::read_parquet(fresh_files[[name]]),
+                             paste(name, "decoded parquet"))
+    }
+    fresh
+  }
   run_named_test("complete UTF-8 artifact keys and unambiguous stable seeds", {
     stopifnot(identical(geneArtifactKey("gene/é"), paste0("gene-", digest::digest(
       charToRaw(enc2utf8("gene/é")), algo = "sha256", serialize = FALSE))),
@@ -162,8 +201,22 @@ run_pgen_gene_tests <- function(repo_dir) {
     set.seed(997L)
     rng <- .Random.seed
     kind <- RNGkind()
-    result <- runPgenGene("gene/α", outcomes, reader, temp, 13L, "NA",
-      provenance = list(inputs = list(pgen = list(basename = "fixture.pgen", sha256 = "supplied"))))
+    production_extract <- extractResults
+    extracted_fits <- list()
+    tryCatch({
+      extractResults <- function(fitted) {
+        extracted_fits[[length(extracted_fits) + 1L]] <<- fitted
+        production_extract(fitted)
+      }
+      result <- runPgenGene("gene/α", outcomes, reader, temp, 13L, "NA",
+        provenance = list(inputs = list(pgen = list(basename = "fixture.pgen", sha256 = "supplied"))))
+    }, finally = {
+      extractResults <- production_extract
+    })
+    if (length(extracted_fits) != length(outcomes)) {
+      stop("Expected one extractResults() call per outcome; expected ", length(outcomes),
+           " calls, received ", length(extracted_fits), call. = FALSE)
+    }
     stopifnot(identical(.Random.seed, rng), identical(RNGkind(), kind),
               identical(names(result), c("summary", "credible_sets", "diagnostics", "index", "files")),
               identical(names(result$index), c("gene_id", "gene_key", "outcome_id", "phenotype_id",
@@ -171,10 +224,61 @@ run_pgen_gene_tests <- function(repo_dir) {
               is.integer(result$index$seed), is.integer(result$index$credible_set_count),
               is.logical(result$index$converged), all(file.exists(result$files)))
     fits <- readRDS(result$files[["rds"]])
+    expect_identical_value(extracted_fits, unname(fits), "one extraction for each saved fit")
     stopifnot(identical(names(fits), names(outcomes)),
               identical(unique(result$summary$molecular_trait_id), names(outcomes)[1:2]),
               result$index$credible_set_count[[3L]] == 0L,
               identical(unique(result$summary$region), unname(vapply(outcomes[1:2], `[[`, character(1), "region"))))
+    regions <- tibble(phenotype_id = names(outcomes),
+                      region = vapply(outcomes, `[[`, character(1), "region"))
+    fresh <- compare_reused_outputs(fits, regions, file.path(temp, "reuse-mixed"))
+    expect_identical_value(result$summary, fresh$in_cs_variant_df, "gene summary rows")
+    expect_identical_value(result$credible_sets, fresh$cs_df, "gene credible-set rows")
+    expect_identical_value(result$diagnostics, fresh$covariate_explained_variants,
+                           "gene diagnostic rows")
+    counts <- vapply(fits, function(fitted) {
+      sets <- extractResults(fitted)$cs_df
+      if (is.null(sets)) 0L else as.integer(nrow(sets))
+    }, integer(1))
+    expect_identical_value(result$index$credible_set_count, unname(counts), "status set counts")
+    extracted <- purrr::map(fits, extractResults)
+    expect_error_message(formatSusieOutputs(fits, regions,
+      extracted_results = unname(extracted)), "named list")
+    expect_error_message(formatSusieOutputs(fits, regions,
+      extracted_results = extracted[-1L]), "each outcome")
+    extra <- extracted
+    extra$unrequested <- extracted[[1L]]
+    expect_error_message(formatSusieOutputs(fits, regions,
+      extracted_results = extra), "each outcome")
+    duplicate_extracted <- extracted
+    names(duplicate_extracted)[[2L]] <- names(duplicate_extracted)[[1L]]
+    expect_error_message(formatSusieOutputs(fits, regions,
+      extracted_results = duplicate_extracted), "unique")
+    incomplete_extracted <- extracted
+    incomplete_extracted[[1L]]$lbf_df <- NULL
+    expect_error_message(formatSusieOutputs(fits, regions,
+      extracted_results = incomplete_extracted), "cs_df, variant_df, and lbf_df")
+    invalid_extracted <- extracted
+    invalid_extracted[[1L]]$cs_df <- "invalid table"
+    expect_error_message(formatSusieOutputs(fits, regions,
+      extracted_results = invalid_extracted), "data frames or NULL")
+    all_flagged <- purrr::map(fits, function(fitted) {
+      fitted$covariate_explained_variants <- tibble(
+        variant_id = fitted$variant_id, input_scale = 1,
+        residual_sd = 1e-10, residual_sd_ratio = 1e-10)
+      fitted
+    })
+    flagged_tables <- compare_reused_outputs(all_flagged, regions, file.path(temp, "reuse-all-flagged"))
+    stopifnot(nrow(flagged_tables$cs_df) > 0L,
+              all(flagged_tables$cs_df$has_covariate_explained_variant),
+              all(flagged_tables$in_cs_variant_df$has_covariate_explained_variant))
+    old_fits <- purrr::map(fits, function(fitted) {
+      fitted$covariate_explained_variants <- NULL
+      fitted
+    })
+    old_tables <- compare_reused_outputs(old_fits, regions, file.path(temp, "reuse-old-fits"))
+    stopifnot(!any(old_tables$cs_df$has_covariate_explained_variant),
+              nrow(old_tables$covariate_explained_variants) == 0L)
     position <- readr::read_tsv(result$files[["variant_positions"]], show_col_types = FALSE)
     stopifnot(identical(position$requested_window_start, c(-100, 120, -100)))
     provenance <- jsonlite::read_json(result$files[["provenance"]], simplifyVector = TRUE)
@@ -211,6 +315,12 @@ run_pgen_gene_tests <- function(repo_dir) {
     stopifnot(identical(readRDS(files[["rds"]]), results), all(file.exists(files)))
     empty <- formatSusieOutputs(list(), tibble(phenotype_id = character(), region = character()))
     expect_identical_value(empty, tables, "empty result schemas")
+    expect_identical_value(compare_reused_outputs(results,
+      tibble(phenotype_id = "old", region = "chr1_-100_300"),
+      file.path(temp, "reuse-no-sets")), tables, "reused no-set schemas")
+    expect_identical_value(compare_reused_outputs(list(),
+      tibble(phenotype_id = character(), region = character()),
+      file.path(temp, "reuse-empty")), empty, "reused empty schemas")
     expect_error_message(formatSusieOutputs(setNames(list(fit, fit), c("x", "x")),
       tibble(phenotype_id = "x", region = "r")), "unique")
   })

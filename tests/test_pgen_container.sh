@@ -3,6 +3,14 @@
 set -euo pipefail
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1 VROOM_THREADS=1
+echo 'CHECK audited SuSiE source enables fit optimizations'
+Rscript - <<'RS'
+helpers <- new.env(parent = globalenv())
+sys.source(file.path(Sys.getenv("SUSIER_FUNCTIONS_PATH"), "SusiePerformance.R"),
+           envir = helpers)
+stopifnot("Installed PGEN image must enable audited SuSiE fit optimizations" =
+            isTRUE(helpers$.susieFitSourceSupported(asNamespace("susieR"))))
+RS
 echo 'CHECK installed PGEN tools and scripts'
 plink2 --version
 bgzip --version

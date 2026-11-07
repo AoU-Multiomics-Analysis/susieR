@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Check WDL types and simulate cloud localization before Bash rendering.
+"""Check WDL types, output collection, and simulated cloud file transfer.
 
 These tests run the real task command with a recording Rscript replacement.
-They do not run Docker, fit models, or submit a Terra workflow.
+The transfer test copies selected output files, removes the source directory,
+and localizes those files for the next task. It does not run Cromwell upload
+code, Docker, model fits, or a Terra workflow.
 """
 import json
 import os
@@ -59,6 +61,29 @@ class CommandStdLib(WDL.StdLib.Base):
 
     def _devirtualize_filename(self, filename):
         return filename
+
+
+class TaskOutputStdLib(CommandStdLib):
+    """Evaluate real task outputs with Bash glob order in a fixture directory."""
+
+    def __init__(self, directory):
+        super().__init__('1.0')
+        self.directory = directory
+        self.collected_files = set()
+        self.glob = WDL.StdLib.StaticFunction(
+            'glob', [WDL.Type.String()], WDL.Type.Array(WDL.Type.File()), self.collect_glob)
+
+    def _devirtualize_filename(self, filename):
+        return str(self.directory / filename)
+
+    def collect_glob(self, pattern):
+        result = subprocess.run(
+            ['bash', '-c', 'shopt -s nullglob; paths=( $1 ); '
+             'if (( ${#paths[@]} )); then printf "%s\\0" "${paths[@]}"; fi',
+             '--', pattern.value], cwd=self.directory, check=True, capture_output=True)
+        paths = [self.directory / name for name in result.stdout.decode().split('\0') if name]
+        self.collected_files.update(paths)
+        return WDL.Value.Array(WDL.Type.File(), [WDL.Value.File(str(path)) for path in paths])
 
 
 class PgenWdlTests(unittest.TestCase):
@@ -144,6 +169,18 @@ class PgenWdlTests(unittest.TestCase):
                 rewritten = WDL.Value.rewrite_paths(metadata, reject_localization)
                 self.assertEqual(rewritten.json, uris)
 
+    def test_planner_collects_dynamic_files_with_glob(self):
+        # A list of filenames does not cause the GCP backend to upload them.
+        outputs = {decl.name: decl for decl in self.tasks['PlanPgenSusie'].outputs
+                   if isinstance(decl.type, WDL.Type.Array)
+                   and isinstance(decl.type.item_type, WDL.Type.File)}
+        self.assertEqual(set(outputs), {'Worklists', 'PhenotypeBeds'})
+        for name, declaration in outputs.items():
+            with self.subTest(output=name):
+                self.assertIsInstance(declaration.expr, WDL.Expr.Apply)
+                self.assertEqual(declaration.expr.function_name, 'glob',
+                                 'Dynamic task files need explicit glob collection before upload')
+
     def test_example_inputs_match_wdl_types(self):
         inputs = json.loads((ROOT / 'examples/inputs/SusieR2.inputs.json').read_text())
         WDL.values_from_json(inputs, self.doc.workflow.available_inputs,
@@ -199,13 +236,20 @@ class PgenWdlTests(unittest.TestCase):
         env = WDL.Env.Bindings().bind('ChromosomePgens', files)
         env = env.bind('PlanPgenSusie.ChromosomeIndices',
                        WDL.Value.from_json(WDL.Type.Array(WDL.Type.Int()), [1, 1, 0]))
+        for output, extension in (('Worklists', 'tsv'), ('PhenotypeBeds', 'bed')):
+            env = env.bind('PlanPgenSusie.' + output, WDL.Value.from_json(
+                WDL.Type.Array(WDL.Type.File()),
+                ['gs://bucket/plan/batch_%06d.%s' % (i, extension) for i in (1, 2, 3)]))
         call = next(node for node in walk(self.doc.workflow)
                     if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        scatter = self.batch_scatter()
+        batches = scatter.expr.eval(env, WDL.StdLib.Base('1.0'))
+        self.assertEqual(len(batches.value), 3)
         index = next(node for node in walk(self.doc.workflow)
                      if isinstance(node, WDL.Tree.Decl) and node.name == 'chromosome_index')
         self.assertIsInstance(index.type, WDL.Type.Int)
-        for i, chromosome in enumerate(('1', '1', '2')):
-            iteration_env = env.bind('i', WDL.Value.Int(i))
+        for i, (batch, chromosome) in enumerate(zip(batches.value, ('1', '1', '2')), 1):
+            iteration_env = env.bind(scatter.variable, batch)
             chromosome_index = index.expr.eval(iteration_env, WDL.StdLib.Base('1.0'))
             iteration_env = iteration_env.bind(index.name, chromosome_index)
             selected = call.inputs['pgen_files'].eval(iteration_env, WDL.StdLib.Base('1.0'))
@@ -213,7 +257,121 @@ class PgenWdlTests(unittest.TestCase):
             for ext in ('pgen', 'pvar', 'psam'):
                 self.assertIsInstance(selected.value[ext], WDL.Value.File)
                 self.assertEqual(selected.value[ext].value,
-                                 files.value[(1, 1, 0)[i]].value[ext].value)
+                                 files.value[(1, 1, 0)[i - 1]].value[ext].value)
+            for name, extension in (('worklist', 'tsv'), ('phenotype_bed', 'bed')):
+                selected_file = call.inputs[name].eval(iteration_env, WDL.StdLib.Base('1.0'))
+                self.assertIsInstance(selected_file, WDL.Value.File)
+                self.assertEqual(selected_file.value, 'gs://bucket/plan/batch_%06d.%s' % (i, extension))
+
+    def batch_scatter(self):
+        return next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Scatter)
+                    and any(isinstance(child, WDL.Tree.Call) and child.name == 'RunPgenSusieBatch'
+                            for child in walk(node)))
+
+    def test_batch_scatter_rejects_unequal_planner_arrays(self):
+        scatter = self.batch_scatter()
+        values = {'Worklists': ['gs://bucket/one.tsv', 'gs://bucket/two.tsv'],
+                  'PhenotypeBeds': ['gs://bucket/one.bed', 'gs://bucket/two.bed'],
+                  'ChromosomeIndices': [1, 0]}
+        for shortened in values:
+            env = WDL.Env.Bindings()
+            for name, value in values.items():
+                item_type = WDL.Type.Int() if name == 'ChromosomeIndices' else WDL.Type.File()
+                env = env.bind('PlanPgenSusie.' + name, WDL.Value.from_json(
+                    WDL.Type.Array(item_type), value[:1] if name == shortened else value))
+            with self.subTest(shortened=shortened), self.assertRaises(WDL.Error.EvalError):
+                scatter.expr.eval(env, WDL.StdLib.Base('1.0'))
+
+    def test_planner_files_survive_simulated_export_and_localization(self):
+        # This checks our output expressions and File values, not Cromwell's
+        # cloud uploader. The static glob guard checks the cloud-backend rule.
+        with tempfile.TemporaryDirectory(prefix='susier-plan-transfer-') as temporary:
+            root = pathlib.Path(temporary)
+            producer = root / 'producer'
+            batches = producer / 'plan/batches'
+            batches.mkdir(parents=True)
+            chromosomes = ['1'] * 8 + ['2'] * 4
+            indices = [1] * 8 + [0] * 4  # Manifest order is chromosome 2, then 1.
+            expected = {}
+            for number in (12, 3, 11, 2, 10, 1, 9, 4, 8, 5, 7, 6):
+                batch_id = 'batch_%06d' % number
+                chromosome = chromosomes[number - 1]
+                outcome_id = 'p%02d' % number
+                expected[batch_id] = {
+                    'tsv': 'batch_id\tchromosome\tphenotype_id\n%s\t%s\t%s\n' %
+                           (batch_id, chromosome, outcome_id),
+                    'bed': '#chr\tstart\tend\tID\tS1\nchr%s\t10\t11\t%s\t0.%02d\n' %
+                           (chromosome, outcome_id, number)}
+                for extension, content in expected[batch_id].items():
+                    (batches / (batch_id + '.' + extension)).write_text(content)
+            for name, extension in (('batch_worklists.txt', 'tsv'), ('batch_phenotype_beds.txt', 'bed')):
+                (producer / 'plan' / name).write_text(''.join(
+                    'plan/batches/batch_%06d.%s\n' % (number, extension)
+                    for number in range(1, 13)))
+            (producer / 'plan/batch_chromosome_indices.json').write_text(json.dumps(indices))
+            outputs = {decl.name: decl for decl in self.tasks['PlanPgenSusie'].outputs}
+            stdlib = TaskOutputStdLib(producer)
+            evaluated = {name: outputs[name].expr.eval(WDL.Env.Bindings(), stdlib).coerce(outputs[name].type)
+                         for name in ('Worklists', 'PhenotypeBeds', 'ChromosomeIndices')}
+            for name, extension in (('Worklists', 'tsv'), ('PhenotypeBeds', 'bed')):
+                self.assertEqual([pathlib.Path(value.value).name for value in evaluated[name].value],
+                                 ['batch_%06d.%s' % (number, extension) for number in range(1, 13)])
+                list_name = 'batch_worklists.txt' if name == 'Worklists' else 'batch_phenotype_beds.txt'
+                self.assertEqual((producer / 'plan' / list_name).read_text().splitlines(),
+                                 [str(pathlib.Path(value.value).relative_to(producer))
+                                  for value in evaluated[name].value])
+            self.assertEqual(evaluated['ChromosomeIndices'].json, indices)
+            storage = root / 'storage'
+            storage.mkdir()
+            exported = {}
+            cloud_values = {}
+            for name in ('Worklists', 'PhenotypeBeds'):
+                def export(file):
+                    source = producer / file.value
+                    self.assertIn(source, stdlib.collected_files,
+                                  'The output is a listed path but was not selected for upload by glob')
+                    uri = 'gs://test-bucket/call-PlanPgenSusie/glob-' + name + '/' + source.name
+                    stored = storage / (name + '-' + source.name)
+                    shutil.copyfile(source, stored)
+                    exported[uri] = stored
+                    return uri
+                cloud_values[name] = WDL.Value.rewrite_paths(evaluated[name], export)
+                self.assertIsInstance(cloud_values[name].type.item_type, WDL.Type.File)
+                self.assertTrue(all('/plan/batches/' not in value.value for value in cloud_values[name].value))
+            shutil.rmtree(producer)
+            self.assertFalse(producer.exists())
+            consumer = root / 'consumer'
+            consumer.mkdir()
+            files = self.manifest_files()
+            env = WDL.Env.Bindings().bind('ChromosomePgens', files)
+            for name, value in {**cloud_values, 'ChromosomeIndices': evaluated['ChromosomeIndices']}.items():
+                env = env.bind('PlanPgenSusie.' + name, value)
+            scatter = self.batch_scatter()
+            planned = scatter.expr.eval(env, WDL.StdLib.Base('1.0'))
+            call = next(node for node in walk(scatter)
+                        if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+            index = next(node for node in walk(scatter)
+                         if isinstance(node, WDL.Tree.Decl) and node.name == 'chromosome_index')
+            self.assertEqual(len(planned.value), 12)
+            for number, batch in enumerate(planned.value, 1):
+                iteration = env.bind(scatter.variable, batch)
+                chromosome_index = index.expr.eval(iteration, WDL.StdLib.Base('1.0'))
+                self.assertEqual(chromosome_index.value, indices[number - 1])
+                iteration = iteration.bind(index.name, chromosome_index)
+                genotype = call.inputs['pgen_files'].eval(iteration, WDL.StdLib.Base('1.0'))
+                self.assertEqual(genotype.value['chromosome'].value, chromosomes[number - 1])
+                for name, extension in (('worklist', 'tsv'), ('phenotype_bed', 'bed')):
+                    value = call.inputs[name].eval(iteration, WDL.StdLib.Base('1.0'))
+                    self.assertIsInstance(value, WDL.Value.File)
+                    def localize(file):
+                        source = exported[file.value]
+                        destination = consumer / pathlib.Path(file.value).name
+                        shutil.copyfile(source, destination)
+                        return str(destination)
+                    localized = WDL.Value.rewrite_paths(value, localize)
+                    self.assertEqual(pathlib.Path(localized.value).read_text(),
+                                     expected['batch_%06d' % number][extension])
 
     def test_no_workflow_file_writers(self):
         self.assertEqual(workflow_writers(self.doc.workflow), [])
@@ -298,7 +456,7 @@ class PgenWdlTests(unittest.TestCase):
             raw[name] = WDL.Value.from_json(typ, value)
         return raw
 
-    def execute(self, task, optional=True, broken=None, overrides=None):
+    def execute(self, task, optional=True, broken=None, overrides=None, plan_failure=None):
         with tempfile.TemporaryDirectory(prefix='susier-wdl-') as temporary:
             cwd = pathlib.Path(temporary)
             raw = self.inputs(task, optional)
@@ -331,17 +489,53 @@ class PgenWdlTests(unittest.TestCase):
             bindir = cwd / 'bin'
             bindir.mkdir()
             stub = bindir / 'Rscript'
-            stub.write_text('#!' + sys.executable + '\n' + '''import json, pathlib, sys
+            stub.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, sys
 args = sys.argv[1:]
 lists = {}
 for i, arg in enumerate(args):
     if arg in ''' + repr(LIST_FLAGS) + ''':
         lists[arg] = pathlib.Path(args[i+1]).read_text().splitlines()
 pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists}))
+if args[0].endswith('/plan_pgen_susie.R'):
+    plan = pathlib.Path(args[args.index('--output-dir') + 1])
+    batches = plan / 'batches'
+    batches.mkdir(parents=True)
+    for number in (3, 1, 2):
+        batch_id = 'batch_%06d' % number
+        (batches / (batch_id + '.tsv')).write_text('batch_id\\tphenotype_id\\n' + batch_id + '\\tp' + str(number) + '\\n')
+        (batches / (batch_id + '.bed')).write_text('#chr\\tstart\\tend\\tID\\tS1\\nchr1\\t10\\t11\\tp' + str(number) + '\\t1\\n')
+    worklists = [str(batches / ('batch_%06d.tsv' % number)) for number in (1, 2, 3)]
+    beds = [str(batches / ('batch_%06d.bed' % number)) for number in (1, 2, 3)]
+    failure = os.environ.get('SUSIER_TEST_PLAN_FAILURE', '')
+    if failure == 'missing_bed':
+        pathlib.Path(beds[1]).unlink()
+    elif failure == 'extra_bed':
+        (batches / 'batch_999999.bed').write_text('extra\\n')
+    elif failure == 'mismatched_stems':
+        replacement = batches / 'batch_000099.bed'
+        pathlib.Path(beds[1]).rename(replacement)
+        beds = sorted([beds[0], beds[2], str(replacement)])
+    elif failure == 'reversed_lists':
+        worklists.reverse()
+    elif failure == 'empty_lists':
+        worklists, beds = [], []
+    elif failure == 'empty_outputs':
+        for path in batches.iterdir():
+            path.unlink()
+    elif failure:
+        raise ValueError('Unknown planner fixture failure: ' + failure)
+    (plan / 'batch_worklists.txt').write_text(''.join(path + '\\n' for path in worklists))
+    (plan / 'batch_phenotype_beds.txt').write_text(''.join(path + '\\n' for path in beds))
+    (plan / 'batch_chromosomes.txt').write_text('1\\n1\\n1\\n')
+    (plan / 'batch_chromosome_indices.json').write_text('[0, 0, 0]')
+    (plan / 'expected_outcomes.tsv').write_text('batch_id\\tphenotype_id\\n')
+    (plan / 'batch_index.tsv').write_text('batch_id\\tchromosome\\tworklist\\tphenotype_bed\\n')
+    (plan / 'chromosome_pgens.tsv').write_text('1\\tgs://bucket/a.pgen\\tgs://bucket/a.pvar\\tgs://bucket/a.psam\\n')
 ''')
             stub.chmod(0o755)
             result = subprocess.run(['bash', 'command.sh'], cwd=cwd,
-                                    env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH']},
+                                    env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
+                                         'SUSIER_TEST_PLAN_FAILURE': plan_failure or ''},
                                     text=True, capture_output=True)
             self.assertFalse((cwd / 'PWNED').exists(), command)
             captured = cwd / 'capture.json'
@@ -352,11 +546,20 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
                 if broken[1] == 'uri':
                     self.assertIn('localization', result.stderr)
                 return
+            if plan_failure:
+                self.assertNotEqual(result.returncode, 0, 'Invalid planner outputs must stop the task')
+                self.assertTrue(captured.exists(), 'The planner must run before output checks')
+                self.assertIn('ERROR', result.stderr)
+                self.assertIn('CHECK', result.stdout)
+                self.assertNotIn('COMPLETE PGEN batch planning', result.stdout)
+                return
             self.assertEqual(result.returncode, 0, result.stderr + '\n' + command)
             payload = json.loads(captured.read_text())
             args = payload['args']
             self.assertNotIn('gs://', ' '.join(args))
             if task.name == 'PlanPgenSusie':
+                self.assertIn('CHECK', result.stdout)
+                self.assertIn('COMPLETE PGEN batch planning', result.stdout)
                 self.assertEqual(args[0], '/opt/r/scripts/plan_pgen_susie.R')
                 self.assertNotIn('--chromosomes-file', args)
                 self.assertEqual(args[args.index('--pgen-manifest') + 1], localized['pgen_manifest'].value)
@@ -433,6 +636,12 @@ pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists
         for failure in ('uri', 'missing'):
             with self.subTest(failure=failure):
                 self.execute(self.tasks['PlanPgenSusie'], broken=('pgen_manifest', failure))
+
+    def test_planner_rejects_incomplete_or_misordered_output_files(self):
+        for failure in ('missing_bed', 'extra_bed', 'mismatched_stems',
+                        'reversed_lists', 'empty_lists', 'empty_outputs'):
+            with self.subTest(failure=failure):
+                self.execute(self.tasks['PlanPgenSusie'], plan_failure=failure)
 
 
 if __name__ == '__main__':

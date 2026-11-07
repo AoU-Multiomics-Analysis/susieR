@@ -68,7 +68,7 @@ The [IKZF1 cis benchmark](../benchmarks/synthetic_scale/reports/2026-11-06-real-
 
 ## Localization and commands
 
-All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Files remain typed inside chromosome structs until command rendering. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. These files become typed outputs for the fit tasks.
+All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Files remain typed inside chromosome structs until command rendering. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. It collects these files with explicit `glob()` outputs so Terra uploads them before the planner VM exits. Reading a list of filenames with `read_lines()` is not sufficient for this upload step. The command checks file counts, matching batch IDs, and file order against the planner lists. The workflow pairs both file arrays and chromosome indexes with `zip()`, which rejects unequal counts before batch localization. These files remain typed outputs and inputs for the fit tasks.
 
 Each task uses named CLI arguments. Optional arguments are added only when their Files are present. The aggregate task writes newline-delimited lists of the already localized companion Files inside its command. Cloud URIs in a table are metadata and cannot cause automatic localization. Required inputs must be supplied as explicit WDL Files. The commands and R scripts check that local input files are readable before computation. They report an unresolved cloud URI as a localization error.
 

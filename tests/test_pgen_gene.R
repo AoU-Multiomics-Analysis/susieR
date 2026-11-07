@@ -68,6 +68,67 @@ run_pgen_gene_tests <- function(repo_dir) {
   temp <- tempfile("pgen-gene-tests-")
   dir.create(temp)
   on.exit(unlink(temp, recursive = TRUE), add = TRUE)
+  run_named_test("failed gene status files preserve literal quotes in IDs", {
+    quoted_gene <- 'g"quote'
+    quoted_outcome <- 'outcome"quote'
+    quoted_phenotype <- 'p"quote'
+    quoted_se <- SummarizedExperiment::SummarizedExperiment(
+      assays = list(counts = matrix(1, nrow = 1L, dimnames = list("other", "s1"))),
+      rowData = data.frame(phenotype_id = "other", chromosome = "1", phenotype_pos = 1L))
+    quoted_outcomes <- stats::setNames(list(list(
+      phenotype_id = quoted_phenotype, se = quoted_se,
+      covariates = matrix(numeric(), nrow = 1L, ncol = 0L),
+      cis_distance = 5L, region = "1:1-6")), quoted_outcome)
+    expect_error_message(runPgenGene(quoted_gene, quoted_outcomes, NULL, temp, 13L, "NA"),
+                         "Expected one metadata row")
+    prefix <- file.path(temp, "genes", geneArtifactKey(quoted_gene), geneArtifactKey(quoted_gene))
+    index <- readr::read_tsv(paste0(prefix, ".outcome_index.tsv"),
+      col_types = readr::cols(.default = readr::col_character()),
+      na = character(), show_col_types = FALSE)
+    expect_identical_value(index$gene_id, 'g"quote')
+    expect_identical_value(index$outcome_id, 'outcome"quote')
+    expect_identical_value(index$phenotype_id, 'p"quote')
+    expect_identical_value(index$status, "FAILED")
+    expect_identical_value(index$reason, 'Expected one metadata row for phenotype: p"quote')
+  })
+  run_named_test("gene diagnostic files preserve literal quotes in phenotype IDs", {
+    tables <- formatSusieOutputs(list(), tibble::tibble(
+      phenotype_id = character(), region = character()))
+    tables$covariate_explained_variants <- tibble::tibble(
+      molecular_trait_id = c('p"quote', '"pquote'), variant = c("1_10_A_G", "1_20_A_G"),
+      input_scale = c(1, 2), residual_sd = c(1e-10, 4e-10),
+      residual_sd_ratio = c(1e-10, 2e-10))
+    files <- writeSusieOutputs(list(), tables, file.path(temp, "quoted-diagnostics"))
+    diagnostics <- readr::read_tsv(files[["diagnostics"]],
+      col_types = "ccddd", na = character(), show_col_types = FALSE)
+    expect_identical_value(tibble::as_tibble(diagnostics), tables$covariate_explained_variants,
+                           "diagnostic fields after TSV reading")
+  })
+  run_named_test("position summary appends preserve quotes and one header", {
+    positions_file <- file.path(temp, "quoted-position-summary.tsv")
+    first <- data.frame(phenotype_id = 'p"quote', context = "test", feature_position = 10,
+      total_variants_tested = 2L, missing_text = NA_character_, stringsAsFactors = FALSE)
+    second <- data.frame(phenotype_id = '"pquote', context = "test", feature_position = 20,
+      total_variants_tested = 3L, missing_text = NA_character_, stringsAsFactors = FALSE)
+    writeVariantPositionSummary(first, positions_file)
+    writeVariantPositionSummary(second, positions_file)
+    positions_read <- readr::read_tsv(positions_file, col_types = "ccdic",
+      show_col_types = FALSE)
+    expect_identical_value(positions_read$phenotype_id, c('p"quote', '"pquote'))
+    expect_identical_value(positions_read$context, c("test", "test"))
+    expect_identical_value(positions_read$feature_position, c(10, 20))
+    expect_identical_value(positions_read$total_variants_tested, c(2L, 3L))
+    expect_identical_value(positions_read$missing_text, c(NA_character_, NA_character_))
+    expect_identical_value(sum(grepl('^"?phenotype_id"?\t', readLines(positions_file))), 1L)
+    stopifnot(nrow(readr::problems(positions_read)) == 0L)
+    ordinary <- first
+    ordinary$phenotype_id <- "trait1"
+    ordinary_file <- file.path(temp, "ordinary-position-summary.tsv")
+    writeVariantPositionSummary(ordinary, ordinary_file)
+    expect_identical_value(readLines(ordinary_file), c(
+      "phenotype_id\tcontext\tfeature_position\ttotal_variants_tested\tmissing_text",
+      "trait1\ttest\t10\t2\tNA"), "ordinary position summary bytes")
+  })
   set.seed(913L)
   samples <- as.character(sample(seq_len(140L)))
   phenotype_samples <- samples[seq_len(100L)]

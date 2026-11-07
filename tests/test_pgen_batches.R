@@ -169,8 +169,8 @@ run_pgen_batch_tests <- function(repo_dir) {
       batch <- paste0("batch_00000", i)
       arrow::write_parquet(filter(sum, batch_id == batch), paste0(i, " summary.parquet"))
       arrow::write_parquet(filter(sets, batch_id == batch), paste0(i, " cs.parquet"))
-      readr::write_tsv(filter(idx, batch_id == batch), paste0(i, " index.tsv"))
-      readr::write_tsv(filter(diag, batch_id == batch), paste0(i, " diagnostic.tsv"))
+      readr::write_tsv(filter(idx, batch_id == batch), paste0(i, " index.tsv"), quote = "needed")
+      readr::write_tsv(filter(diag, batch_id == batch), paste0(i, " diagnostic.tsv"), quote = "needed")
     }
   }
   aggregate <- function(...) aggregatePgenBatches(
@@ -183,6 +183,19 @@ run_pgen_batch_tests <- function(repo_dir) {
             nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 1,
             identical(read_tsv("aggregate/outcome_index.tsv")$status, index$status),
             nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1)
+  # IDs decoded from quoted BED fields must survive compact TSV aggregation.
+  quote_id <- function(table) table %>%
+    mutate(across(any_of(c("gene_id", "outcome_id", "phenotype_id", "molecular_trait_id")),
+                  ~ replace(.x, .x == "a" | .x == "A", 'a"quoted')))
+  readr::write_tsv(quote_id(wanted), "expected.tsv", quote = "needed")
+  emit(idx = quote_id(index), sum = quote_id(summary),
+       sets = quote_id(cs), diag = quote_id(diagnostic))
+  aggregate()
+  stopifnot(identical(read_tsv("aggregate/outcome_index.tsv")$phenotype_id,
+                      c('a"quoted', "b", "c")),
+            identical(read_tsv("aggregate/covariate_explained_variants.tsv")$molecular_trait_id,
+                      'a"quoted'))
+  readr::write_tsv(wanted, "expected.tsv")
   # Additional features can belong to this gene while being on another chromosome.
   for (variant_id in c("2_10_A_G", "chr2_10_A_G", "chr2_10_A_G_extra",
                        "chrchr2_10_A_G", "CHRchr2_10_A_G")) {

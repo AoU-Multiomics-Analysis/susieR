@@ -308,6 +308,23 @@ LoadData <- function(opt_list) {
      
     infer_samples <- is.null(opt_list$sample_meta) && !is.null(opt_list$genotype_sample_ids)
     expression_matrix = fread(opt_list$expression_matrix,header = TRUE)
+    if (!is.null(opt_list$pgen_phenotype_metadata)) {
+        # PGEN planning and loading must use the same metadata parser. Replace
+        # these four columns only; keep fread's sample values and missing codes.
+        pgen_metadata <- opt_list$pgen_phenotype_metadata
+        if (!is.data.frame(pgen_metadata) ||
+            !identical(names(pgen_metadata), c("chromosome", "start", "end", "phenotype_id")) ||
+            !all(vapply(pgen_metadata, is.character, logical(1))) ||
+            ncol(expression_matrix) < 4L) {
+            stop("PGEN phenotype metadata schema must be chromosome, start, end, phenotype_id text columns",
+                 call. = FALSE)
+        }
+        if (nrow(pgen_metadata) != nrow(expression_matrix)) {
+            stop("PGEN phenotype metadata row count does not match the molecular matrix",
+                 call. = FALSE)
+        }
+        data.table::set(expression_matrix, j = seq_len(4L), value = as.list(pgen_metadata))
+    }
     if (infer_samples) {
         # fread treats a literal NA header as missing. Keep exact TSV headers
         # for sample inference without changing its parsing of phenotype values.

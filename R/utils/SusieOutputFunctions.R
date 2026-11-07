@@ -138,7 +138,8 @@ writeSusieOutputs <- function(results, tables, output_prefix) {
              full = paste0(output_prefix, ".full_susie.parquet"),
              diagnostics = paste0(output_prefix, ".covariate_explained_variants.tsv"))
   saveRDS(results, files[["rds"]])
-  readr::write_tsv(tables$covariate_explained_variants, files[["diagnostics"]])
+  readr::write_tsv(tables$covariate_explained_variants, files[["diagnostics"]],
+                   quote = "needed")
   arrow::write_parquet(tables$in_cs_variant_df, files[["summary"]])
   arrow::write_parquet(tables$lbf_df, files[["lbf"]])
   arrow::write_parquet(tables$variant_df, files[["full"]])

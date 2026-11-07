@@ -67,6 +67,28 @@ run_gene_manifest_tests <- function(repo_dir) {
     stopifnot("Every artifact URI must remain unchanged and belong to its gene" =
                 identical(combined[[column]], artifacts[[column]]))
   }
+  # Gene IDs and output-only URI text may contain literal quotes.
+  quoted_gene <- 'gene"quoted'
+  quoted_key <- paste0("gene-", digest::digest(charToRaw(quoted_gene),
+                                               algo = "sha256", serialize = FALSE))
+  quoted_index <- index %>% mutate(
+    gene_id = replace(gene_id, gene_id == genes$gene_id[[1L]], quoted_gene),
+    gene_key = replace(gene_key, gene_key == genes$gene_key[[1L]], quoted_key))
+  readr::write_tsv(quoted_index, index_file, quote = "needed")
+  quoted_arguments <- arguments
+  quoted_arguments$output_dir <- file.path(root, "quoted manifests")
+  for (group in c("gene_rds_uris", "gene_parquet_uris", "gene_tsv_uris",
+                  "gene_log_uris", "gene_provenance_uris")) {
+    quoted_arguments[[group]] <- gsub(genes$gene_key[[1L]], quoted_key,
+                                      quoted_arguments[[group]], fixed = TRUE)
+    quoted_arguments[[group]] <- gsub("workflow path", 'workflow "quoted" path',
+                                      quoted_arguments[[group]], fixed = TRUE)
+  }
+  quoted_files <- do.call(writeChromosomeGeneManifests, quoted_arguments)
+  quoted_chr2 <- read_manifest(quoted_files[["2"]])
+  stopifnot(identical(quoted_chr2$gene_id[[1L]], quoted_gene),
+            grepl('workflow "quoted" path', quoted_chr2$rds_uri[[1L]], fixed = TRUE))
+  readr::write_tsv(index, index_file)
   # Index reads and output writes are allowed. Artifact filesystem probes are not.
   guarded_builder <- writeChromosomeGeneManifests
   guard <- new.env(parent = environment(guarded_builder))

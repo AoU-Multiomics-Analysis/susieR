@@ -234,6 +234,7 @@ runPgenSusieBatch <- function(opt) {
           nrow(reader$variants), " variants")
   legacy_options <- list(
     expression_matrix = opt$phenotype_bed, phenotype_list = opt$qtl_results,
+    pgen_phenotype_metadata = readPgenPhenotypeMetadata(opt$phenotype_bed),
     covariates = opt$covariates, genotype_matrix = batch_files[[1L]],
     sample_meta = opt$sample_list, cv_meta = NULL, out_prefix = batch_id,
     cisdistance = opt$cis_distance, n_folds = NULL, VariantList = opt$variant_list,
@@ -313,9 +314,9 @@ runPgenSusieBatch <- function(opt) {
   arrow::write_parquet(bind_compact("credible_sets"),
                         file.path(output_dir, "batch.credible_sets.parquet"))
   readr::write_tsv(bind_compact("index"),
-                    file.path(output_dir, "batch.outcome_index.tsv"))
+                    file.path(output_dir, "batch.outcome_index.tsv"), quote = "needed")
   readr::write_tsv(bind_compact("diagnostics"),
-                    file.path(output_dir, "batch.covariate_explained_variants.tsv"))
+                    file.path(output_dir, "batch.covariate_explained_variants.tsv"), quote = "needed")
   message("COMPLETE batch ", batch_id)
   invisible(TRUE)
 }

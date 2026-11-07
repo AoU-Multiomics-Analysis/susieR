@@ -92,6 +92,110 @@ pgenWorklistColumns <- function() c(
   "requested_window_start", "requested_window_end", "window_start", "window_end", "region"
 )
 
+# Decode only the four metadata fields; never parse or rewrite sample values.
+.pgenParseBedMetadata <- function(lines, line_numbers) {
+  prefixes <- sub("^((?:[^\t]*\t){3}[^\t]*).*", "\\1", lines, perl = TRUE)
+  fields <- stringr::str_split_fixed(prefixes, "\t", 4L)
+  trimmed <- trimws(as.vector(fields))
+  invalid_quote <- grepl('^"', trimmed) &
+    !grepl('^"(?:[^"]|"")*"$', trimmed, perl = TRUE)
+  if (any(invalid_quote)) {
+    i <- ((which(invalid_quote)[[1L]] - 1L) %% length(lines)) + 1L
+    stop("Invalid phenotype BED metadata quotes at line ", line_numbers[[i]],
+         "; close quoted fields and escape internal quotes as doubled quotes",
+         call. = FALSE)
+  }
+  metadata_names <- c("chromosome", "start", "end", "phenotype_id")
+  metadata <- suppressWarnings(readr::read_tsv(
+    I(paste(prefixes, collapse = "\n")),
+    col_names = metadata_names,
+    col_types = readr::cols(.default = readr::col_character()),
+    na = character(), trim_ws = TRUE, quote = "\"", comment = "",
+    skip_empty_rows = FALSE, name_repair = "minimal",
+    num_threads = 1L, progress = FALSE, show_col_types = FALSE
+  ))
+  if (!identical(names(metadata), metadata_names) ||
+      nrow(metadata) != length(lines) || nrow(readr::problems(metadata))) {
+    stop("Invalid phenotype BED metadata near line ", line_numbers[[1L]],
+         "; use four tab-delimited fields and balanced quotes on one line",
+         call. = FALSE)
+  }
+  tibble::as_tibble(metadata)
+}
+
+# Both planning passes use this reader, including compressed inputs of any suffix.
+# Only four columns are retained; the callback receives the original full rows.
+.pgenReadPhenotypeBed <- function(path, on_chunk = NULL, expected_header = NULL) {
+  pgenLocalFile(path, "Phenotype BED")
+  connection <- gzfile(path, "rt")
+  on.exit(close(connection), add = TRUE)
+  line_number <- 0L
+  repeat {
+    header <- readLines(connection, n = 1L, warn = FALSE)
+    line_number <- line_number + length(header)
+    if (!length(header)) stop("Missing phenotype BED header", call. = FALSE)
+    candidate <- sub("^\ufeff", "", header)
+    stripped <- trimws(candidate)
+    if (!nzchar(stripped) || startsWith(stripped, "##") ||
+        grepl("^(track|browser)([ \t]|$)", stripped)) next
+    if (startsWith(stripped, "#") &&
+        !grepl("^#(chr|chrom|chromosome)([ \t]|$)", stripped, ignore.case = TRUE)) next
+    column_count <- stringr::str_count(candidate, stringr::fixed("\t")) + 1L
+    if (column_count < 4L) {
+      stop("Phenotype BED header at line ", line_number,
+           " must have at least four tab-delimited columns", call. = FALSE)
+    }
+    header_metadata <- .pgenParseBedMetadata(candidate, line_number)
+    chromosome_header <- sub("^#", "", tolower(header_metadata$chromosome))
+    if (!chromosome_header %in% c("chr", "chrom", "chromosome") ||
+        !tolower(header_metadata$start) %in% c("start", "chromstart") ||
+        !tolower(header_metadata$end) %in% c("end", "chromend")) {
+      stop("Invalid phenotype BED header at line ", line_number,
+           "; expected a chromosome column followed by start, end, and phenotype ID",
+           call. = FALSE)
+    }
+    break
+  }
+  if (!is.null(expected_header) && !identical(header, expected_header)) {
+    stop("Phenotype BED header changed between metadata reading and row splitting",
+         call. = FALSE)
+  }
+  parts <- list()
+  row_count <- 0L
+  repeat {
+    lines <- readLines(connection, n = 1000L, warn = FALSE)
+    if (!length(lines)) break
+    line_numbers <- line_number + seq_along(lines)
+    line_number <- line_number + length(lines)
+    keep <- !grepl("^[ \t]*$", lines)
+    lines <- lines[keep]
+    line_numbers <- line_numbers[keep]
+    if (!length(lines)) next
+    widths <- stringr::str_count(lines, stringr::fixed("\t")) + 1L
+    invalid <- which(widths != column_count)
+    if (length(invalid)) {
+      i <- invalid[[1L]]
+      stop("Invalid phenotype BED row at line ", line_numbers[[i]], ": expected ",
+           column_count, " tab-delimited columns but found ", widths[[i]],
+           "; quoted tabs and multiline fields are not supported", call. = FALSE)
+    }
+    metadata <- .pgenParseBedMetadata(lines, line_numbers)
+    if (is.null(on_chunk)) {
+      parts[[length(parts) + 1L]] <- metadata
+    } else {
+      on_chunk(metadata, lines)
+    }
+    row_count <- row_count + length(lines)
+  }
+  if (!row_count) stop("Phenotype BED has no data rows", call. = FALSE)
+  list(header = header, row_count = row_count,
+       metadata = if (is.null(on_chunk)) dplyr::bind_rows(parts) else NULL)
+}
+
+readPgenPhenotypeMetadata <- function(path) {
+  .pgenReadPhenotypeBed(path)$metadata
+}
+
 planPgenBatches <- function(phenotype_bed, qtl_results, chromosomes, cis_distance,
                            output_dir, batch_size = 50L, gene_map = NULL,
                            select_top_phenotype_per_cluster = FALSE,
@@ -115,22 +219,8 @@ planPgenBatches <- function(phenotype_bed, qtl_results, chromosomes, cis_distanc
     stop("output_dir must be a local directory", call. = FALSE)
   }
   message("Reading the four phenotype BED metadata columns")
-  # fread recognizes .gz but some installed versions do not recognize .bgz.
-  # An explicit compressed connection keeps only metadata columns in memory.
-  if (grepl("\\.(bgz|bgzf)$", phenotype_bed, ignore.case = TRUE)) {
-    metadata_connection <- gzfile(phenotype_bed, "rb")
-    metadata <- tryCatch(readr::read_tsv(
-      metadata_connection, col_select = 1:4,
-      col_types = readr::cols(.default = readr::col_character()),
-      name_repair = "minimal", show_col_types = FALSE
-    ), finally = close(metadata_connection))
-  } else {
-    metadata <- data.table::fread(phenotype_bed, header = TRUE, select = 1:4,
-                                 colClasses = "character", data.table = FALSE,
-                                 check.names = FALSE) %>% tibble::as_tibble()
-  }
-  if (ncol(metadata) != 4L) stop("Phenotype BED needs at least four columns", call. = FALSE)
-  names(metadata) <- c("chromosome", "start", "end", "phenotype_id")
+  first_pass <- .pgenReadPhenotypeBed(phenotype_bed)
+  metadata <- first_pass$metadata
   pgenCheckIds(metadata$phenotype_id, "Phenotype BED", unique = TRUE)
   if (!exists("importQtlmapPermutedPvalues", mode = "function") ||
       !exists("selectTopPhenotypePerCluster", mode = "function")) {
@@ -214,39 +304,54 @@ planPgenBatches <- function(phenotype_bed, qtl_results, chromosomes, cis_distanc
   worklist_paths <- file.path(output_dir, "batches", paste0(index$batch_id, ".tsv"))
   bed_paths <- file.path(output_dir, "batches", paste0(index$batch_id, ".bed"))
   for (i in seq_len(nrow(index))) {
-    readr::write_tsv(dplyr::filter(worklist, batch_id == index$batch_id[[i]]), worklist_paths[[i]])
+    readr::write_tsv(dplyr::filter(worklist, batch_id == index$batch_id[[i]]),
+                     worklist_paths[[i]], quote = "needed")
   }
-  # Read bounded chunks of full rows. Only selected rows enter the batch files.
-  connection <- gzfile(phenotype_bed, "rt")
-  on.exit(close(connection), add = TRUE)
-  header <- readLines(connection, n = 1L, warn = FALSE)
-  if (length(header) != 1L) stop("Missing phenotype BED header", call. = FALSE)
-  for (path in bed_paths) writeLines(header, path, useBytes = TRUE)
+  message("Splitting selected phenotype BED rows with the same metadata parser")
+  for (path in bed_paths) writeLines(first_pass$header, path, useBytes = TRUE)
   target_batch <- stats::setNames(match(worklist$batch_id, index$batch_id), worklist$phenotype_id)
   written <- stats::setNames(integer(nrow(worklist)), worklist$phenotype_id)
-  repeat {
-    lines <- readLines(connection, n = 1000L, warn = FALSE)
-    if (!length(lines)) break
-    # The regular expression stops after the fourth column; sample text stays untouched.
-    row_ids <- sub("^[^\t]*\t[^\t]*\t[^\t]*\t([^\t]*).*", "\\1", lines)
+  metadata_offset <- 0L
+  split_chunk <- function(chunk, lines) {
+    rows <- metadata_offset + seq_len(nrow(chunk))
+    if (max(rows) > nrow(metadata) ||
+        !identical(chunk, metadata[rows, , drop = FALSE])) {
+      stop("Phenotype BED metadata changed between planning and splitting near data row ",
+           metadata_offset + 1L, "; check row order, coordinates, and phenotype IDs",
+           call. = FALSE)
+    }
+    metadata_offset <<- metadata_offset + nrow(chunk)
+    row_ids <- chunk$phenotype_id
     selected_rows <- which(row_ids %in% names(target_batch))
-    if (!length(selected_rows)) next
+    if (!length(selected_rows)) return(invisible(NULL))
     groups <- split(selected_rows, target_batch[row_ids[selected_rows]])
     for (batch in names(groups)) {
       destination <- file(bed_paths[[as.integer(batch)]], "at")
       tryCatch(writeLines(lines[groups[[batch]]], destination, useBytes = TRUE),
                finally = close(destination))
     }
-    written[row_ids[selected_rows]] <- written[row_ids[selected_rows]] + 1L
+    written <<- written + tabulate(match(row_ids[selected_rows], names(written)),
+                                   nbins = length(written))
+    invisible(NULL)
   }
-  if (any(written != 1L)) stop("Phenotype BED changed while splitting selected rows", call. = FALSE)
+  second_pass <- .pgenReadPhenotypeBed(phenotype_bed, on_chunk = split_chunk,
+                                      expected_header = first_pass$header)
+  if (second_pass$row_count != first_pass$row_count) {
+    stop("Phenotype BED row count changed between planning and splitting: expected ",
+         first_pass$row_count, " rows but read ", second_pass$row_count, call. = FALSE)
+  }
+  if (any(written != 1L)) {
+    stop("Phenotype BED splitting failed: ", sum(written == 0L), " selected IDs missing; ",
+         sum(written > 1L), " selected IDs copied more than once. Check the input IDs",
+         call. = FALSE)
+  }
   index <- index %>% dplyr::mutate(
     worklist = vapply(worklist_paths, pgenRelativePath, character(1)),
     phenotype_bed = vapply(bed_paths, pgenRelativePath, character(1)))
   expected_path <- file.path(output_dir, "expected_outcomes.tsv")
   index_path <- file.path(output_dir, "batch_index.tsv")
-  readr::write_tsv(worklist, expected_path)
-  readr::write_tsv(index, index_path)
+  readr::write_tsv(worklist, expected_path, quote = "needed")
+  readr::write_tsv(index, index_path, quote = "needed")
   writeLines(index$worklist, file.path(output_dir, "batch_worklists.txt"))
   writeLines(index$phenotype_bed, file.path(output_dir, "batch_phenotype_beds.txt"))
   writeLines(index$chromosome, file.path(output_dir, "batch_chromosomes.txt"))
@@ -520,8 +625,8 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
              diagnostics = file.path(output_dir, "covariate_explained_variants.tsv"))
   arrow::write_parquet(summary, files[["summary"]])
   arrow::write_parquet(cs, files[["credible_sets"]])
-  readr::write_tsv(index, files[["index"]])
-  readr::write_tsv(diagnostic, files[["diagnostics"]])
+  readr::write_tsv(index, files[["index"]], quote = "needed")
+  readr::write_tsv(diagnostic, files[["diagnostics"]], quote = "needed")
   message("Aggregated ", nrow(index), " outcomes; NONCONVERGED: ", sum(index$status == "NONCONVERGED"))
   invisible(files)
 }
@@ -595,7 +700,8 @@ writeChromosomeGeneManifests <- function(outcome_index_file, gene_rds_uris,
   files <- stats::setNames(file.path(output_dir, paste0("chr", chromosomes, ".gene_outputs.tsv")),
                           as.character(chromosomes))
   for (chromosome in names(files)) {
-    readr::write_tsv(dplyr::filter(genes, .data$chromosome == .env$chromosome), files[[chromosome]])
+    readr::write_tsv(dplyr::filter(genes, .data$chromosome == .env$chromosome),
+                     files[[chromosome]], quote = "needed")
   }
   message("Wrote gene-output manifests for ", length(files), " chromosomes and ", nrow(genes), " genes")
   files

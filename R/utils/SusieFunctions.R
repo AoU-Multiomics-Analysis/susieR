@@ -97,11 +97,15 @@ writeVariantPositionSummary <- function(summary_df, output_file) {
   }
 
   write_header <- !file.exists(output_file)
+  quoted_columns <- which(vapply(summary_df, function(column) {
+    is.character(column) && any(grepl('["\t\r\n]', column), na.rm = TRUE)
+  }, logical(1)))
   utils::write.table(
     summary_df,
     file = output_file,
     sep = "\t",
-    quote = FALSE,
+    quote = if (length(quoted_columns)) quoted_columns else FALSE,
+    qmethod = "double",
     row.names = FALSE,
     col.names = write_header,
     append = !write_header

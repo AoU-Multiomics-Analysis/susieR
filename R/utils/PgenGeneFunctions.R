@@ -139,11 +139,12 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     message(text)
   }
   index <- .pgenGeneEmptyIndex()
-  readr::write_tsv(index, extra_files[["index"]])
-  readr::write_tsv(.pgenGeneEmptyPositions(), extra_files[["variant_positions"]])
+  readr::write_tsv(index, extra_files[["index"]], quote = "needed")
+  readr::write_tsv(.pgenGeneEmptyPositions(), extra_files[["variant_positions"]],
+                   quote = "needed")
   empty_tables <- formatSusieOutputs(list(), tibble::tibble(phenotype_id = character(), region = character()))
   readr::write_tsv(empty_tables$covariate_explained_variants,
-                   paste0(prefix, ".covariate_explained_variants.tsv"))
+                   paste0(prefix, ".covariate_explained_variants.tsv"), quote = "needed")
   results <- list()
   extracted_results <- list()
   log_line(paste0("Gene start: ", gene_id, "; outcomes: ", length(outcomes)))
@@ -169,7 +170,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
         gene_id = gene_id, gene_key = gene_key, outcome_id = id,
         phenotype_id = outcome$phenotype_id, seed = seed, status = "FAILED",
         converged = NA, credible_set_count = NA_integer_, reason = reason))
-      readr::write_tsv(index, extra_files[["index"]])
+      readr::write_tsv(index, extra_files[["index"]], quote = "needed")
       log_line(paste0("FAILED outcome ", id, ": ", reason))
       stop("Gene ", gene_id, ", outcome ", id, " failed: ", reason, call. = FALSE)
     }
@@ -184,7 +185,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
       phenotype_id = outcome$phenotype_id, seed = seed, status = status,
       converged = converged, credible_set_count = count,
       reason = if (converged) "" else "SuSiE did not converge"))
-    readr::write_tsv(index, extra_files[["index"]])
+    readr::write_tsv(index, extra_files[["index"]], quote = "needed")
     log_line(paste0("Outcome complete: ", id, "; ", status, "; credible sets: ", count))
   }
   regions <- tibble::tibble(

@@ -88,6 +88,45 @@ run_pgen_sample_selection_tests <- function(repo_dir) {
     expect_identical_value(colnames(se), c("NA", "s1", "001", "s2"))
     stopifnot(SummarizedExperiment::assay(se)["trait1", "NA"] == 3)
   })
+  run_named_test("PGEN metadata keeps parsed IDs without changing sample values", {
+    parsed_bed <- file.path(directory, "parsed-phenotypes.bed")
+    writeLines(c("#chr\tstart\tend\tphenotype_id\ttrait_only\ts2\tNA\t001\ts1",
+                 '" 1 "\t" 100 "\t" 101 "\t" padded "\t99\t2\t3\tNA\t1',
+                 '1\t200\t201\t"a""b"\t99\t5\t6\t7\t4',
+                 '1\t300\t301\t001\t99\t8\t9\t10\t7',
+                 '1\t400\t401\tNA\t99\t11\t12\t13\t10',
+                 '1\t500\t501\ttrait1\t99\t14\t15\t16\t13'), parsed_bed)
+    parsed_metadata <- tibble::tibble(
+      chromosome = rep("1", 5L), start = as.character(seq(100L, 500L, 100L)),
+      end = as.character(seq(101L, 501L, 100L)),
+      phenotype_id = c("padded", 'a"b', "001", "NA", "trait1"))
+    parsed_opt <- opt
+    parsed_opt$expression_matrix <- parsed_bed
+    parsed_opt$pgen_phenotype_metadata <- readPgenPhenotypeMetadata(parsed_bed)
+    expect_identical_value(parsed_opt$pgen_phenotype_metadata, parsed_metadata,
+                           "parsed phenotype metadata")
+    data <- LoadData(parsed_opt)
+    expect_identical_value(data$expression_matrix$phenotype_id,
+                           c("padded", 'a"b', "001", "NA", "trait1"))
+    expect_identical_value(data$phenotype_meta$phenotype_id,
+                           c("padded", 'a"b', "001", "NA", "trait1"))
+    expect_identical_value(data$phenotype_meta$phenotype_pos,
+                           c(100, 200, 300, 400, 500))
+    sample_values <- data$expression_matrix |>
+      dplyr::select(-dplyr::all_of(names(data$expression_matrix)[1:4])) |>
+      as.matrix()
+    expect_identical_value(unname(sample_values), matrix(c(
+      99L, 2L, 3L, NA_integer_, 1L,
+      99L, 5L, 6L, 7L, 4L,
+      99L, 8L, 9L, 10L, 7L,
+      99L, 11L, 12L, 13L, 10L,
+      99L, 14L, 15L, 16L, 13L), nrow = 5L, byrow = TRUE), "sample values")
+    bad_opt <- parsed_opt
+    bad_opt$pgen_phenotype_metadata <- dplyr::slice(parsed_metadata, 1:4)
+    expect_error_message(LoadData(bad_opt), "PGEN phenotype metadata row count")
+    bad_opt$pgen_phenotype_metadata <- dplyr::rename(parsed_metadata, id = phenotype_id)
+    expect_error_message(LoadData(bad_opt), "PGEN phenotype metadata schema")
+  })
   run_named_test("provided sample metadata retains its order and extra columns", {
     writeLines(c("sample_id\tlabel", "s2\tsecond", "s1\tfirst"), paths[["samples"]])
     explicit_opt <- opt

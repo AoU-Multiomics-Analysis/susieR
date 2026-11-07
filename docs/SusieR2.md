@@ -113,3 +113,5 @@ python3 tests/test_pgen_wdl.py .
 ```
 
 The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.
+
+Normal image builds run one small installed-code smoke test: 48 samples, one PLINK extraction, one SuSiE fit, and aggregation. It checks extracted genotypes, inferred sample order, model outputs, and the chromosome gene manifest. The full regression and legacy parity suites remain available. To run them in GitHub Actions, start the **SuSiE PGEN image CI** workflow manually and enable `full_checks`. To run them in an existing image, use `bash tests/test_pgen_container.sh --full`. Automatic image builds still require a change to source installed in the image.

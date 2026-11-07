@@ -71,14 +71,15 @@ workflow SusieR2 {
   }
   Array[ChromosomePgen] ChromosomePgens = chromosome_pgen
 
-  scatter (i in range(length(PlanPgenSusie.Worklists))) {
-    # Keep the two array lookups separate for Dockstore's Cromwell parser.
-    Int chromosome_index = PlanPgenSusie.ChromosomeIndices[i]
+  # zip rejects unequal output counts before any batch starts localization.
+  scatter (batch in zip(zip(PlanPgenSusie.Worklists, PlanPgenSusie.PhenotypeBeds), PlanPgenSusie.ChromosomeIndices)) {
+    # Keep a named Int for the chromosome lookup in Dockstore's Cromwell parser.
+    Int chromosome_index = batch.right
     call RunPgenSusieBatch {
       input:
         pgen_files = ChromosomePgens[chromosome_index],
-        worklist = PlanPgenSusie.Worklists[i],
-        phenotype_bed = PlanPgenSusie.PhenotypeBeds[i],
+        worklist = batch.left.left,
+        phenotype_bed = batch.left.right,
         qtl_results = QtlResults,
         covariates = Covariates,
         sample_list = SampleList,
@@ -195,11 +196,41 @@ task PlanPgenSusie {
       if [[ "${args[j]}" == --gene-map ]]; then require_readable "${args[j+1]}"; fi
     done
     Rscript /opt/r/scripts/plan_pgen_susie.R "${args[@]}"
+    echo 'CHECK planned batch files before cloud output collection'
+    require_readable plan/batch_worklists.txt plan/batch_phenotype_beds.txt
+    if [[ ! -s plan/batch_worklists.txt || ! -s plan/batch_phenotype_beds.txt ]]; then
+      echo 'ERROR planner must list at least one worklist and phenotype BED' >&2
+      exit 1
+    fi
+    shopt -s nullglob
+    worklists=(plan/batches/batch_*.tsv)
+    phenotype_beds=(plan/batches/batch_*.bed)
+    if [[ ! -f "${worklists[0]-}" || ! -f "${phenotype_beds[0]-}" ]]; then
+      echo 'ERROR planner produced no worklists or phenotype BEDs' >&2
+      exit 1
+    fi
+    listed_worklists=()
+    listed_beds=()
+    while IFS= read -r path || [[ -n "$path" ]]; do listed_worklists+=("$path"); done < plan/batch_worklists.txt
+    while IFS= read -r path || [[ -n "$path" ]]; do listed_beds+=("$path"); done < plan/batch_phenotype_beds.txt
+    if ! [[ ${#worklists[@]} -eq ${#phenotype_beds[@]} && ${#worklists[@]} -eq ${#listed_worklists[@]} && ${#phenotype_beds[@]} -eq ${#listed_beds[@]} ]]; then
+      echo 'ERROR planner batch file counts do not match the ordered output lists' >&2
+      exit 1
+    fi
+    for (( i=0; i<${#worklists[@]}; i++ )); do
+      if [[ "${worklists[i]%.tsv}" != "${phenotype_beds[i]%.bed}" || "${worklists[i]}" != "${listed_worklists[i]}" || "${phenotype_beds[i]}" != "${listed_beds[i]}" ]]; then
+        printf 'ERROR planner batch files or output order differ at batch index %s\n' "$i" >&2
+        exit 1
+      fi
+    done
+    require_readable "${worklists[@]}" "${phenotype_beds[@]}"
     echo 'COMPLETE PGEN batch planning'
   >>>
   output {
-    Array[File] Worklists = read_lines("plan/batch_worklists.txt")
-    Array[File] PhenotypeBeds = read_lines("plan/batch_phenotype_beds.txt")
+    # Explicit globs let the Google backend collect files before the VM exits.
+    # Both patterns follow the same batch-ID order checked in the command.
+    Array[File] Worklists = glob("plan/batches/batch_*.tsv")
+    Array[File] PhenotypeBeds = glob("plan/batches/batch_*.bed")
     Array[String] Chromosomes = read_lines("plan/batch_chromosomes.txt")
     Array[Int] ChromosomeIndices = read_json("plan/batch_chromosome_indices.json")
     File ExpectedOutcomes = "plan/expected_outcomes.tsv"

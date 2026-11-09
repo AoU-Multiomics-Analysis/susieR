@@ -28,6 +28,8 @@ echo 'TEST optional MAC with real PLINK extraction'
 Rscript tests/test_pgen_mac.R .
 echo 'TEST shared PGEN MAC and AN call-rate QC'
 Rscript tests/test_pgen_qc.R .
+echo 'TEST upstream batch PGEN preparation and provenance'
+Rscript tests/test_pgen_preparation.R .
 echo 'SMOKE one PLINK extraction, one SuSiE fit, and aggregation'
 Rscript tests/test_pgen_smoke.R .
 if [[ "$full_checks" != "true" ]]; then
@@ -35,7 +37,7 @@ if [[ "$full_checks" != "true" ]]; then
   exit 0
 fi
 echo 'FULL installed-code regression and parity checks'
-for script in plan_pgen_susie.R filter_pgen_susie.R run_pgen_susie_batch.R aggregate_pgen_susie.R; do
+for script in plan_pgen_susie.R filter_pgen_susie.R prepare_pgen_susie.R run_pgen_susie_batch.R aggregate_pgen_susie.R; do
   Rscript "${SUSIER_SCRIPTS_PATH}/${script}" --help
 done
 echo 'TEST real PGEN reader and per-gene parity'

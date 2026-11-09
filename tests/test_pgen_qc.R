@@ -25,7 +25,7 @@ run_pgen_qc_tests <- function(repo_dir) {
   genotypes[[4L]][1:6] <- "0|1:1"
   genotypes[[5L]][[1L]] <- "0|1:1"
   genotypes[[6L]] <- rep("1|1:2", 20L)
-  genotypes[[7L]][[1L]] <- "./.:0.4"
+  genotypes[[7L]][[1L]] <- "./.:1.2"
   genotypes[[8L]][[20L]] <- "1|0:1"
   genotypes[[9L]] <- c("0|1:1", rep("1|1:2", 19L))
   genotypes[[10L]] <- rep("./.:.", 20L)
@@ -74,6 +74,23 @@ run_pgen_qc_tests <- function(repo_dir) {
     for (value in list(-1, 1.01, NA_real_, NaN, Inf, ".95", c(0, 1), NULL)) {
       expect_error_message(validatePgenQcThresholds(0, value), "min_call_rate")
     }
+  })
+  run_named_test("native MAC uses dosage while native geno uses missing hardcalls", {
+    native <- filterPgenFile(opts("native dosage qc", 1))
+    counts <- read_counts(native)
+    # Dosage 1.2 passes --mac 1; its missing hardcall has MAC zero.
+    stopifnot(counts$MAC[[7L]] == 0, counts$FILTER_MAC[[7L]] > 1,
+              counts$FILTER_MAC[[7L]] < 1.3, counts$PASS_MAC[[7L]],
+              counts$PASS_CALL_RATE[[7L]], counts$KEEP[[7L]])
+    strict <- filterPgenFile(opts("native missingness qc", 1, 1))
+    strict_counts <- read_counts(strict)
+    stopifnot(strict_counts$PASS_MAC[[7L]], !strict_counts$PASS_CALL_RATE[[7L]],
+              !strict_counts$KEEP[[7L]], strict_counts$KEEP[[8L]])
+    report <- jsonlite::read_json(native$report, simplifyVector = TRUE)
+    stopifnot(report$count_source == "pgen_hardcalls",
+              report$filter_source == "plink2_native",
+              report$mac_source == "pgen_dosages",
+              report$missingness_source == "pgen_hardcalls")
   })
   result <- filterPgenFile(opts("default qc"))
   run_named_test("hardcall AN and MAC ignore dosage and stale PVAR annotations", {
@@ -132,9 +149,9 @@ run_pgen_qc_tests <- function(repo_dir) {
   run_named_test("minimum MAC filters minor reference alleles and exact row IDs", {
     mac1 <- filterPgenFile(opts("mac1", 1))
     counts <- read_counts(mac1)
-    expect_identical_value(which(counts$KEEP), c(2L, 4L, 5L, 8L, 9L, 10L))
+    expect_identical_value(which(counts$KEEP), c(2L, 4L, 5L, 7L, 8L, 9L, 10L))
     expect_identical_value(readLines(mac1$pvar)[!startsWith(readLines(mac1$pvar), "#")],
-                           readLines(paste0(prefix, ".pvar"))[!startsWith(readLines(paste0(prefix, ".pvar")), "#")][c(2L, 4L, 5L, 8L, 9L, 10L)])
+                           readLines(paste0(prefix, ".pvar"))[!startsWith(readLines(paste0(prefix, ".pvar")), "#")][c(2L, 4L, 5L, 7L, 8L, 9L, 10L)])
     expect_error_message(filterPgenFile(opts("all fail", 100)), "No supported variants remain")
   })
   run_named_test("QC retains multiallelic records outside supported scope", {
@@ -179,6 +196,43 @@ run_pgen_qc_tests <- function(repo_dir) {
     stream_opt$min_call_rate <- 0
     disabled <- filterPgenFile(stream_opt)
     stopifnot(all(read_counts(disabled)$KEEP))
+  })
+  run_named_test("QC preserves retained rows across fully rejected leading, middle and trailing chunks", {
+    empty_prefix <- file.path(fixture_dir, "empty chunks")
+    kept_indices <- c(1001L, 1002L, 3001L)
+    expected <- matrix(0L, nrow = 20L, ncol = 3L)
+    expected[1L, 1L] <- 1L
+    expected[1L, 2L] <- 2L
+    expected[2L, 3L] <- 1L
+    writer <- pgenlibr::NewPgenWriter(paste0(empty_prefix, ".pgen"), 20L, 4005L,
+                                     nonref_flags = FALSE)
+    tryCatch({
+      for (index in seq_len(4005L)) {
+        kept_column <- match(index, kept_indices)
+        values <- if (is.na(kept_column)) rep(NA_integer_, 20L) else expected[, kept_column]
+        pgenlibr::AppendBiallelic(writer, values)
+      }
+    }, finally = pgenlibr::ClosePgenWriter(writer))
+    writeLines(c("#CHROM\tPOS\tID\tREF\tALT",
+                 paste("1", seq_len(4005L), ".", "G", "C", sep = "\t")),
+               paste0(empty_prefix, ".pvar"))
+    file.copy(paste0(prefix, ".psam"), paste0(empty_prefix, ".psam"))
+    empty_opt <- opts("empty chunks qc", 1)
+    for (extension in c("pgen", "pvar", "psam")) {
+      empty_opt[[extension]] <- paste0(empty_prefix, ".", extension)
+    }
+    filtered <- filterPgenFile(empty_opt)
+    counts <- read_counts(filtered)
+    stopifnot(nrow(counts) == 4005L)
+    expect_identical_value(which(counts$KEEP), kept_indices)
+    expect_identical_value(readLines(filtered$pvar), c("#CHROM\tPOS\tID\tREF\tALT",
+      "1\t1001\t.\tG\tC", "1\t1002\t.\tG\tC", "1\t3001\t.\tG\tC"))
+    reader <- pgenlibr::NewPgen(filtered$pgen)
+    actual <- tryCatch(pgenlibr::ReadIntList(reader, 1:3),
+                       finally = pgenlibr::ClosePgen(reader))
+    expect_identical_value(actual, expected, "retained PGEN hardcalls")
+    report <- jsonlite::read_json(filtered$report, simplifyVector = TRUE)
+    stopifnot(report$variant_count_before == 4005, report$variant_count_after == 3)
   })
   run_named_test("QC validates localization and memory before PLINK", {
     invalid <- opts("uri")

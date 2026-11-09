@@ -36,6 +36,8 @@ if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_m
     raise SystemExit(43)
 if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc.R"]:
     raise SystemExit(44)
+if os.environ.get("FAIL_PREPARATION") == "true" and sys.argv[1:2] == ["tests/test_pgen_preparation.R"]:
+    raise SystemExit(45)
 """
         for name in names:
             executable = directory / name
@@ -43,7 +45,7 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
             executable.chmod(0o755)
         return log
 
-    def run_runner(self, arguments=(), fail_smoke=False, fail_mac=False, fail_qc=False):
+    def run_runner(self, arguments=(), fail_smoke=False, fail_mac=False, fail_qc=False, fail_preparation=False):
         with tempfile.TemporaryDirectory(prefix="pgen-runner-") as directory:
             directory = Path(directory)
             log = self.recording_commands(directory, ("Rscript", "plink2", "bgzip", "tabix"))
@@ -54,6 +56,7 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
                 FAIL_SMOKE="true" if fail_smoke else "false",
                 FAIL_MAC="true" if fail_mac else "false",
                 FAIL_QC="true" if fail_qc else "false",
+                FAIL_PREPARATION="true" if fail_preparation else "false",
                 SUSIER_FUNCTIONS_PATH="/installed functions",
                 SUSIER_SCRIPTS_PATH="/installed scripts",
             )
@@ -68,7 +71,9 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
         result, calls = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-        self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R", "tests/test_pgen_smoke.R"])
+        self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R",
+                                  "tests/test_pgen_qc.R", "tests/test_pgen_preparation.R",
+                                  "tests/test_pgen_smoke.R"])
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
         self.assertTrue(any(call[:2] == ["plink2", "--version"] for call in calls))
 
@@ -77,9 +82,12 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
         self.assertEqual(scripts.count("tests/test_pgen_mac.R"), 1)
+        self.assertEqual(scripts.count("tests/test_pgen_runtime.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_qc.R"), 1)
+        self.assertEqual(scripts.count("tests/test_pgen_preparation.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_smoke.R"), 1)
         self.assertLess(scripts.index("tests/test_pgen_mac.R"), scripts.index("tests/test_pgen_smoke.R"))
+        self.assertLess(scripts.index("tests/test_pgen_preparation.R"), scripts.index("tests/test_pgen_smoke.R"))
         for suite in FULL_SUITES:
             self.assertEqual(scripts.count(suite), 1)
 
@@ -144,6 +152,16 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
                 arguments = calls[0]
                 runner = arguments.index("tests/test_pgen_container.sh")
                 self.assertEqual(arguments[runner + 1:], ["--full"] if full_checks == "true" else [])
+
+    def test_preparation_failure_stops_smoke_and_full_suites(self):
+        for arguments in ([], ["--full"]):
+            with self.subTest(arguments=arguments):
+                result, calls = self.run_runner(arguments, fail_preparation=True)
+                self.assertEqual(result.returncode, 45, result.stderr)
+                scripts = [call[1] for call in calls
+                           if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R",
+                                          "tests/test_pgen_qc.R", "tests/test_pgen_preparation.R"])
 
 
 if __name__ == "__main__":

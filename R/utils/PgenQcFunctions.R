@@ -1,5 +1,5 @@
-# Shared hardcall QC for a complete input PGEN cohort.
-# PLINK reads the native genotype records. R streams metadata and count rows.
+# Shared native PLINK QC for a complete input PGEN cohort.
+# R streams metadata and descriptive hardcall counts; PLINK selects variants.
 
 validatePgenQcThresholds <- function(mac, min_call_rate) {
   scalar_number <- function(value) {
@@ -58,14 +58,18 @@ validatePgenQcThresholds <- function(mac, min_call_rate) {
   fields
 }
 
-.pgenQcRunPlink <- function(executable, args, log_path) {
+.pgenQcRunPlink <- function(executable, args, log_path, allow_empty = FALSE) {
   status <- system2(executable, vapply(args, shQuote, character(1)),
                     stdout = log_path, stderr = log_path)
   if (status != 0L) {
     details <- paste(utils::tail(readLines(log_path, warn = FALSE), 20L), collapse = "\n")
+    if (allow_empty && status == 13L &&
+        grepl("Error: No variants remaining after main filters.", details, fixed = TRUE)) {
+      return(invisible(FALSE))
+    }
     stop("PLINK failed; see ", log_path, "\n", details, call. = FALSE)
   }
-  invisible(NULL)
+  invisible(TRUE)
 }
 
 filterPgenFile <- function(opt) {
@@ -128,22 +132,30 @@ filterPgenFile <- function(opt) {
   scratch_pvar <- file.path(work_dir, "row_ids.pvar")
   kept_pvar <- file.path(work_dir, "retained.pvar")
   keep_ids <- file.path(work_dir, "keep_ids.txt")
-  row_id <- function(index) paste0("qc_row_", format(index, scientific = FALSE, trim = TRUE))
+  supported_ids <- file.path(work_dir, "supported_ids.txt")
+  # An empty selection must not create a bare "qc_row_" entry.
+  row_id <- function(index) paste0("qc_row_", format(index, scientific = FALSE, trim = TRUE),
+                                  recycle0 = TRUE)
   chunk_size <- 1000L
 
-  message("Preparing row IDs for shared PGEN hardcall QC")
+  message("Preparing row IDs for shared native PLINK QC")
   variant_count <- local({
     source <- gzfile(input$pvar, "rt")
     destination <- file(scratch_pvar, "wt")
+    supported_file <- file(supported_ids, "wt")
     on.exit(close(source), add = TRUE)
     on.exit(close(destination), add = TRUE)
+    on.exit(close(supported_file), add = TRUE)
     writeLines(.pgenQcPvarHeader(source), destination)
     count <- 0
     repeat {
       lines <- readLines(source, n = chunk_size, warn = FALSE)
       if (!length(lines)) break
-      .pgenQcPvarFields(lines)
+      fields <- .pgenQcPvarFields(lines)
+      supported <- .pgenNormalizeChromosome(vapply(fields, `[[`, character(1), 1L)) %in%
+        as.character(seq_len(22L)) & !grepl(",", vapply(fields, `[[`, character(1), 5L), fixed = TRUE)
       indices <- count + seq_along(lines)
+      writeLines(row_id(indices[supported]), supported_file)
       modified <- vapply(seq_along(lines), function(index) {
         sub("^([[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+)[^[:space:]]+",
             paste0("\\1", row_id(indices[[index]])), lines[[index]])
@@ -158,22 +170,53 @@ filterPgenFile <- function(opt) {
   if (!is.null(attr(version, "status"))) stop("Cannot read PLINK version", call. = FALSE)
   version <- paste(version, collapse = "\n")
   common <- c("--pgen", input$pgen, "--pvar", scratch_pvar, "--psam", input$psam,
-              "--allow-extra-chr", "--threads", "1", "--memory", as.character(memory))
+              "--allow-extra-chr", "--nonfounders", "--threads", "1", "--memory", as.character(memory))
   counts_prefix <- file.path(output_dir, "plinkcounts")
   message("Counting PGEN hardcalls across all input samples, including nonfounders")
   .pgenQcRunPlink(executable,
-    c(common, "--geno-counts", "cols=homref,refalt1,homalt1,missing,nobs", "--out", counts_prefix),
+    c(common, "--geno-counts", "cols=homref,refalt1,homalt1,missing,nobs",
+      "--freq", "counts", "cols=reffreq,alt1freq", "--out", counts_prefix),
     paste0(counts_prefix, ".stdout.log"))
 
-  message("Applying MAC and call-rate thresholds to supported autosomal records")
+  message("Applying native PLINK MAC and hardcall missingness filters to supported autosomal records")
+  native_keep <- rep(FALSE, variant_count)
+  if (file.info(supported_ids)$size > 0) {
+    selection_prefix <- file.path(output_dir, "plinkselection")
+    has_variants <- .pgenQcRunPlink(executable,
+      c(common, "--extract", supported_ids, "--mac", as.character(thresholds$mac),
+        "--geno", format(1 - thresholds$min_call_rate, scientific = FALSE, digits = 16),
+        "--write-snplist", "--out", selection_prefix),
+      paste0(selection_prefix, ".stdout.log"), allow_empty = TRUE)
+    if (has_variants) {
+      local({
+        selection <- file(paste0(selection_prefix, ".snplist"), "rt")
+        on.exit(close(selection), add = TRUE)
+        previous <- 0
+        repeat {
+          ids <- readLines(selection, n = chunk_size, warn = FALSE)
+          if (!length(ids)) break
+          indices <- suppressWarnings(as.numeric(sub("^qc_row_", "", ids)))
+          if (anyNA(indices) || any(indices < 1 | indices > variant_count) ||
+              any(diff(c(previous, indices)) <= 0) || !identical(ids, row_id(indices))) {
+            stop("PLINK selected invalid or reordered variant row IDs", call. = FALSE)
+          }
+          native_keep[indices] <<- TRUE
+          previous <- utils::tail(indices, 1L)
+        }
+      })
+      unlink(paste0(selection_prefix, ".snplist"))
+    }
+  }
   retained <- local({
     source <- gzfile(input$pvar, "rt")
     counts <- file(paste0(counts_prefix, ".gcount"), "rt")
+    dosage_counts <- file(paste0(counts_prefix, ".acount"), "rt")
     restored <- file(kept_pvar, "wt")
     selection <- file(keep_ids, "wt")
     report <- gzfile(output$counts, "wb")
     on.exit(close(source), add = TRUE)
     on.exit(close(counts), add = TRUE)
+    on.exit(close(dosage_counts), add = TRUE)
     on.exit(close(restored), add = TRUE)
     on.exit(close(selection), add = TRUE)
     on.exit(close(report), add = TRUE)
@@ -181,8 +224,12 @@ filterPgenFile <- function(opt) {
     header <- strsplit(readLines(counts, n = 1L, warn = FALSE), "\t", fixed = TRUE)[[1L]]
     expected <- c("#ID", "HOM_REF_CT", "HET_REF_ALT1_CT", "HOM_ALT1_CT", "MISSING_CT", "OBS_CT")
     if (!identical(header, expected)) stop("PLINK genotype count header is invalid", call. = FALSE)
+    dosage_header <- strsplit(readLines(dosage_counts, n = 1L, warn = FALSE), "\t", fixed = TRUE)[[1L]]
+    if (!identical(dosage_header, c("#ID", "REF_CT", "ALT1_CT"))) {
+      stop("PLINK allele count header is invalid", call. = FALSE)
+    }
     columns <- c("variant_index", "chromosome", "position", "variant_id", "AC", "AN", "MAC",
-                 "CALL_RATE", "PASS_MAC", "PASS_CALL_RATE", "KEEP", "qc_applied", "reason")
+                 "CALL_RATE", "FILTER_MAC", "PASS_MAC", "PASS_CALL_RATE", "KEEP", "qc_applied", "reason")
     writeLines(paste(columns, collapse = "\t"), report)
     before <- 0
     after <- 0
@@ -194,10 +241,16 @@ filterPgenFile <- function(opt) {
       count_lines <- readLines(counts, n = length(lines), warn = FALSE)
       if (length(count_lines) != length(lines)) stop("PLINK count rows do not match PVAR", call. = FALSE)
       count_fields <- strsplit(count_lines, "\t", fixed = TRUE)
+      dosage_lines <- readLines(dosage_counts, n = length(lines), warn = FALSE)
+      dosage_fields <- strsplit(dosage_lines, "\t", fixed = TRUE)
       indices <- before + seq_along(lines)
       if (any(lengths(count_fields) != length(expected)) ||
           !identical(vapply(count_fields, `[[`, character(1), 1L), row_id(indices))) {
         stop("PLINK count row order does not match PVAR", call. = FALSE)
+      }
+      if (length(dosage_lines) != length(lines) || any(lengths(dosage_fields) != 3L) ||
+          !identical(vapply(dosage_fields, `[[`, character(1), 1L), row_id(indices))) {
+        stop("PLINK allele count rows do not match PVAR", call. = FALSE)
       }
       chromosome <- vapply(fields, `[[`, character(1), 1L)
       position <- vapply(fields, `[[`, character(1), 2L)
@@ -205,7 +258,7 @@ filterPgenFile <- function(opt) {
       alt <- vapply(fields, `[[`, character(1), 5L)
       supported <- .pgenNormalizeChromosome(chromosome) %in% as.character(seq_len(22L)) &
         !grepl(",", alt, fixed = TRUE)
-      ac <- an <- mac <- call_rate <- rep(NA_real_, length(lines))
+      ac <- an <- mac <- call_rate <- filter_mac <- rep(NA_real_, length(lines))
       pass_mac <- pass_rate <- rep(NA, length(lines))
       keep <- rep(TRUE, length(lines))
       for (index in which(supported)) {
@@ -218,14 +271,20 @@ filterPgenFile <- function(opt) {
         ac[[index]] <- value[[2L]] + 2 * value[[3L]]
         mac[[index]] <- min(ac[[index]], an[[index]] - ac[[index]])
         call_rate[[index]] <- value[[5L]] / sample_count
-        pass_mac[[index]] <- mac[[index]] >= thresholds$mac
+        dosage <- suppressWarnings(as.numeric(dosage_fields[[index]][-1L]))
+        if (anyNA(dosage) || any(!is.finite(dosage)) || any(dosage < 0)) {
+          stop("Invalid PLINK allele counts for variant ", indices[[index]], call. = FALSE)
+        }
+        filter_mac[[index]] <- min(dosage)
+        pass_mac[[index]] <- filter_mac[[index]] >= thresholds$mac
         pass_rate[[index]] <- call_rate[[index]] >= thresholds$min_call_rate
-        keep[[index]] <- pass_mac[[index]] && pass_rate[[index]]
+        # Only PLINK's native filters decide whether a supported record is kept.
+        keep[[index]] <- native_keep[[indices[[index]]]]
       }
       reason <- ifelse(supported, "applied", "unsupported_chromosome_or_multiallelic")
       chunk <- tibble::tibble(variant_index = indices, chromosome = chromosome,
         position = position, variant_id = raw_id, AC = ac, AN = an, MAC = mac,
-        CALL_RATE = call_rate, PASS_MAC = pass_mac, PASS_CALL_RATE = pass_rate,
+        CALL_RATE = call_rate, FILTER_MAC = filter_mac, PASS_MAC = pass_mac, PASS_CALL_RATE = pass_rate,
         KEEP = keep, qc_applied = supported, reason = reason)
       readr::write_tsv(chunk, report, col_names = FALSE, append = TRUE, na = "NA")
       writeLines(lines[keep], restored)
@@ -234,7 +293,8 @@ filterPgenFile <- function(opt) {
       after <- after + sum(keep)
       supported_after <- supported_after + sum(keep & supported)
     }
-    if (length(readLines(counts, n = 1L, warn = FALSE)) || before != variant_count) {
+    if (length(readLines(counts, n = 1L, warn = FALSE)) ||
+        length(readLines(dosage_counts, n = 1L, warn = FALSE)) || before != variant_count) {
       stop("PLINK count rows do not match PVAR", call. = FALSE)
     }
     list(total = after, supported = supported_after)
@@ -276,6 +336,9 @@ filterPgenFile <- function(opt) {
     stop("Cannot restore retained PVAR and PSAM metadata", call. = FALSE)
   }
   report <- list(schema_version = 1L, count_source = "pgen_hardcalls",
+    filter_source = "plink2_native", mac_source = "pgen_dosages",
+    missingness_source = "pgen_hardcalls",
+    filter_scope = "autosomal_biallelic_records",
     sample_scope = "all_input_pgen_samples", include_nonfounders = TRUE,
     sample_count = sample_count, variant_count_before = variant_count,
     variant_count_after = retained$total, thresholds = thresholds,
@@ -283,7 +346,7 @@ filterPgenFile <- function(opt) {
     filtered_files = lapply(output[c("pgen", "pvar", "psam")], .pgenQcFileRecord),
     counts_file = .pgenQcFileRecord(output$counts), plink_version = version)
   jsonlite::write_json(report, output$report, auto_unbox = TRUE, pretty = TRUE, digits = NA)
-  unlink(paste0(counts_prefix, ".gcount"))
+  unlink(paste0(counts_prefix, c(".gcount", ".acount")))
   message("Shared PGEN QC complete: ", retained$total, " of ", variant_count, " records retained")
   invisible(output)
 }

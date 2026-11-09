@@ -37,6 +37,12 @@ run_pgen_qc_manifest_tests <- function(repo_dir = ".") {
     identical(readLines(planned$unique_manifest), unname(apply(as.data.frame(expected_unique), 1L, paste, collapse = "\t"))),
     identical(jsonlite::read_json(planned$batch_pgen_indices, simplifyVector = TRUE),
               c(0L, 1L, 0L, 0L, 2L)))
+  stopifnot("Planner must return grouped batch indices" =
+              is.character(planned$pgen_batch_indices) && is.character(planned$batch_within_pgen_indices))
+  stopifnot(identical(jsonlite::read_json(planned$pgen_batch_indices, simplifyVector = TRUE),
+                      list(c(0L, 2L, 3L), 1L, 4L)),
+    identical(jsonlite::read_json(planned$batch_within_pgen_indices, simplifyVector = TRUE),
+              c(0L, 0L, 1L, 2L, 0L)))
   error(writePgenQcPlan(manifest, c("2", "7"), file.path(root, "absent")), "chromosome|manifest")
   error(writePgenQcPlan(manifest, character(), file.path(root, "empty")), "nonempty|batch")
   different_psam <- manifest
@@ -116,6 +122,10 @@ run_pgen_qc_manifest_tests <- function(repo_dir = ".") {
               c(0L, 0L, 0L, 2L, 1L)),
     identical(jsonlite::read_json(file.path(cli_plan, "batch_chromosome_indices.json"), simplifyVector = TRUE),
               c(1L, 1L, 3L, 5L, 2L)))
+  stopifnot(identical(jsonlite::read_json(file.path(cli_plan, "pgen_batch_indices.json"), simplifyVector = TRUE),
+                      list(0:2, 4L, 3L)),
+    identical(jsonlite::read_json(file.path(cli_plan, "batch_within_pgen_indices.json"), simplifyVector = TRUE),
+              c(0L, 1L, 2L, 0L, 0L)))
   for (arguments in list(c("--mac=-1"), c("--mac=0.5"), c("--min-call-rate=-0.1"),
                          c("--min-call-rate=1.01"), c("--min-call-rate=NaN"))) {
     invoke("plan_pgen_susie.R", "bad threshold", c(plan_args, arguments,

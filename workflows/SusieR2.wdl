@@ -1,7 +1,7 @@
 version 1.0
 
-# QC indices refer to unique selected PGEN/PVAR/PSAM triplets. The workflow
-# promotes their paths to typed Files before QC or batch localization.
+# Preparation indices refer to unique selected PGEN/PVAR/PSAM triplets.
+# Each fit localizes only the subset prepared for its planned batch.
 struct ChromosomePgen {
   String chromosome
   File pgen
@@ -65,35 +65,39 @@ workflow SusieR2 {
       max_retries = MaxRetries
   }
 
-  # The planner opens only the small manifest. These declarations make its
-  # genotype paths explicit File inputs. Identical selected triplets share QC.
+  # Localize each original triplet once for QC and all assigned extractions.
+  # The planner opens only the small manifest; all input paths stay typed.
   Array[Array[String]] pgen_rows = read_tsv(PlanPgenSusie.UniquePgenManifest)
-  scatter (pgen_row in pgen_rows) {
+  scatter (pgen_index in range(length(pgen_rows))) {
+    Array[String] pgen_row = pgen_rows[pgen_index]
     ChromosomePgen chromosome_pgen = object {
       chromosome: pgen_row[0],
       pgen: pgen_row[1],
       pvar: pgen_row[2],
       psam: pgen_row[3]
     }
-    if (MAC > 0 || MinCallRate > 0) {
-      call FilterPgen {
-        input:
-          pgen = chromosome_pgen.pgen,
-          pvar = chromosome_pgen.pvar,
-          psam = chromosome_pgen.psam,
-          mac = MAC,
-          min_call_rate = MinCallRate,
-          plink_memory_mb = PlinkMemoryMB,
-          docker_image = DockerImage,
-          memory_gb = QcMemoryGB,
-          disk_gb = QcDiskGB,
-          preemptible_attempts = PreemptibleAttempts,
-          max_retries = MaxRetries
-      }
+    scatter (preparation_batch_index in PlanPgenSusie.PgenBatchIndices[pgen_index]) {
+      File preparation_worklist = PlanPgenSusie.Worklists[preparation_batch_index]
     }
-    File prepared_pgen = select_first([FilterPgen.Pgen, chromosome_pgen.pgen])
-    File prepared_pvar = select_first([FilterPgen.Pvar, chromosome_pgen.pvar])
-    File prepared_psam = select_first([FilterPgen.Psam, chromosome_pgen.psam])
+    call PreparePgenBatches {
+      input:
+        pgen = chromosome_pgen.pgen,
+        pvar = chromosome_pgen.pvar,
+        psam = chromosome_pgen.psam,
+        worklists = preparation_worklist,
+        cis_distance = CisDistance,
+        mac = MAC,
+        min_call_rate = MinCallRate,
+        plink_memory_mb = PlinkMemoryMB,
+        docker_image = DockerImage,
+        memory_gb = QcMemoryGB,
+        disk_gb = QcDiskGB,
+        preemptible_attempts = PreemptibleAttempts,
+        max_retries = MaxRetries
+    }
+    File prepared_pgen = PreparePgenBatches.Pgen
+    File prepared_pvar = PreparePgenBatches.Pvar
+    File prepared_psam = PreparePgenBatches.Psam
     ChromosomePgen prepared_files = object {
       chromosome: chromosome_pgen.chromosome,
       pgen: prepared_pgen,
@@ -104,9 +108,17 @@ workflow SusieR2 {
   Array[ChromosomePgen] ChromosomePgens = prepared_files
 
   # zip rejects unequal output counts before any batch starts localization.
-  scatter (batch in zip(zip(PlanPgenSusie.Worklists, PlanPgenSusie.PhenotypeBeds), zip(PlanPgenSusie.BatchPgenIndices, PlanPgenSusie.Chromosomes))) {
+  scatter (batch in zip(zip(PlanPgenSusie.Worklists, PlanPgenSusie.PhenotypeBeds), zip(zip(PlanPgenSusie.BatchPgenIndices, PlanPgenSusie.BatchWithinPgenIndices), PlanPgenSusie.Chromosomes))) {
     # Keep a named Int for the chromosome lookup in Dockstore's Cromwell parser.
-    Int chromosome_index = batch.right.left
+    Int chromosome_index = batch.right.left.left
+    Int within_pgen_index = batch.right.left.right
+    File batch_pgen = PreparePgenBatches.BatchPgens[chromosome_index][within_pgen_index]
+    File batch_pvar = PreparePgenBatches.BatchPvars[chromosome_index][within_pgen_index]
+    File batch_psam = PreparePgenBatches.BatchPsams[chromosome_index][within_pgen_index]
+    File batch_preparation_manifest = PreparePgenBatches.Manifests[chromosome_index][within_pgen_index]
+    if (MAC > 0 || MinCallRate > 0) {
+      File shared_qc_report = PreparePgenBatches.Reports[chromosome_index][0]
+    }
     # These locations are output-manifest metadata, never local input paths.
     String pgen_chromosome = batch.right.right
     String pgen_uri = ChromosomePgens[chromosome_index].pgen
@@ -114,9 +126,10 @@ workflow SusieR2 {
     String psam_uri = ChromosomePgens[chromosome_index].psam
     call RunPgenSusieBatch {
       input:
-        pgen = ChromosomePgens[chromosome_index].pgen,
-        pvar = ChromosomePgens[chromosome_index].pvar,
-        psam = ChromosomePgens[chromosome_index].psam,
+        pgen = PreparePgenBatches.BatchPgens[chromosome_index][within_pgen_index],
+        pvar = PreparePgenBatches.BatchPvars[chromosome_index][within_pgen_index],
+        psam = PreparePgenBatches.BatchPsams[chromosome_index][within_pgen_index],
+        prepared_batch_manifest = PreparePgenBatches.Manifests[chromosome_index][within_pgen_index],
         worklist = batch.left.left,
         phenotype_bed = batch.left.right,
         qtl_results = QtlResults,
@@ -126,7 +139,7 @@ workflow SusieR2 {
         ancestry = Ancestry,
         variant_list = VariantList,
         additional_genotypes = AdditionalGenotypes,
-        genotype_qc_report = FilterPgen.Report[chromosome_index],
+        genotype_qc_report = shared_qc_report,
         cis_distance = CisDistance,
         maf = MAF,
         mac = 0,
@@ -181,10 +194,14 @@ workflow SusieR2 {
     Array[File] PreparedPgens = prepared_pgen
     Array[File] PreparedPvars = prepared_pvar
     Array[File] PreparedPsams = prepared_psam
-    Array[File] GenotypeQcCounts = select_all(FilterPgen.Counts)
-    Array[File] GenotypeQcReports = select_all(FilterPgen.Report)
-    Array[File] GenotypeQcLogs = select_all(FilterPgen.TaskStdout)
-    Array[File] GenotypeQcErrors = select_all(FilterPgen.TaskStderr)
+    Array[File] GenotypeQcCounts = flatten(PreparePgenBatches.Counts)
+    Array[File] GenotypeQcReports = flatten(PreparePgenBatches.Reports)
+    Array[File] GenotypeQcLogs = PreparePgenBatches.TaskStdout
+    Array[File] GenotypeQcErrors = PreparePgenBatches.TaskStderr
+    Array[File] BatchPgens = batch_pgen
+    Array[File] BatchPvars = batch_pvar
+    Array[File] BatchPsams = batch_psam
+    Array[File] BatchPreparationReports = batch_preparation_manifest
     Array[File] GeneRds = flatten(RunPgenSusieBatch.GeneRds)
     Array[File] GeneParquets = flatten(RunPgenSusieBatch.GeneParquets)
     Array[File] GeneTsvs = flatten(RunPgenSusieBatch.GeneTsvs)
@@ -193,7 +210,7 @@ workflow SusieR2 {
     Array[File] ChromosomeGeneManifests = AggregatePgenSusie.ChromosomeGeneManifests
     Array[File] BatchLogs = RunPgenSusieBatch.TaskStdout
     Array[File] BatchErrors = RunPgenSusieBatch.TaskStderr
-    Array[File] PlinkLogs = flatten(RunPgenSusieBatch.PlinkLogs)
+    Array[File] PlinkLogs = flatten(PreparePgenBatches.PlinkLogs)
     File PlanLog = PlanPgenSusie.TaskStderr
     File AggregateLog = AggregatePgenSusie.TaskStderr
   }
@@ -256,7 +273,7 @@ task PlanPgenSusie {
     Rscript /opt/r/scripts/plan_pgen_susie.R "${args[@]}"
     echo 'CHECK planned batch files before cloud output collection'
     require_readable plan/batch_worklists.txt plan/batch_phenotype_beds.txt
-    require_readable plan/unique_pgens.tsv plan/batch_pgen_indices.json
+    require_readable plan/unique_pgens.tsv plan/batch_pgen_indices.json plan/pgen_batch_indices.json plan/batch_within_pgen_indices.json
     if [[ ! -s plan/batch_worklists.txt || ! -s plan/batch_phenotype_beds.txt ]]; then
       echo 'ERROR planner must list at least one worklist and phenotype BED' >&2
       exit 1
@@ -297,6 +314,8 @@ task PlanPgenSusie {
     File NormalizedManifest = "plan/chromosome_pgens.tsv"
     File UniquePgenManifest = "plan/unique_pgens.tsv"
     Array[Int] BatchPgenIndices = read_json("plan/batch_pgen_indices.json")
+    Array[Array[Int]] PgenBatchIndices = read_json("plan/pgen_batch_indices.json")
+    Array[Int] BatchWithinPgenIndices = read_json("plan/batch_within_pgen_indices.json")
     File TaskStdout = stdout()
     File TaskStderr = stderr()
   }
@@ -310,11 +329,13 @@ task PlanPgenSusie {
   }
 }
 
-task FilterPgen {
+task PreparePgenBatches {
   input {
     File pgen
     File pvar
     File psam
+    Array[File] worklists
+    Int cis_distance
     Int mac = 0
     Float min_call_rate = 0.95
     Int plink_memory_mb
@@ -326,7 +347,7 @@ task FilterPgen {
   }
   command <<<
     set -euo pipefail
-    echo 'START shared PGEN MAC and call-rate QC'
+    echo 'START shared PGEN QC and batch preparation'
     export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 VROOM_THREADS=1
     require_readable() {
       local path
@@ -341,24 +362,60 @@ task FilterPgen {
       done
     }
     require_readable '~{sub(pgen, "'", "'\"'\"'")}' '~{sub(pvar, "'", "'\"'\"'")}' '~{sub(psam, "'", "'\"'\"'")}'
-    Rscript /opt/r/scripts/filter_pgen_susie.R \
+    # File values are mapped to local paths during command rendering.
+    cp '~{write_lines(worklists)}' preparation_worklists.txt
+    listed_worklists=()
+    while IFS= read -r path || [[ -n "$path" ]]; do
+      require_readable "$path"
+      listed_worklists+=("$path")
+    done < preparation_worklists.txt
+    if [[ ${#listed_worklists[@]} -eq 0 ]]; then
+      echo 'ERROR preparation requires at least one worklist' >&2
+      exit 1
+    fi
+    Rscript /opt/r/scripts/prepare_pgen_susie.R \
       --pgen '~{sub(pgen, "'", "'\"'\"'")}' \
       --pvar '~{sub(pvar, "'", "'\"'\"'")}' \
       --psam '~{sub(psam, "'", "'\"'\"'")}' \
+      --worklists-file preparation_worklists.txt \
+      --cis-distance '~{cis_distance}' \
       '--mac=~{mac}' \
       '--min-call-rate=~{min_call_rate}' \
       --plink-memory-mb '~{plink_memory_mb}' \
-      --output-dir qc
-    require_readable qc/filtered.pgen qc/filtered.pvar qc/filtered.psam qc/variant_qc.tsv.gz qc/qc.json
-    echo 'COMPLETE shared PGEN MAC and call-rate QC'
+      --output-dir prepared
+    if ~{mac > 0 || min_call_rate > 0}; then
+      require_readable prepared/qc/filtered.pgen prepared/qc/filtered.pvar prepared/qc/filtered.psam prepared/qc/variant_qc.tsv.gz prepared/qc/qc.json
+    fi
+    echo 'CHECK prepared batch files before cloud output collection'
+    shopt -s nullglob
+    pgens=(prepared/batches/batch_*.pgen)
+    pvars=(prepared/batches/batch_*.pvar)
+    psams=(prepared/batches/batch_*.psam)
+    manifests=(prepared/batches/batch_*.preparation.json)
+    if ! [[ ${#pgens[@]} -eq ${#listed_worklists[@]} && ${#pvars[@]} -eq ${#pgens[@]} && ${#psams[@]} -eq ${#pgens[@]} && ${#manifests[@]} -eq ${#pgens[@]} ]]; then
+      echo 'ERROR prepared batch file counts do not match assigned worklists' >&2
+      exit 1
+    fi
+    for (( i=0; i<${#pgens[@]}; i++ )); do
+      if ! [[ "${pgens[i]%.pgen}" == "${pvars[i]%.pvar}" && "${pgens[i]%.pgen}" == "${psams[i]%.psam}" && "${pgens[i]%.pgen}" == "${manifests[i]%.preparation.json}" ]]; then
+        printf 'ERROR prepared batch output order differs at index %s\n' "$i" >&2
+        exit 1
+      fi
+    done
+    require_readable "${pgens[@]}" "${pvars[@]}" "${psams[@]}" "${manifests[@]}"
+    echo 'COMPLETE shared PGEN QC and batch preparation'
   >>>
   output {
-    File Pgen = "qc/filtered.pgen"
-    File Pvar = "qc/filtered.pvar"
-    File Psam = "qc/filtered.psam"
-    File Counts = "qc/variant_qc.tsv.gz"
-    File Report = "qc/qc.json"
-    Array[File] PlinkLogs = glob("qc/*.log")
+    File Pgen = if (mac > 0 || min_call_rate > 0) then "prepared/qc/filtered.pgen" else pgen
+    File Pvar = if (mac > 0 || min_call_rate > 0) then "prepared/qc/filtered.pvar" else pvar
+    File Psam = if (mac > 0 || min_call_rate > 0) then "prepared/qc/filtered.psam" else psam
+    Array[File] Counts = glob("prepared/qc/variant_qc.tsv.gz")
+    Array[File] Reports = glob("prepared/qc/qc.json")
+    Array[File] BatchPgens = glob("prepared/batches/batch_*.pgen")
+    Array[File] BatchPvars = glob("prepared/batches/batch_*.pvar")
+    Array[File] BatchPsams = glob("prepared/batches/batch_*.psam")
+    Array[File] Manifests = glob("prepared/batches/batch_*.preparation.json")
+    Array[File] PlinkLogs = flatten([glob("prepared/qc/*.log"), glob("prepared/batches/*.log")])
     File TaskStdout = stdout()
     File TaskStderr = stderr()
   }
@@ -378,6 +435,7 @@ task RunPgenSusieBatch {
     File pgen
     File pvar
     File psam
+    File prepared_batch_manifest
     File worklist
     File phenotype_bed
     File qtl_results
@@ -421,11 +479,12 @@ task RunPgenSusieBatch {
         fi
       done
     }
-    require_readable '~{sub(pgen, "'", "'\"'\"'")}' '~{sub(pvar, "'", "'\"'\"'")}' '~{sub(psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
+    require_readable '~{sub(pgen, "'", "'\"'\"'")}' '~{sub(pvar, "'", "'\"'\"'")}' '~{sub(psam, "'", "'\"'\"'")}' '~{sub(prepared_batch_manifest, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
     args=(
       --pgen '~{sub(pgen, "'", "'\"'\"'")}'
       --pvar '~{sub(pvar, "'", "'\"'\"'")}'
       --psam '~{sub(psam, "'", "'\"'\"'")}'
+      --prepared-batch-manifest '~{sub(prepared_batch_manifest, "'", "'\"'\"'")}'
       --worklist '~{sub(worklist, "'", "'\"'\"'")}'
       --phenotype-bed '~{sub(phenotype_bed, "'", "'\"'\"'")}'
       --qtl-results '~{sub(qtl_results, "'", "'\"'\"'")}'

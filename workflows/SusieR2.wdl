@@ -1,7 +1,7 @@
 version 1.0
 
 # Planner indices refer to manifest row positions. The workflow promotes the
-# validated path fields to typed Files before supplying a chromosome to a batch.
+# validated path fields to typed Files before supplying them to a batch.
 struct ChromosomePgen {
   String chromosome
   File pgen
@@ -26,6 +26,7 @@ workflow SusieR2 {
     Int BaseSeed = 1
     Boolean MemoryDebug = false
     Float MAF = 0.0
+    Int MAC = 0
     Boolean SelectTopPhenotypePerCluster = false
     String TopPhenotypePvalueColumn = "qval"
     String DockerImage = "ghcr.io/aou-multiomics-analysis/susier/pgen:main"
@@ -71,14 +72,17 @@ workflow SusieR2 {
   }
   Array[ChromosomePgen] ChromosomePgens = chromosome_pgen
 
-  scatter (i in range(length(PlanPgenSusie.Worklists))) {
-    # Keep the two array lookups separate for Dockstore's Cromwell parser.
-    Int chromosome_index = PlanPgenSusie.ChromosomeIndices[i]
+  # zip rejects unequal output counts before any batch starts localization.
+  scatter (batch in zip(zip(PlanPgenSusie.Worklists, PlanPgenSusie.PhenotypeBeds), PlanPgenSusie.ChromosomeIndices)) {
+    # Keep a named Int for the chromosome lookup in Dockstore's Cromwell parser.
+    Int chromosome_index = batch.right
     call RunPgenSusieBatch {
       input:
-        pgen_files = ChromosomePgens[chromosome_index],
-        worklist = PlanPgenSusie.Worklists[i],
-        phenotype_bed = PlanPgenSusie.PhenotypeBeds[i],
+        pgen = ChromosomePgens[chromosome_index].pgen,
+        pvar = ChromosomePgens[chromosome_index].pvar,
+        psam = ChromosomePgens[chromosome_index].psam,
+        worklist = batch.left.left,
+        phenotype_bed = batch.left.right,
         qtl_results = QtlResults,
         covariates = Covariates,
         sample_list = SampleList,
@@ -88,6 +92,7 @@ workflow SusieR2 {
         additional_genotypes = AdditionalGenotypes,
         cis_distance = CisDistance,
         maf = MAF,
+        mac = MAC,
         base_seed = BaseSeed,
         memory_debug = MemoryDebug,
         select_top_phenotype_per_cluster = SelectTopPhenotypePerCluster,
@@ -195,11 +200,41 @@ task PlanPgenSusie {
       if [[ "${args[j]}" == --gene-map ]]; then require_readable "${args[j+1]}"; fi
     done
     Rscript /opt/r/scripts/plan_pgen_susie.R "${args[@]}"
+    echo 'CHECK planned batch files before cloud output collection'
+    require_readable plan/batch_worklists.txt plan/batch_phenotype_beds.txt
+    if [[ ! -s plan/batch_worklists.txt || ! -s plan/batch_phenotype_beds.txt ]]; then
+      echo 'ERROR planner must list at least one worklist and phenotype BED' >&2
+      exit 1
+    fi
+    shopt -s nullglob
+    worklists=(plan/batches/batch_*.tsv)
+    phenotype_beds=(plan/batches/batch_*.bed)
+    if [[ ! -f "${worklists[0]-}" || ! -f "${phenotype_beds[0]-}" ]]; then
+      echo 'ERROR planner produced no worklists or phenotype BEDs' >&2
+      exit 1
+    fi
+    listed_worklists=()
+    listed_beds=()
+    while IFS= read -r path || [[ -n "$path" ]]; do listed_worklists+=("$path"); done < plan/batch_worklists.txt
+    while IFS= read -r path || [[ -n "$path" ]]; do listed_beds+=("$path"); done < plan/batch_phenotype_beds.txt
+    if ! [[ ${#worklists[@]} -eq ${#phenotype_beds[@]} && ${#worklists[@]} -eq ${#listed_worklists[@]} && ${#phenotype_beds[@]} -eq ${#listed_beds[@]} ]]; then
+      echo 'ERROR planner batch file counts do not match the ordered output lists' >&2
+      exit 1
+    fi
+    for (( i=0; i<${#worklists[@]}; i++ )); do
+      if [[ "${worklists[i]%.tsv}" != "${phenotype_beds[i]%.bed}" || "${worklists[i]}" != "${listed_worklists[i]}" || "${phenotype_beds[i]}" != "${listed_beds[i]}" ]]; then
+        printf 'ERROR planner batch files or output order differ at batch index %s\n' "$i" >&2
+        exit 1
+      fi
+    done
+    require_readable "${worklists[@]}" "${phenotype_beds[@]}"
     echo 'COMPLETE PGEN batch planning'
   >>>
   output {
-    Array[File] Worklists = read_lines("plan/batch_worklists.txt")
-    Array[File] PhenotypeBeds = read_lines("plan/batch_phenotype_beds.txt")
+    # Explicit globs let the Google backend collect files before the VM exits.
+    # Both patterns follow the same batch-ID order checked in the command.
+    Array[File] Worklists = glob("plan/batches/batch_*.tsv")
+    Array[File] PhenotypeBeds = glob("plan/batches/batch_*.bed")
     Array[String] Chromosomes = read_lines("plan/batch_chromosomes.txt")
     Array[Int] ChromosomeIndices = read_json("plan/batch_chromosome_indices.json")
     File ExpectedOutcomes = "plan/expected_outcomes.tsv"
@@ -220,7 +255,10 @@ task PlanPgenSusie {
 
 task RunPgenSusieBatch {
   input {
-    ChromosomePgen pgen_files
+    # Separate File inputs let Cromwell map paths before sub() escapes them.
+    File pgen
+    File pvar
+    File psam
     File worklist
     File phenotype_bed
     File qtl_results
@@ -232,6 +270,7 @@ task RunPgenSusieBatch {
     File? additional_genotypes
     Int cis_distance
     Float maf
+    Int mac = 0
     Int base_seed
     Boolean memory_debug
     Boolean select_top_phenotype_per_cluster
@@ -261,11 +300,11 @@ task RunPgenSusieBatch {
         fi
       done
     }
-    require_readable '~{sub(pgen_files.pgen, "'", "'\"'\"'")}' '~{sub(pgen_files.pvar, "'", "'\"'\"'")}' '~{sub(pgen_files.psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
+    require_readable '~{sub(pgen, "'", "'\"'\"'")}' '~{sub(pvar, "'", "'\"'\"'")}' '~{sub(psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
     args=(
-      --pgen '~{sub(pgen_files.pgen, "'", "'\"'\"'")}'
-      --pvar '~{sub(pgen_files.pvar, "'", "'\"'\"'")}'
-      --psam '~{sub(pgen_files.psam, "'", "'\"'\"'")}'
+      --pgen '~{sub(pgen, "'", "'\"'\"'")}'
+      --pvar '~{sub(pvar, "'", "'\"'\"'")}'
+      --psam '~{sub(psam, "'", "'\"'\"'")}'
       --worklist '~{sub(worklist, "'", "'\"'\"'")}'
       --phenotype-bed '~{sub(phenotype_bed, "'", "'\"'\"'")}'
       --qtl-results '~{sub(qtl_results, "'", "'\"'\"'")}'
@@ -273,6 +312,7 @@ task RunPgenSusieBatch {
       '--missing-code=~{sub(missing_code, "'", "'\"'\"'")}'
       --cis-distance '~{cis_distance}'
       --maf '~{maf}'
+      '--mac=~{mac}'
       --base-seed '~{base_seed}'
       --plink-memory-mb '~{plink_memory_mb}'
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'

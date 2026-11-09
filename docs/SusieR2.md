@@ -2,7 +2,7 @@
 
 [SusieR2.wdl](../workflows/SusieR2.wdl) is a WDL 1.0 workflow for Terra's managed Cromwell service. It plans batches, extracts the cis windows with PLINK 2, fits each selected outcome, and combines the batch tables. The default batch size is 50 genes. Set `SusieR2.BatchSize` to another positive integer, such as 100, to change this limit. All outcomes for one gene stay in one batch.
 
-The complete workflow has **not been tested on Terra**. Local WDL checks and command tests do not establish Terra compatibility. No cloud jobs were submitted for these checks.
+The complete workflow has **not completed validation on Terra**. Local WDL checks and command tests do not establish Terra compatibility. No cloud jobs were submitted for these checks.
 
 ## Inputs
 
@@ -20,6 +20,7 @@ Copy [the input example](../examples/inputs/SusieR2.inputs.json) and replace eac
 | `Ancestry` | Optional File | Ancestry table for ancestry MAF filtering. |
 | `VariantList` | Optional File | Variant selection list, with the existing loader's selection rules. |
 | `AdditionalGenotypes` | Optional File | Additional genotype BED for the existing data loader. |
+| `MAC` | Integer, default `0` | Minimum minor allele count for PGEN variants. `0` disables this filter. |
 
 Initial PGEN support is for diploid, biallelic variants on autosomes 1–22. The planner accepts chromosome aliases such as `1` and `chr1`. A gene cannot span chromosomes. The planner rejects missing chromosome inputs, duplicate chromosome IDs, ambiguous mappings, and duplicate phenotype IDs.
 
@@ -29,7 +30,7 @@ Plain text, gzip, and BGZF files use the same parser, regardless of the filename
 
 The planner checks the header, metadata, row count, and selected-row counts again during splitting. Errors report the failing line or metadata row. An ID mismatch alone does not establish that the file changed.
 
-The planner validates the manifest without opening its genotype locations and preserves its row order. It writes a small normalized TSV. WDL reads that table and converts each PGEN, PVAR, and PSAM location into a typed File inside a `ChromosomePgen` struct. These Files are explicit batch inputs and are localized by Cromwell. No genotype URI is passed to an R script as an unlocalized local filename. Each batch's zero-based chromosome index refers to the manifest row order. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
+The planner validates the manifest without opening its genotype locations and preserves its row order. It writes a small normalized TSV. WDL reads that table and converts each PGEN, PVAR, and PSAM location into a typed File inside a `ChromosomePgen` struct. Each batch receives the three members as separate `File` inputs. Cromwell can then replace each cloud URI with its local path before the command escapes it for the shell. Each batch's zero-based chromosome index refers to the manifest row order. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
 
 When `SampleList` is omitted, sample selection uses IDs rather than phenotype values. Genotype-only and phenotype-only samples are excluded, while phenotype missing values retain their existing handling. Covariates must cover every retained sample; they do not silently reduce the cohort. A supplied list keeps its existing order and selection behavior. The PGEN reader and ancestry MAF calculation retain the complete genotype cohort before the phenotype subset. Additional-genotype sample restrictions still apply afterward. Provenance records the initial selection mode, PSAM/list order rule, sample count, and cohort hash before any additional-genotype restriction.
 
@@ -42,6 +43,7 @@ When `SampleList` is omitted, sample selection uses IDs rather than phenotype va
 | `BaseSeed` | 1 |
 | `MemoryDebug` | false |
 | `MAF` | 0 |
+| `MAC` | 0 (off) |
 | `SelectTopPhenotypePerCluster` | false |
 | `TopPhenotypePvalueColumn` | `qval` |
 | `DockerImage` | `ghcr.io/aou-multiomics-analysis/susier/pgen:main` |
@@ -58,6 +60,10 @@ Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` 
 
 The planner sorts genes by chromosome and position. It derives each feature position from `floor((BED start + BED end) / 2)`. Cis windows use inclusive coordinates, with the query start clamped to 1. PLINK uses `--extract range` for these 1-based regions. Disjoint windows retain their gaps. Extraction retains the complete genotype sample cohort. Ancestry MAF filtering therefore runs before the phenotype sample subset. The fit keeps the existing phenotype missing-value behavior. The initial image and batch command use one BLAS thread for reproducible arithmetic.
 
+Set `SusieR2.MAC` to a positive integer to enable the minor allele count filter. For example, `"SusieR2.MAC": 5` keeps PGEN variants with a count of at least 5. The batch adds `--mac 5 --nonfounders` to PLINK during cis-window extraction. Counts use all samples in the input PGEN, including nonfounders, before phenotype sample selection. The filter uses PLINK's allele dosage sums; these are allele counts for hard-call genotypes. For the supported biallelic variants, PLINK's default nonmajor count is the minor allele count. See the [PLINK allele count filter](https://www.cog-genomics.org/plink/2.0/filter#mac).
+
+`MAC` must be a nonnegative integer. With `MAC = 0`, the batch adds no PLINK MAC filter. The MAC filter runs before the existing ancestry MAF or variant-list filter, so a variant list cannot restore a variant removed by MAC. It applies to PGEN variants; variants supplied through `AdditionalGenotypes` keep their existing handling. Each gene's provenance records the threshold and sample scope. The direct batch CLI uses `--mac 5` and also defaults to `0`.
+
 Seeds depend on the base seed, original gene ID, and original outcome ID. They do not depend on batch size, input order, or output paths. Changing batch size preserves the seed for each outcome. Each RDS contains a named list of that gene's outcome fits.
 
 The fitting stage reuses identical matrix-vector products, expected residual-error values, and raw column standard deviations within one fit. It also uses `matrixStats::colVars()` for SuSiE's constant-column warning check. The model settings, optimizer, convergence checks, and iteration logs are unchanged. Each fit uses private copies of the audited SuSiE functions; the installed namespace is unchanged. Cached input references are cleared after success or failure. Unrecognized package sources, unsupported matrix types, and unsupported model modes use the original SuSiE path. Source guards match the pinned image source; local source checks do not constitute an image or Terra execution test.
@@ -68,7 +74,9 @@ The [IKZF1 cis benchmark](../benchmarks/synthetic_scale/reports/2026-11-06-real-
 
 ## Localization and commands
 
-All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Files remain typed inside chromosome structs until command rendering. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. These files become typed outputs for the fit tasks.
+All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Genotype files remain typed in the workflow's chromosome structs and in the batch task's separate inputs. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. It collects these files with explicit `glob()` outputs so Terra uploads them before the planner VM exits. Reading a list of filenames with `read_lines()` is not sufficient for this upload step. The command checks file counts, matching batch IDs, and file order against the planner lists. The workflow pairs both file arrays and chromosome indexes with `zip()`, which rejects unequal counts before batch localization. These files remain typed outputs and inputs for the fit tasks.
+
+Use separate task `File` inputs when a command applies `sub()` to escape paths. In Cromwell 85, `sub(struct.member, ...)` can retain the cloud URI even after the file downloads. The batch task uses `sub(pgen, ...)`, `sub(pvar, ...)`, and `sub(psam, ...)` so the local paths reach the command. The unresolved-URI and readable-file checks still run before R or PLINK.
 
 Each task uses named CLI arguments. Optional arguments are added only when their Files are present. The aggregate task writes newline-delimited lists of the already localized companion Files inside its command. Cloud URIs in a table are metadata and cannot cause automatic localization. Required inputs must be supplied as explicit WDL Files. The commands and R scripts check that local input files are readable before computation. They report an unresolved cloud URI as a localization error.
 
@@ -112,6 +120,6 @@ miniwdl check workflows/SusieR2.wdl
 python3 tests/test_pgen_wdl.py .
 ```
 
-The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.
+The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. The WDL CI job also uses the command renderer in the pinned WOMtool 85 JAR to check the batch command with cloud File values and a local-path mapper. This catches the struct-member path error that a test with pre-localized inputs cannot detect. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.
 
-Normal image builds run one small installed-code smoke test: 48 samples, one PLINK extraction, one SuSiE fit, and aggregation. It checks extracted genotypes, inferred sample order, model outputs, and the chromosome gene manifest. The full regression and legacy parity suites remain available. To run them in GitHub Actions, start the **SuSiE PGEN image CI** workflow manually and enable `full_checks`. To run them in an existing image, use `bash tests/test_pgen_container.sh --full`. Automatic image builds still require a change to source installed in the image.
+Normal image builds run the MAC extraction check and one small installed-code smoke test: 48 samples, one PLINK extraction, one SuSiE fit, and aggregation. They check MAC boundaries, extracted genotypes, inferred sample order, model outputs, and the chromosome gene manifest. The full regression and legacy parity suites remain available. To run them in GitHub Actions, start the **SuSiE PGEN image CI** workflow manually and enable `full_checks`. To run them in an existing image, use `bash tests/test_pgen_container.sh --full`. Automatic image builds still require a change to source installed in the image.

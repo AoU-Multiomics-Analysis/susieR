@@ -9,6 +9,7 @@
   "SusieR2.BaseSeed": 1,
   "SusieR2.MemoryDebug": false,
   "SusieR2.MAF": 0.0,
+  "SusieR2.MAC": 0,
   "SusieR2.SelectTopPhenotypePerCluster": false,
   "SusieR2.TopPhenotypePvalueColumn": "qval",
   "SusieR2.DockerImage": "ghcr.io/aou-multiomics-analysis/susier/pgen:main",

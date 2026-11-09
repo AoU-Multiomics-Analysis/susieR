@@ -22,6 +22,8 @@ echo 'CHECK installed PGEN tools'
 plink2 --version
 bgzip --version
 tabix --version
+echo 'TEST optional MAC with real PLINK extraction'
+Rscript tests/test_pgen_mac.R .
 echo 'SMOKE one PLINK extraction, one SuSiE fit, and aggregation'
 Rscript tests/test_pgen_smoke.R .
 if [[ "$full_checks" != "true" ]]; then

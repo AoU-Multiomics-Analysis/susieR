@@ -32,6 +32,8 @@ with open(os.environ["PGEN_COMMAND_LOG"], "a") as output:
     output.write(json.dumps([Path(sys.argv[0]).name, *sys.argv[1:]]) + "\\n")
 if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen_smoke.R"]:
     raise SystemExit(42)
+if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_mac.R"]:
+    raise SystemExit(43)
 """
         for name in names:
             executable = directory / name
@@ -39,7 +41,7 @@ if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen
             executable.chmod(0o755)
         return log
 
-    def run_runner(self, arguments=(), fail_smoke=False):
+    def run_runner(self, arguments=(), fail_smoke=False, fail_mac=False):
         with tempfile.TemporaryDirectory(prefix="pgen-runner-") as directory:
             directory = Path(directory)
             log = self.recording_commands(directory, ("Rscript", "plink2", "bgzip", "tabix"))
@@ -48,6 +50,7 @@ if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen
                 PATH=str(directory) + os.pathsep + environment["PATH"],
                 PGEN_COMMAND_LOG=str(log),
                 FAIL_SMOKE="true" if fail_smoke else "false",
+                FAIL_MAC="true" if fail_mac else "false",
                 SUSIER_FUNCTIONS_PATH="/installed functions",
                 SUSIER_SCRIPTS_PATH="/installed scripts",
             )
@@ -58,11 +61,11 @@ if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen
             calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
             return result, calls
 
-    def test_default_runs_one_smoke_without_full_suites(self):
+    def test_default_runs_mac_and_smoke_without_full_suites(self):
         result, calls = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-        self.assertEqual(scripts, ["tests/test_pgen_smoke.R"])
+        self.assertEqual(scripts, ["tests/test_pgen_mac.R", "tests/test_pgen_smoke.R"])
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
         self.assertTrue(any(call[:2] == ["plink2", "--version"] for call in calls))
 
@@ -70,7 +73,9 @@ if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen
         result, calls = self.run_runner(["--full"])
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
+        self.assertEqual(scripts.count("tests/test_pgen_mac.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_smoke.R"), 1)
+        self.assertLess(scripts.index("tests/test_pgen_mac.R"), scripts.index("tests/test_pgen_smoke.R"))
         for suite in FULL_SUITES:
             self.assertEqual(scripts.count(suite), 1)
 
@@ -79,6 +84,15 @@ if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen
         self.assertEqual(result.returncode, 42, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
+
+    def test_mac_failure_stops_smoke_and_full_checks_in_both_modes(self):
+        for arguments in ([], ["--full"]):
+            with self.subTest(arguments=arguments):
+                result, calls = self.run_runner(arguments, fail_mac=True)
+                self.assertEqual(result.returncode, 43, result.stderr)
+                scripts = [call[1] for call in calls
+                           if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
+                self.assertEqual(scripts, ["tests/test_pgen_mac.R"])
 
     def test_unknown_or_extra_arguments_fail_before_running_tools(self):
         for arguments in (["--ful"], ["--full", "extra"], [""]):

@@ -18,6 +18,8 @@ tabix --version
 for script in plan_pgen_susie.R run_pgen_susie_batch.R aggregate_pgen_susie.R; do
   Rscript "${SUSIER_SCRIPTS_PATH}/${script}" --help
 done
+echo 'TEST optional MAC with real PLINK extraction'
+Rscript tests/test_pgen_mac.R .
 echo 'TEST real PGEN reader and per-gene parity'
 Rscript tests/run_pgen_reader_tests.R .
 Rscript tests/run_pgen_gene_tests.R .

@@ -53,11 +53,18 @@ makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version) {
     file.path(scripts_dir, c("plan_pgen_susie.R", "run_pgen_susie_batch.R",
                             "aggregate_pgen_susie.R")))
   pipeline <- purrr::map(setNames(source_paths, basename(source_paths)), file_record)
-  filter_mode <- if (!is.null(opt$variant_list)) "variant_list" else
-    if (!is.null(opt$ancestry) && opt$maf > 0) "ancestry_maf" else "none"
+  mac <- if (is.null(opt$mac)) 0 else opt$mac
+  filter_modes <- if (mac > 0) "mac" else character()
+  if (!is.null(opt$variant_list)) {
+    filter_modes <- c(filter_modes, "variant_list")
+  } else if (!is.null(opt$ancestry) && opt$maf > 0) {
+    filter_modes <- c(filter_modes, "ancestry_maf")
+  }
+  filter_mode <- if (length(filter_modes)) paste(filter_modes, collapse = "+") else "none"
   list(batch_id = batch_id, plink_version = plink_version, inputs = inputs,
     extracted_genotypes = purrr::map(setNames(batch_files, c("pgen", "pvar", "psam")), file_record),
-    settings = list(maf = opt$maf, variant_filter_mode = filter_mode,
+    settings = list(maf = opt$maf, mac = mac, variant_filter_mode = filter_mode,
+      mac_sample_scope = "all_input_pgen_samples", mac_include_nonfounders = TRUE,
       memory_debug = isTRUE(opt$memory_debug),
       cis_distance = opt$cis_distance, missing_code = opt$missing_code,
       select_top_phenotype_per_cluster = isTRUE(opt$select_top_phenotype_per_cluster),
@@ -134,6 +141,7 @@ makePgenBatchExperiment <- function(data) {
 runPgenSusieBatch <- function(opt) {
   previous_memory_debug <- options(susier.memory_debug = isTRUE(opt$memory_debug))
   on.exit(options(previous_memory_debug), add = TRUE)
+  if (is.null(opt$mac)) opt$mac <- 0
   required_names <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed",
                       "qtl_results", "covariates")
   if (any(vapply(opt[required_names], is.null, logical(1)))) {
@@ -158,6 +166,10 @@ runPgenSusieBatch <- function(opt) {
   valid_integer <- function(value, lower) {
     is.numeric(value) && length(value) == 1L && is.finite(value) &&
       value >= lower && value <= .Machine$integer.max && value == floor(value)
+  }
+  if (!valid_integer(opt$mac, 0)) {
+    stop("MAC must be a nonnegative integer no greater than ", .Machine$integer.max,
+         call. = FALSE)
   }
   if (!valid_integer(opt$cis_distance, 0) || !valid_integer(opt$base_seed, 0) ||
       !valid_integer(opt$plink_memory_mb, 64) ||
@@ -216,6 +228,13 @@ runPgenSusieBatch <- function(opt) {
                   "--extract", "range", regions_file, "--make-pgen",
                   "--threads", "1", "--memory", as.character(opt$plink_memory_mb),
                   "--out", pgen_prefix)
+  if (opt$mac > 0) {
+    plink_args <- c(plink_args, "--mac", as.character(opt$mac), "--nonfounders")
+    message("FILTER batch variants: MAC >= ", opt$mac,
+            " across all input PGEN samples, including nonfounders")
+  } else {
+    message("MAC filter disabled (MAC = 0)")
+  }
   message("EXTRACT batch cis windows with PLINK 2 (1-based inclusive ranges)")
   plink_log <- file.path(output_dir, "plink.stdout.log")
   status <- system2(plink, shQuote(plink_args), stdout = plink_log, stderr = plink_log)
@@ -331,6 +350,8 @@ batch_options <- list(
   batchOption("covariates"), batchOption("sample-list"), batchOption("missing-code"),
   batchOption("output-dir"), batchOption("cis-distance", "integer", 1000000L),
   batchOption("base-seed", "integer", 1L), batchOption("maf", "double", 0),
+  batchOption("mac", "double", 0,
+    help = "Minimum minor allele count across all input PGEN samples; 0 disables the filter"),
   batchOption("ancestry"), batchOption("variant-list"),
   batchOption("additional-genotypes"), batchOption("plink2", default = "plink2"),
   batchOption("plink-memory-mb", "integer", 1024L),

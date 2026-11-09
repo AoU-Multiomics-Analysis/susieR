@@ -20,6 +20,7 @@ Copy [the input example](../examples/inputs/SusieR2.inputs.json) and replace eac
 | `Ancestry` | Optional File | Ancestry table for ancestry MAF filtering. |
 | `VariantList` | Optional File | Variant selection list, with the existing loader's selection rules. |
 | `AdditionalGenotypes` | Optional File | Additional genotype BED for the existing data loader. |
+| `MAC` | Integer, default `0` | Minimum minor allele count for PGEN variants. `0` disables this filter. |
 
 Initial PGEN support is for diploid, biallelic variants on autosomes 1–22. The planner accepts chromosome aliases such as `1` and `chr1`. A gene cannot span chromosomes. The planner rejects missing chromosome inputs, duplicate chromosome IDs, ambiguous mappings, and duplicate phenotype IDs.
 
@@ -42,6 +43,7 @@ When `SampleList` is omitted, sample selection uses IDs rather than phenotype va
 | `BaseSeed` | 1 |
 | `MemoryDebug` | false |
 | `MAF` | 0 |
+| `MAC` | 0 (off) |
 | `SelectTopPhenotypePerCluster` | false |
 | `TopPhenotypePvalueColumn` | `qval` |
 | `DockerImage` | `ghcr.io/aou-multiomics-analysis/susier/pgen:main` |
@@ -57,6 +59,10 @@ Select an image digest through `DockerImage` when a fixed image is required. Kee
 Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` to enable object-size reports and two extra garbage collections per fit. For a local PGEN batch, add `--memory-debug`. The legacy `susie.R` command accepts `--memory_debug true`. Direct R callers can use `options(susier.memory_debug = TRUE)`. The default keeps progress and error logs, variant diagnostics, and the three garbage collections after large matrices are removed. This setting does not change model calculations. A batch restores the caller's R option when it returns or fails.
 
 The planner sorts genes by chromosome and position. It derives each feature position from `floor((BED start + BED end) / 2)`. Cis windows use inclusive coordinates, with the query start clamped to 1. PLINK uses `--extract range` for these 1-based regions. Disjoint windows retain their gaps. Extraction retains the complete genotype sample cohort. Ancestry MAF filtering therefore runs before the phenotype sample subset. The fit keeps the existing phenotype missing-value behavior. The initial image and batch command use one BLAS thread for reproducible arithmetic.
+
+Set `SusieR2.MAC` to a positive integer to enable the minor allele count filter. For example, `"SusieR2.MAC": 5` keeps PGEN variants with a count of at least 5. The batch adds `--mac 5 --nonfounders` to PLINK during cis-window extraction. Counts use all samples in the input PGEN, including nonfounders, before phenotype sample selection. The filter uses PLINK's allele dosage sums; these are allele counts for hard-call genotypes. For the supported biallelic variants, PLINK's default nonmajor count is the minor allele count. See the [PLINK allele count filter](https://www.cog-genomics.org/plink/2.0/filter#mac).
+
+`MAC` must be a nonnegative integer. With `MAC = 0`, the batch adds no PLINK MAC filter. The MAC filter runs before the existing ancestry MAF or variant-list filter, so a variant list cannot restore a variant removed by MAC. It applies to PGEN variants; variants supplied through `AdditionalGenotypes` keep their existing handling. Each gene's provenance records the threshold and sample scope. The direct batch CLI uses `--mac 5` and also defaults to `0`.
 
 Seeds depend on the base seed, original gene ID, and original outcome ID. They do not depend on batch size, input order, or output paths. Changing batch size preserves the seed for each outcome. Each RDS contains a named list of that gene's outcome fits.
 

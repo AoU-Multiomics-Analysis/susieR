@@ -30,6 +30,10 @@ echo 'TEST shared PGEN MAC and AN call-rate QC'
 Rscript tests/test_pgen_qc.R .
 echo 'TEST upstream batch PGEN preparation and provenance'
 Rscript tests/test_pgen_preparation.R .
+echo 'TEST PGEN reader and native mean imputation'
+Rscript tests/run_pgen_reader_tests.R .
+echo 'TEST adaptive prepared-genotype caches and fit agreement'
+Rscript tests/run_pgen_cache_tests.R .
 echo 'SMOKE one PLINK extraction, one SuSiE fit, and aggregation'
 Rscript tests/test_pgen_smoke.R .
 if [[ "$full_checks" != "true" ]]; then
@@ -40,8 +44,7 @@ echo 'FULL installed-code regression and parity checks'
 for script in plan_pgen_susie.R filter_pgen_susie.R prepare_pgen_susie.R run_pgen_susie_batch.R aggregate_pgen_susie.R; do
   Rscript "${SUSIER_SCRIPTS_PATH}/${script}" --help
 done
-echo 'TEST real PGEN reader and per-gene parity'
-Rscript tests/run_pgen_reader_tests.R .
+echo 'TEST real PGEN per-gene parity'
 Rscript tests/run_pgen_gene_tests.R .
 echo 'TEST planning and strict aggregation'
 Rscript tests/run_pgen_batch_tests.R .

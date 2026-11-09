@@ -16,7 +16,7 @@ UTILS = {
     "ImportFunctions.R", "InitFunctions.R", "MemoryHelpers.R", "OptParser.R",
     "SusiePerformance.R", "PgenRuntime.R", "SusieFunctions.R", "PgenFunctions.R",
     "SusieOutputFunctions.R", "PgenGeneFunctions.R", "PgenBatchFunctions.R", "PgenQcFunctions.R",
-    "PgenPreparationFunctions.R",
+    "PgenPreparationFunctions.R", "PgenCacheFunctions.R",
 }
 SCRIPTS = {
     "plan_pgen_susie.R", "run_pgen_susie_batch.R", "aggregate_pgen_susie.R",

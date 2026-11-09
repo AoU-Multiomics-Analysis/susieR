@@ -19,4 +19,6 @@ if (length(missing_packages)) {
 }
 source(file.path(repo_dir, "tests", "test_pgen_reader.R"))
 run_pgen_reader_tests(repo_dir)
+source(file.path(repo_dir, "tests", "test_pgen_native_imputation.R"))
+run_pgen_native_imputation_tests(repo_dir)
 message("All PGEN reader tests passed.")

@@ -172,21 +172,33 @@ run_pgen_gene_tests <- function(repo_dir) {
     meta <- as.data.frame(SummarizedExperiment::rowData(input_se))
     pos <- meta$phenotype_pos[meta$phenotype_id == trait]
     gt <- raw[positions >= max(1L, pos - distance) & positions <= pos + distance, , drop = FALSE]
-    if (policy == "-1") gt[is.na(gt)] <- -1
+    # Native imputation is independent of the legacy missing sentinel. Use the
+    # NA reference so missing calls cannot cancel real ALT counts in filtering.
+    reference_policy <- if (is.null(additional)) "NA" else policy
+    if (reference_policy == "-1") gt[is.na(gt)] <- -1
     filtered <- filterMAF(gt, ancestry, MAF_threshold = maf, variant_list = variant_list)
     reference_input <- filtered
     if (tabix) {
       tsv <- file.path(temp, paste0("dosage-", policy, ".tsv"))
       dosage <- data.frame(CHROM = "1", POS = positions, REF = "A", ALT = "G") |>
-        bind_cols(as.data.frame(if (policy == "-1") replace(raw, is.na(raw), -1) else raw))
+        bind_cols(as.data.frame(if (reference_policy == "-1") replace(raw, is.na(raw), -1) else raw))
       data.table::fwrite(dosage, tsv, sep = "\t", quote = FALSE, na = "NA", nThread = 1L)
       reference_input <- Rsamtools::bgzip(tsv, dest = paste0(tsv, ".bgz"), overwrite = TRUE)
       Rsamtools::indexTabix(reference_input, seq = 1L, start = 2L, end = 2L, skip = 1L, zeroBased = FALSE)
     }
+    # The PGEN path now discards all-missing variants under either missing-code
+    # policy. Compare native and R imputation on that same retained variant set.
+    reference_imputer <- if (is.null(additional)) {
+      function(mat, missing_value) {
+        keep <- rowSums(!is.na(mat) & mat != missing_value) > 0L
+        impute_matrix_rowmean(mat[keep, , drop = FALSE], missing_value)
+      }
+    } else NULL
     set.seed(181L)
     reference <- finemapPhenotype(trait, input_se, reference_input, cov, distance,
                                   ancestry_data = ancestry, MAF = maf, variant_list = variant_list,
-                                  additional_genotypes = additional)
+                                  additional_genotypes = additional,
+                                  genotype_imputer = reference_imputer)
     expected_rng <- .Random.seed
     set.seed(181L)
     actual <- finemapPgenPhenotype(trait, input_se, reader, cov, distance, policy,
@@ -204,6 +216,33 @@ run_pgen_gene_tests <- function(repo_dir) {
       invisible(compare_path(policy = policy))
       invisible(compare_path(policy = policy, tabix = TRUE, distance = 90L))
     }
+  })
+  run_named_test("PGEN fits impute on the first read without repeating R imputation", {
+    reads <- new.env(parent = emptyenv())
+    reads$native <- 0L
+    reads$hardcall <- 0L
+    reads$legacy <- 0L
+    record <- function(field) substitute({
+      .read_counter <- counter
+      .read_counter[[key]] <- .read_counter[[key]] + 1L
+    }, list(counter = reads, key = field))
+    imputation_environment <- environment(finemapPhenotype)
+    suppressMessages(trace("ReadList", tracer = record("native"),
+      where = asNamespace("pgenlibr"), print = FALSE))
+    suppressMessages(trace("ReadIntList", tracer = record("hardcall"),
+      where = asNamespace("pgenlibr"), print = FALSE))
+    suppressMessages(trace("impute_matrix_rowmean", tracer = record("legacy"),
+      where = imputation_environment, print = FALSE))
+    tryCatch({
+      # This window has no entirely missing variants, so no native retry is needed.
+      invisible(compare_path(trait = "trait2", distance = 70L))
+      stopifnot(reads$native == 1L, reads$hardcall == 0L,
+                reads$legacy == 1L) # R imputation runs only in the reference fit.
+    }, finally = {
+      suppressMessages(untrace("ReadList", where = asNamespace("pgenlibr")))
+      suppressMessages(untrace("ReadIntList", where = asNamespace("pgenlibr")))
+      suppressMessages(untrace("impute_matrix_rowmean", where = imputation_environment))
+    })
   })
   run_named_test("full-cohort ancestry MAF and external list precedence and order", {
     full_maf <- filterMAF(raw, ancestry, MAF_threshold = 0.1)

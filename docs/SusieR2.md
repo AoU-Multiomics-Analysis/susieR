@@ -35,6 +35,56 @@ The planner validates the manifest without opening its genotype locations and pr
 
 When `SampleList` is omitted, sample selection uses IDs rather than phenotype values. Genotype-only and phenotype-only samples are excluded, while phenotype missing values retain their existing handling. Covariates must cover every retained sample; they do not silently reduce the cohort. A supplied list keeps its existing order and selection behavior. The PGEN reader and ancestry MAF calculation retain the complete genotype cohort before the phenotype subset. Additional-genotype sample restrictions still apply afterward. Provenance records the initial selection mode, PSAM/list order rule, sample count, and cohort hash before any additional-genotype restriction.
 
+PGEN-only fits use `pgenlibr::ReadList(meanimpute = TRUE)` with the exact analysis
+samples. The fitting helper skips repeated R imputation. A native all-missing
+variant error removes that variant and retries the affected read. Other native
+errors propagate. Existing empty-window handling is unchanged.
+
+Each batch selects a prepared-genotype cache mode before reading genotypes.
+The cache stores mean-imputed, centered, covariate-adjusted columns; phenotype
+residualization and SuSiE fitting remain separate for each feature. Selection
+uses physical PGEN indices and the actual gene/outcome execution order. It does
+not depend on the assay name. Cache contents do not enter saved fitted models.
+
+`GenotypeCacheMode = "auto"` first selects whole-batch caching when the combined
+variants fit the budget and reading them once avoids at least 50% of repeated
+variant reads. Otherwise it selects rolling caching when the largest window
+fits and retaining the previous window avoids at least 50% of reads. Otherwise
+it uses no caching. Whole mode prepares each distinct batch variant once.
+Rolling mode releases variants outside the next window, retains prepared
+overlap, and reads and prepares only new variants. No-cache mode uses the
+existing per-feature path.
+
+The automatic cache limit is 20% of `BatchMemoryGB`. Set
+`GenotypeCacheMemoryGB` to a positive decimal-GB limit to replace it. The estimate
+includes numeric cache columns (`8 * samples * variants` bytes) and bounded
+preparation buffers. The fit's working memory is separate; these rules are not a
+peak-memory guarantee. Explicit modes `whole`, `rolling`, and `none` support
+controlled comparisons. Forced caching must fit its memory limit. Automatic
+mode uses no caching with active ancestry MAF, a variant list, or additional
+genotypes; forced caching rejects these preparation paths.
+
+Cached fits preserve the existing numerical safeguard for a genotype or
+phenotype almost fully explained by covariates. Such a feature uses the existing
+full-window calculation. Other features can continue using the prepared cache.
+The cache is released when the batch returns or fails. Logs and
+`GenotypeCacheReports` record the selected mode, reason, budget, estimated
+storage, read/preparation counts, reuse, eviction, and guarded recomputations.
+
+For cached fits, cache access and preparation are included in the
+`data_preparation` timer. Loading, preparation, and fitting events remain in the
+outcome logs and tables. A guarded recomputation adds its stages to the earlier
+cache-check time. No-cache timing scopes retain their existing behavior.
+
+Active ancestry MAF filtering needs the original full-cohort calls before
+imputation. That input path retains the raw read, filters the variants, and
+then reads variants with missing calls through native imputation on the fit
+samples. Inputs with additional genotypes retain their existing merged-matrix
+preparation. Temporary subset readers close after each call. `ReadList()` uses
+stored dosages, so native imputation expects the input dosages to match the
+integer hard calls. PGEN-only filtering uses `NA` missing calls before native
+imputation, so the legacy `-1` sentinel cannot cancel observed ALT counts.
+
 ## Settings
 
 | Input | Default |
@@ -43,6 +93,8 @@ When `SampleList` is omitted, sample selection uses IDs rather than phenotype va
 | `CisDistance` | 1000000 bases |
 | `BaseSeed` | 1 |
 | `MemoryDebug` | false |
+| `GenotypeCacheMode` | auto |
+| `GenotypeCacheMemoryGB` | 0 (20% of task memory) |
 | `MAF` | 0 |
 | `MAC` | 0 (off) |
 | `MinCallRate` | 0.95 |
@@ -107,6 +159,7 @@ The workflow returns these combined tables:
 - `SusieParquet`: selected variant results.
 - `CredibleSetsParquet`: credible-set results.
 - `OutcomeIndex`: every expected outcome, including outcomes with no credible sets and fits that did not converge.
+- `GenotypeCacheReports`: one JSON decision and runtime-counter report per batch.
 - `CovariateExplainedVariants`: covariate-explained variant diagnostics.
 - `ExpectedOutcomes` and `BatchIndex`: planner tables for checking batch ownership.
 - `PreparedPgenManifest`: a headered manifest with the selected chromosome locations for later reuse. Set both QC thresholds to 0 when using already prepared files to avoid another QC pass.

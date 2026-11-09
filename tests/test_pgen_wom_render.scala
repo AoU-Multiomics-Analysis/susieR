@@ -52,10 +52,11 @@ object PgenWomRender extends App {
             field -> inputValue(fieldType, field)
           }, composite)
         case WomBooleanType => WomBoolean(includeOptional)
-        case WomIntegerType => WomInteger(if (name == "mac") {
+        case WomIntegerType => WomInteger(if (name == "memory_gb") 24 else if (name == "mac") {
           if (includeOptional) 5 else 0
         } else 1)
-        case WomFloatType => WomFloat(if (name == "min_call_rate") 0.95 else 0.0)
+        case WomFloatType => WomFloat(if (name == "min_call_rate") 0.95
+          else if (name == "cache_memory_gb") 3.25 else 0.0)
         case WomStringType =>
           WomString(if (name == "missing_code") "-1" else "qval 'quoted' $(touch PWNED) `touch PWNED`")
         case other => sys.error("Unsupported fixture input type: " + other)
@@ -135,6 +136,15 @@ if sys.argv[1].endswith('/prepare_pgen_susie.R'):
         val threadsIndex = actual.indexOf("--threads")
         assert(threadsIndex >= 0 && actual(threadsIndex + 1) == "1",
           "Thread limit did not reach the batch CLI")
+        val modeIndex = actual.indexOf("--genotype-cache-mode")
+        assert(modeIndex >= 0 && actual(modeIndex + 1) == inputs.find(_._1.name == "genotype_cache_mode").get._2.valueString,
+          "Genotype cache mode was not safely quoted")
+        val cacheMemoryIndex = actual.indexOf("--genotype-cache-memory-gb")
+        assert(cacheMemoryIndex >= 0 && actual(cacheMemoryIndex + 1).toDouble == 3.25,
+          "Genotype cache memory did not reach the batch CLI")
+        val jobMemoryIndex = actual.indexOf("--job-memory-gb")
+        assert(jobMemoryIndex >= 0 && actual(jobMemoryIndex + 1).toDouble == 24.0,
+          "Allocated task memory did not reach the batch CLI")
       } else {
         assert(actual.find(_.startsWith("--min-call-rate=")).get.split("=", 2)(1).toDouble == 0.95,
           "Call-rate threshold did not reach the QC CLI")

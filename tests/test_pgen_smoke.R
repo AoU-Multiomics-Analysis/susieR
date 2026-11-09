@@ -130,12 +130,14 @@ run_pgen_smoke <- function() {
     "--worklist", worklists[[1L]], "--phenotype-bed", beds[[1L]],
     "--qtl-results", qtl, "--covariates", covariates, "--cis-distance", "100",
     "--base-seed", "82", "--plink2", file.path(directory, "does-not-exist-plink"), "--missing-code=NA",
+    "--genotype-cache-mode", "none", "--genotype-cache-memory-gb", "0",
+    "--job-memory-gb", "16", "--threads", "2",
     "--output-dir", batch_dir
   )
   invoke("run_pgen_susie_batch.R", c(batch_args, "--pgen", "gs://bucket/input.pgen"),
          "unlocalized_input", "localization error")
   # No sample-list argument: use the genotype/phenotype intersection in PSAM order.
-  batch_output <- invoke("run_pgen_susie_batch.R", c(batch_args, "--threads", "2"), "batch")
+  batch_output <- invoke("run_pgen_susie_batch.R", batch_args, "batch")
   extracted_files <- shards
   stopifnot(!file.exists(file.path(batch_dir, "batch.genotypes.pgen")),
     !file.exists(file.path(batch_dir, "plink.stdout.log")))
@@ -160,6 +162,26 @@ run_pgen_smoke <- function() {
     identical(fitted$variant_id, variant_ids[keep]),
     length(fitted$pip) == sum(keep), all(is.finite(fitted$pip)),
     all(fitted$pip >= 0 & fitted$pip <= 1))
+  decision <- jsonlite::read_json(file.path(batch_dir, "batch.genotype_cache.json"),
+                                  simplifyVector = TRUE)
+  stopifnot(identical(decision$selection$mode, "none"),
+            identical(decision$selection$requested_mode, "none"))
+  for (mode in c("whole", "rolling", "auto")) {
+    mode_dir <- file.path(directory, paste0("batch-", mode))
+    mode_args <- batch_args
+    mode_args[match("--genotype-cache-mode", mode_args) + 1L] <- mode
+    mode_args[match("--output-dir", mode_args) + 1L] <- mode_dir
+    invoke("run_pgen_susie_batch.R", mode_args, paste0("batch-", mode))
+    cache_report <- jsonlite::read_json(file.path(mode_dir, "batch.genotype_cache.json"),
+                                       simplifyVector = TRUE)
+    expected_mode <- if (mode == "auto") "none" else mode # One fit has no repeated reads.
+    stopifnot(identical(cache_report$selection$mode, expected_mode),
+              identical(cache_report$selection$requested_mode, mode))
+    mode_rds <- list.files(file.path(mode_dir, "genes"), pattern = "_susie[.]rds$",
+                            recursive = TRUE, full.names = TRUE)
+    stopifnot(length(mode_rds) == 1L,
+              isTRUE(all.equal(readRDS(mode_rds[[1L]]), fits, tolerance = 1e-10)))
+  }
   provenance_files <- gene_files[grepl("[.]provenance[.]json$", gene_files)]
   stopifnot(length(provenance_files) == 1L)
   provenance <- jsonlite::read_json(provenance_files[[1L]], simplifyVector = TRUE)

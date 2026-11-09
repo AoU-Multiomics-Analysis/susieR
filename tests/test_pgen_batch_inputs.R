@@ -5,6 +5,16 @@ repo_dir <- normalizePath(getwd())
 scripts_dir <- Sys.getenv("SUSIER_SCRIPTS_PATH", file.path(repo_dir, "R", "scripts"))
 source(file.path(scripts_dir, "run_pgen_susie_batch.R"))
 
+check_cache_execution_order <- function() {
+  interleaved <- tibble::tibble(gene_id = c("a", "b", "a", "b"),
+    outcome_id = c("a1", "b1", "a2", "b2"), window_start = c(1L, 100L, 2L, 101L))
+  ordered <- pgenBatchExecutionWorklist(interleaved)
+  stopifnot(identical(ordered$outcome_id, c("a1", "a2", "b1", "b2")),
+            identical(ordered$window_start, c(1L, 2L, 100L, 101L)))
+  stopifnot(identical(pgenBatchExecutionWorklist(ordered), ordered))
+}
+check_cache_execution_order()
+
 check_additional_ownership <- function() {
   # Catch loss of ownership, row/sample reordering, sentinel changes, and NULL
   # replacement of a zero-row matrix (which would skip sample intersection).

@@ -296,6 +296,54 @@ class PgenWdlTests(unittest.TestCase):
                                        overrides={'mac': mac, 'min_call_rate': call_rate})
                 self.assertIn('--mac=' + str(threshold), payload['args'])
 
+    def test_genotype_cache_defaults_and_batch_forwarding(self):
+        inputs = {decl.name: decl for decl in self.doc.workflow.inputs}
+        self.assertIsInstance(inputs['GenotypeCacheMode'].type, WDL.Type.String)
+        self.assertEqual(inputs['GenotypeCacheMode'].expr.eval(
+            WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 'auto')
+        self.assertIsInstance(inputs['GenotypeCacheMemoryGB'].type, WDL.Type.Float)
+        self.assertEqual(inputs['GenotypeCacheMemoryGB'].expr.eval(
+            WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 0.0)
+        batch = next(node for node in walk(self.doc.workflow)
+                     if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        for mode in ('auto', 'whole', 'rolling', 'none'):
+            with self.subTest(mode=mode):
+                env = WDL.Env.Bindings().bind('GenotypeCacheMode', WDL.Value.String(mode))
+                env = env.bind('GenotypeCacheMemoryGB', WDL.Value.Float(3.25))
+                self.assertEqual(batch.inputs['genotype_cache_mode'].eval(
+                    env, WDL.StdLib.Base('1.0')).value, mode)
+                self.assertEqual(batch.inputs['cache_memory_gb'].eval(
+                    env, WDL.StdLib.Base('1.0')).value, 3.25)
+
+    def test_genotype_cache_cli_receives_task_memory_and_quoted_mode(self):
+        task = self.tasks['RunPgenSusieBatch']
+        for mode in ('auto', 'whole', 'rolling', 'none',
+                     "auto 'quoted' $(touch PWNED) `touch PWNED`"):
+            with self.subTest(mode=mode):
+                payload = self.execute(task, overrides={
+                    'genotype_cache_mode': WDL.Value.String(mode),
+                    'cache_memory_gb': WDL.Value.Float(3.25),
+                    'memory_gb': WDL.Value.Int(24),
+                })
+                args = payload['args']
+                self.assertEqual(args[args.index('--genotype-cache-mode') + 1], mode)
+                self.assertEqual(float(args[args.index('--genotype-cache-memory-gb') + 1]), 3.25)
+                self.assertEqual(float(args[args.index('--job-memory-gb') + 1]), 24)
+
+    def test_genotype_cache_reports_are_collected_as_task_files(self):
+        task_outputs = {decl.name: decl for decl in self.tasks['RunPgenSusieBatch'].outputs}
+        report = task_outputs['GenotypeCacheReport']
+        self.assertIsInstance(report.type, WDL.Type.File)
+        self.assertEqual(report.expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value,
+                         'batch/batch.genotype_cache.json')
+        workflow_outputs = {decl.name: decl for decl in self.doc.workflow.outputs}
+        reports = workflow_outputs['GenotypeCacheReports']
+        self.assertEqual(str(reports.type), 'Array[File]')
+        uris = ['gs://outputs/batch_1/cache.json', 'gs://outputs/batch_2/cache.json']
+        values = WDL.Value.from_json(WDL.Type.Array(WDL.Type.File()), uris)
+        env = WDL.Env.Bindings().bind('RunPgenSusieBatch.GenotypeCacheReport', values)
+        self.assertEqual(reports.expr.eval(env, WDL.StdLib.Base('1.0')).json, uris)
+
     def manifest_files(self):
         rows = next(node for node in walk(self.doc.workflow)
                     if isinstance(node, WDL.Tree.Decl) and node.name == 'pgen_rows')

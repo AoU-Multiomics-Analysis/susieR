@@ -25,6 +25,8 @@ workflow SusieR2 {
     Int CisDistance = 1000000
     Int BaseSeed = 1
     Boolean MemoryDebug = false
+    String GenotypeCacheMode = "auto"
+    Float GenotypeCacheMemoryGB = 0.0
     Float MAF = 0.0
     Int MAC = 0
     Float MinCallRate = 0.95
@@ -145,6 +147,8 @@ workflow SusieR2 {
         mac = 0,
         base_seed = BaseSeed,
         memory_debug = MemoryDebug,
+        genotype_cache_mode = GenotypeCacheMode,
+        cache_memory_gb = GenotypeCacheMemoryGB,
         select_top_phenotype_per_cluster = SelectTopPhenotypePerCluster,
         top_phenotype_pvalue_column = TopPhenotypePvalueColumn,
         plink_memory_mb = PlinkMemoryMB,
@@ -202,6 +206,7 @@ workflow SusieR2 {
     Array[File] BatchPvars = batch_pvar
     Array[File] BatchPsams = batch_psam
     Array[File] BatchPreparationReports = batch_preparation_manifest
+    Array[File] GenotypeCacheReports = RunPgenSusieBatch.GenotypeCacheReport
     Array[File] GeneRds = flatten(RunPgenSusieBatch.GeneRds)
     Array[File] GeneParquets = flatten(RunPgenSusieBatch.GeneParquets)
     Array[File] GeneTsvs = flatten(RunPgenSusieBatch.GeneTsvs)
@@ -451,6 +456,8 @@ task RunPgenSusieBatch {
     Int mac = 0
     Int base_seed
     Boolean memory_debug
+    String genotype_cache_mode
+    Float cache_memory_gb
     Boolean select_top_phenotype_per_cluster
     String top_phenotype_pvalue_column
     Int plink_memory_mb
@@ -494,6 +501,9 @@ task RunPgenSusieBatch {
       --maf '~{maf}'
       '--mac=~{mac}'
       --base-seed '~{base_seed}'
+      --genotype-cache-mode '~{sub(genotype_cache_mode, "'", "'\"'\"'")}'
+      --genotype-cache-memory-gb '~{cache_memory_gb}'
+      --job-memory-gb '~{memory_gb}'
       --plink-memory-mb '~{plink_memory_mb}'
       --threads '~{threads}'
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'
@@ -533,6 +543,7 @@ task RunPgenSusieBatch {
     File CredibleSets = "batch/batch.credible_sets.parquet"
     File OutcomeIndex = "batch/batch.outcome_index.tsv"
     File Diagnostics = "batch/batch.covariate_explained_variants.tsv"
+    File GenotypeCacheReport = "batch/batch.genotype_cache.json"
     Array[File] GeneRds = glob("batch/genes/*/*_susie.rds")
     Array[File] GeneParquets = glob("batch/genes/*/*.parquet")
     Array[File] GeneTsvs = glob("batch/genes/*/*.tsv")

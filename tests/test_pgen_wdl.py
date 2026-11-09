@@ -27,10 +27,13 @@ GENE_URI_INPUTS = {
     'gene_provenance_uris': 'GeneProvenance',
 }
 GENE_URI_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in GENE_URI_INPUTS}
-LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files') + tuple(GENE_URI_FLAGS)
+PGEN_METADATA_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in
+                       ('pgen_chromosomes', 'pgen_uris', 'pvar_uris', 'psam_uris')}
+METADATA_INPUTS = set(GENE_URI_INPUTS) | set(PGEN_METADATA_FLAGS.values())
+LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files') + tuple(GENE_URI_FLAGS) + tuple(PGEN_METADATA_FLAGS)
 FILE_NAMES = {'pgen_manifest', 'phenotype_bed', 'qtl_results', 'gene_map', 'worklist', 'covariates', 'sample_list',
-              'ancestry', 'variant_list', 'additional_genotypes', 'expected_outcomes', 'pgen', 'pvar', 'psam'}
-OPTIONAL_FILES = {'gene_map', 'sample_list', 'ancestry', 'variant_list', 'additional_genotypes'}
+              'ancestry', 'variant_list', 'additional_genotypes', 'genotype_qc_report', 'expected_outcomes', 'pgen', 'pvar', 'psam'}
+OPTIONAL_FILES = {'gene_map', 'sample_list', 'ancestry', 'variant_list', 'additional_genotypes', 'genotype_qc_report'}
 
 
 def walk(node):
@@ -193,19 +196,25 @@ class PgenWdlTests(unittest.TestCase):
         WDL.values_from_json(absent, self.doc.workflow.available_inputs,
                              self.doc.workflow.required_inputs, namespace='SusieR2')
 
-    def test_mac_defaults_off_and_reaches_the_batch_cli(self):
+    def test_shared_qc_defaults_and_threshold_forwarding(self):
         inputs = {decl.name: decl for decl in self.doc.workflow.inputs}
         self.assertIn('MAC', inputs)
         self.assertIsInstance(inputs['MAC'].type, WDL.Type.Int)
         self.assertEqual(inputs['MAC'].expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 0)
+        self.assertIn('MinCallRate', inputs)
+        self.assertEqual(inputs['MinCallRate'].expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 0.95)
+        qc_call = next(node for node in walk(self.doc.workflow)
+                       if isinstance(node, WDL.Tree.Call) and node.name == 'FilterPgen')
         call = next(node for node in walk(self.doc.workflow)
                     if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
         for threshold in (0, 5):
             with self.subTest(mac=threshold):
                 env = WDL.Env.Bindings().bind('MAC', WDL.Value.Int(threshold))
-                forwarded = call.inputs['mac'].eval(env, WDL.StdLib.Base('1.0'))
+                forwarded = qc_call.inputs['mac'].eval(env, WDL.StdLib.Base('1.0'))
                 self.assertEqual(forwarded.value, threshold)
-                payload = self.execute(self.tasks['RunPgenSusieBatch'], overrides={'mac': forwarded})
+                self.assertEqual(call.inputs['mac'].eval(env, WDL.StdLib.Base('1.0')).value, 0,
+                                 'Batches must not repeat shared MAC filtering')
+                payload = self.execute(self.tasks['FilterPgen'], overrides={'mac': forwarded})
                 self.assertIn('--mac=' + str(threshold), payload['args'])
 
     def manifest_files(self):
@@ -222,7 +231,7 @@ class PgenWdlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='susier-manifest-rows-') as temporary:
             normalized = pathlib.Path(temporary) / 'chromosome_pgens.tsv'
             normalized.write_text(''.join('\t'.join(row) + '\n' for row in values))
-            env = WDL.Env.Bindings().bind('PlanPgenSusie.NormalizedManifest',
+            env = WDL.Env.Bindings().bind('PlanPgenSusie.UniquePgenManifest',
                                           WDL.Value.File(str(normalized)))
             parsed = rows.expr.eval(env, CommandStdLib('1.0'))
         self.assertEqual(parsed.json, values)
@@ -246,12 +255,73 @@ class PgenWdlTests(unittest.TestCase):
             self.execute(self.tasks['RunPgenSusieBatch'], overrides={
                 name: file_bundle.value[name] for name in ('pgen', 'pvar', 'psam')})
 
+    def test_shared_qc_reuses_files_and_reports_across_batches(self):
+        sources = self.manifest_files()
+        source_scatter = next(node for node in walk(self.doc.workflow)
+                              if isinstance(node, WDL.Tree.Scatter) and node.variable == 'pgen_row')
+        condition = next(node for node in walk(source_scatter) if isinstance(node, WDL.Tree.Conditional))
+        qc_calls = [node for node in walk(source_scatter)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'FilterPgen']
+        self.assertEqual(len(qc_calls), 1)
+        self.assertFalse(any(isinstance(node, WDL.Tree.Call) and node.name == 'FilterPgen'
+                             for node in walk(self.batch_scatter())),
+                         'QC must not run inside the batch scatter')
+        file_declarations = {node.name: node for node in walk(source_scatter)
+                             if isinstance(node, WDL.Tree.Decl) and node.name.startswith('prepared_')}
+        batch_call = next(node for node in walk(self.doc.workflow)
+                          if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        index = next(node for node in walk(self.batch_scatter())
+                     if isinstance(node, WDL.Tree.Decl) and node.name == 'chromosome_index')
+        for mac, rate, enabled in ((0, 0.0, False), (0, .95, True), (5, 0.0, True)):
+            with self.subTest(mac=mac, min_call_rate=rate):
+                switches = WDL.Env.Bindings().bind('MAC', WDL.Value.Int(mac))
+                switches = switches.bind('MinCallRate', WDL.Value.Float(rate))
+                self.assertEqual(condition.expr.eval(switches, WDL.StdLib.Base('1.0')).value, enabled)
+                prepared, reports = [], []
+                for i, source in enumerate(sources.value):
+                    env = switches.bind('chromosome_pgen', source)
+                    for role, output in (('pgen', 'Pgen'), ('pvar', 'Pvar'), ('psam', 'Psam')):
+                        uri = 'gs://qc/filtered_%d.%s' % (i, role)
+                        env = env.bind('FilterPgen.' + output,
+                                       WDL.Value.File(uri) if enabled else WDL.Value.Null())
+                        declaration = file_declarations['prepared_' + role]
+                        selected = declaration.expr.eval(env, WDL.StdLib.Base('1.0')).coerce(declaration.type)
+                        self.assertIsInstance(selected, WDL.Value.File)
+                        self.assertEqual(selected.value, uri if enabled else source.value[role].value)
+                        env = env.bind(declaration.name, selected)
+                    declaration = file_declarations['prepared_files']
+                    prepared.append(declaration.expr.eval(env, WDL.StdLib.Base('1.0')).coerce(declaration.type))
+                    reports.append('gs://qc/report_%d.json' % i if enabled else None)
+                env = WDL.Env.Bindings().bind('ChromosomePgens', WDL.Value.Array(sources.type.item_type, prepared))
+                env = env.bind('FilterPgen.Report', WDL.Value.from_json(
+                    WDL.Type.Array(WDL.Type.File(optional=True)), reports))
+                for name, values, typ in (
+                    ('Worklists', ['gs://plan/a.tsv', 'gs://plan/b.tsv', 'gs://plan/c.tsv'], WDL.Type.File()),
+                    ('PhenotypeBeds', ['gs://plan/a.bed', 'gs://plan/b.bed', 'gs://plan/c.bed'], WDL.Type.File()),
+                    ('BatchPgenIndices', [0, 0, 1], WDL.Type.Int()),
+                    ('Chromosomes', ['1', '2', '3'], WDL.Type.String()),
+                ):
+                    env = env.bind('PlanPgenSusie.' + name, WDL.Value.from_json(WDL.Type.Array(typ), values))
+                scatter = self.batch_scatter()
+                for batch, expected in zip(scatter.expr.eval(env, WDL.StdLib.Base('1.0')).value, (0, 0, 1)):
+                    iteration = env.bind(scatter.variable, batch)
+                    iteration = iteration.bind(index.name, index.expr.eval(iteration, WDL.StdLib.Base('1.0')))
+                    for role in ('pgen', 'pvar', 'psam'):
+                        actual = batch_call.inputs[role].eval(iteration, WDL.StdLib.Base('1.0'))
+                        self.assertIsInstance(actual, WDL.Value.File)
+                        self.assertEqual(actual.value, prepared[expected].value[role].value)
+                    actual_report = batch_call.inputs['genotype_qc_report'].eval(iteration, WDL.StdLib.Base('1.0'))
+                    self.assertEqual(actual_report.json, reports[expected])
+                    self.assertEqual(batch_call.inputs['mac'].eval(iteration, WDL.StdLib.Base('1.0')).value, 0)
+
     def test_batch_indices_select_matching_typed_chromosome_files(self):
         # Input order differs from genomic order; two batches reuse chromosome 1.
         files = self.manifest_files()
         env = WDL.Env.Bindings().bind('ChromosomePgens', files)
-        env = env.bind('PlanPgenSusie.ChromosomeIndices',
+        env = env.bind('PlanPgenSusie.BatchPgenIndices',
                        WDL.Value.from_json(WDL.Type.Array(WDL.Type.Int()), [1, 1, 0]))
+        env = env.bind('PlanPgenSusie.Chromosomes',
+                       WDL.Value.from_json(WDL.Type.Array(WDL.Type.String()), ['1', '1', '2']))
         for output, extension in (('Worklists', 'tsv'), ('PhenotypeBeds', 'bed')):
             env = env.bind('PlanPgenSusie.' + output, WDL.Value.from_json(
                 WDL.Type.Array(WDL.Type.File()),
@@ -289,11 +359,12 @@ class PgenWdlTests(unittest.TestCase):
         scatter = self.batch_scatter()
         values = {'Worklists': ['gs://bucket/one.tsv', 'gs://bucket/two.tsv'],
                   'PhenotypeBeds': ['gs://bucket/one.bed', 'gs://bucket/two.bed'],
-                  'ChromosomeIndices': [1, 0]}
+                  'BatchPgenIndices': [1, 0], 'Chromosomes': ['1', '2']}
         for shortened in values:
             env = WDL.Env.Bindings()
             for name, value in values.items():
-                item_type = WDL.Type.Int() if name == 'ChromosomeIndices' else WDL.Type.File()
+                item_type = WDL.Type.Int() if name == 'BatchPgenIndices' else (
+                    WDL.Type.String() if name == 'Chromosomes' else WDL.Type.File())
                 env = env.bind('PlanPgenSusie.' + name, WDL.Value.from_json(
                     WDL.Type.Array(item_type), value[:1] if name == shortened else value))
             with self.subTest(shortened=shortened), self.assertRaises(WDL.Error.EvalError):
@@ -325,11 +396,12 @@ class PgenWdlTests(unittest.TestCase):
                 (producer / 'plan' / name).write_text(''.join(
                     'plan/batches/batch_%06d.%s\n' % (number, extension)
                     for number in range(1, 13)))
-            (producer / 'plan/batch_chromosome_indices.json').write_text(json.dumps(indices))
+            (producer / 'plan/batch_pgen_indices.json').write_text(json.dumps(indices))
+            (producer / 'plan/batch_chromosomes.txt').write_text(''.join(chrom + '\n' for chrom in chromosomes))
             outputs = {decl.name: decl for decl in self.tasks['PlanPgenSusie'].outputs}
             stdlib = TaskOutputStdLib(producer)
             evaluated = {name: outputs[name].expr.eval(WDL.Env.Bindings(), stdlib).coerce(outputs[name].type)
-                         for name in ('Worklists', 'PhenotypeBeds', 'ChromosomeIndices')}
+                         for name in ('Worklists', 'PhenotypeBeds', 'BatchPgenIndices', 'Chromosomes')}
             for name, extension in (('Worklists', 'tsv'), ('PhenotypeBeds', 'bed')):
                 self.assertEqual([pathlib.Path(value.value).name for value in evaluated[name].value],
                                  ['batch_%06d.%s' % (number, extension) for number in range(1, 13)])
@@ -337,7 +409,7 @@ class PgenWdlTests(unittest.TestCase):
                 self.assertEqual((producer / 'plan' / list_name).read_text().splitlines(),
                                  [str(pathlib.Path(value.value).relative_to(producer))
                                   for value in evaluated[name].value])
-            self.assertEqual(evaluated['ChromosomeIndices'].json, indices)
+            self.assertEqual(evaluated['BatchPgenIndices'].json, indices)
             storage = root / 'storage'
             storage.mkdir()
             exported = {}
@@ -361,7 +433,8 @@ class PgenWdlTests(unittest.TestCase):
             consumer.mkdir()
             files = self.manifest_files()
             env = WDL.Env.Bindings().bind('ChromosomePgens', files)
-            for name, value in {**cloud_values, 'ChromosomeIndices': evaluated['ChromosomeIndices']}.items():
+            for name, value in {**cloud_values, 'BatchPgenIndices': evaluated['BatchPgenIndices'],
+                                'Chromosomes': evaluated['Chromosomes']}.items():
                 env = env.bind('PlanPgenSusie.' + name, value)
             scatter = self.batch_scatter()
             planned = scatter.expr.eval(env, WDL.StdLib.Base('1.0'))
@@ -408,7 +481,7 @@ class PgenWdlTests(unittest.TestCase):
                         self.assertIs(part.expr, node)
                         self.assertIsInstance(part.expr.type, WDL.Type.File)
                         name = str(node.arguments[0])
-                        metadata = name in GENE_URI_INPUTS
+                        metadata = name in METADATA_INPUTS
                         expected_item_type = WDL.Type.String if metadata else WDL.Type.File
                         self.assertIsInstance(node.arguments[0].type.item_type, expected_item_type)
         self.assertCountEqual(writers, [
@@ -417,6 +490,7 @@ class PgenWdlTests(unittest.TestCase):
             ('AggregatePgenSusie', 'index_files'),
             ('AggregatePgenSusie', 'diagnostic_files'),
             *[('AggregatePgenSusie', name) for name in GENE_URI_INPUTS],
+            *[('AggregatePgenSusie', name) for name in PGEN_METADATA_FLAGS.values()],
         ])
 
     def test_static_guard_rejects_writers_in_all_workflow_scopes(self):
@@ -454,7 +528,9 @@ class PgenWdlTests(unittest.TestCase):
                 value = 'gs://bucket/' + name
             elif isinstance(typ, WDL.Type.Array) and isinstance(typ.item_type, WDL.Type.File):
                 value = ['gs://bucket/' + name + '/one', 'gs://bucket/' + name + '/two']
-            elif name in GENE_URI_INPUTS:
+            elif name == 'pgen_chromosomes':
+                value = ['1', '2']
+            elif name in METADATA_INPUTS:
                 value = ['gs://bucket/outputs/' + name + '/one',
                          "gs://bucket/outputs/" + name + "/two 'quoted' $(touch PWNED) `touch PWNED`"]
             elif isinstance(typ, WDL.Type.Boolean):
@@ -486,7 +562,7 @@ class PgenWdlTests(unittest.TestCase):
                 return mapping[file.value]
 
             localized = {name: WDL.Value.rewrite_paths(value, localize) for name, value in raw.items()}
-            for name in GENE_URI_INPUTS.keys() & raw.keys():
+            for name in METADATA_INPUTS & raw.keys():
                 self.assertEqual(localized[name].json, raw[name].json)
                 self.assertTrue(all(uri not in mapping for uri in raw[name].json))
             if broken:
@@ -511,6 +587,11 @@ for i, arg in enumerate(args):
     if arg in ''' + repr(LIST_FLAGS) + ''':
         lists[arg] = pathlib.Path(args[i+1]).read_text().splitlines()
 pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists}))
+if args[0].endswith('/filter_pgen_susie.R'):
+    qc = pathlib.Path(args[args.index('--output-dir') + 1])
+    qc.mkdir()
+    for name in ('filtered.pgen', 'filtered.pvar', 'filtered.psam', 'variant_qc.tsv.gz', 'qc.json'):
+        (qc / name).write_text('fixture\\n')
 if args[0].endswith('/plan_pgen_susie.R'):
     plan = pathlib.Path(args[args.index('--output-dir') + 1])
     batches = plan / 'batches'
@@ -546,6 +627,8 @@ if args[0].endswith('/plan_pgen_susie.R'):
     (plan / 'expected_outcomes.tsv').write_text('batch_id\\tphenotype_id\\n')
     (plan / 'batch_index.tsv').write_text('batch_id\\tchromosome\\tworklist\\tphenotype_bed\\n')
     (plan / 'chromosome_pgens.tsv').write_text('1\\tgs://bucket/a.pgen\\tgs://bucket/a.pvar\\tgs://bucket/a.psam\\n')
+    (plan / 'unique_pgens.tsv').write_text('1\\tgs://bucket/a.pgen\\tgs://bucket/a.pvar\\tgs://bucket/a.psam\\n')
+    (plan / 'batch_pgen_indices.json').write_text('[0, 0, 0]')
 ''')
             stub.chmod(0o755)
             result = subprocess.run(['bash', 'command.sh'], cwd=cwd,
@@ -584,11 +667,16 @@ if args[0].endswith('/plan_pgen_susie.R'):
                 self.assertEqual('--memory-debug' in args, optional)
                 self.assertIn('--missing-code=' + localized['missing_code'].value, args)
                 self.assertNotIn('--missing-code', args)
+            elif task.name == 'FilterPgen':
+                self.assertEqual(args[0], '/opt/r/scripts/filter_pgen_susie.R')
+                self.assertIn('--mac=' + str(localized['mac'].value), args)
+                rate = next(arg.split('=', 1)[1] for arg in args if arg.startswith('--min-call-rate='))
+                self.assertEqual(float(rate), localized['min_call_rate'].value)
             else:
                 self.assertEqual(args[0], '/opt/r/scripts/aggregate_pgen_susie.R')
                 for flag, paths in payload['lists'].items():
-                    if flag in GENE_URI_FLAGS:
-                        self.assertEqual(paths, raw[GENE_URI_FLAGS[flag]].json)
+                    if flag in GENE_URI_FLAGS or flag in PGEN_METADATA_FLAGS:
+                        self.assertEqual(paths, raw[{**GENE_URI_FLAGS, **PGEN_METADATA_FLAGS}[flag]].json)
                     else:
                         self.assertEqual(paths, localized[flag[2:].replace('-', '_')].json)
                         for path in paths:
@@ -603,7 +691,7 @@ if args[0].endswith('/plan_pgen_susie.R'):
                         self.assertNotIn(flag, args)
                     else:
                         self.assertEqual(args[args.index(flag) + 1], value.value)
-            if task.name != 'AggregatePgenSusie':
+            if task.name in ('PlanPgenSusie', 'RunPgenSusieBatch'):
                 flag = '--top-phenotype-pvalue-column'
                 self.assertEqual(args[args.index(flag) + 1], localized['top_phenotype_pvalue_column'].value)
                 self.assertEqual('--select-top-phenotype-per-cluster' in args, optional)
@@ -629,7 +717,7 @@ if args[0].endswith('/plan_pgen_susie.R'):
 
     def test_all_tasks_reject_unresolved_cloud_files_and_missing_inputs(self):
         for task in self.doc.tasks:
-            name = 'expected_outcomes' if task.name == 'AggregatePgenSusie' else 'phenotype_bed'
+            name = {'AggregatePgenSusie': 'expected_outcomes', 'FilterPgen': 'pgen'}.get(task.name, 'phenotype_bed')
             for failure in ('uri', 'missing'):
                 with self.subTest(task=task.name, failure=failure):
                     self.execute(task, broken=(name, failure))

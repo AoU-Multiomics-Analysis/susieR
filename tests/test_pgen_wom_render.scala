@@ -21,9 +21,8 @@ object PgenWomRender extends App {
   val factory = new WdlDraft3LanguageFactory(ConfigFactory.parseString("enabled = true"))
   val bundle = factory.getWomBundle(source, None, "", List.empty, List(factory))
     .fold(errors => sys.error(errors.toString), identity)
-  val task = bundle.allCallables("RunPgenSusieBatch").asInstanceOf[CommandTaskDefinition]
-
-  for (includeOptional <- List(false, true)) {
+  for (taskName <- List("FilterPgen", "RunPgenSusieBatch"); includeOptional <- List(false, true)) {
+    val task = bundle.allCallables(taskName).asInstanceOf[CommandTaskDefinition]
     val cwd = Files.createTempDirectory("susier-wom-render-")
     try {
       val mapping = mutable.Map.empty[String, String]
@@ -49,7 +48,7 @@ object PgenWomRender extends App {
         case WomIntegerType => WomInteger(if (name == "mac") {
           if (includeOptional) 5 else 0
         } else 1)
-        case WomFloatType => WomFloat(0.0)
+        case WomFloatType => WomFloat(if (name == "min_call_rate") 0.95 else 0.0)
         case WomStringType =>
           WomString(if (name == "missing_code") "-1" else "qval 'quoted' $(touch PWNED) `touch PWNED`")
         case other => sys.error("Unsupported fixture input type: " + other)
@@ -72,6 +71,11 @@ object PgenWomRender extends App {
       Files.writeString(stub, """#!/usr/bin/env python3
 import os, pathlib, sys
 pathlib.Path('capture.args').write_bytes(b''.join(os.fsencode(arg) + b'\0' for arg in sys.argv[1:]))
+if sys.argv[1].endswith('/filter_pgen_susie.R'):
+    output = pathlib.Path(sys.argv[sys.argv.index('--output-dir') + 1])
+    output.mkdir()
+    for name in ('filtered.pgen', 'filtered.pvar', 'filtered.psam', 'variant_qc.tsv.gz', 'qc.json'):
+        (output / name).write_text('fixture\n')
 """)
       assert(stub.toFile.setExecutable(true), "Could not make the recording CLI executable")
       val stdout = new StringBuilder
@@ -82,23 +86,30 @@ pathlib.Path('capture.args').write_bytes(b''.join(os.fsencode(arg) + b'\0' for a
       assert(exit == 0, "Cromwell-rendered batch command failed (optional inputs=" + includeOptional + "):\n" + stderr)
       val actual = new String(Files.readAllBytes(cwd.resolve("capture.args")), UTF_8)
         .split("\u0000", -1).dropRight(1).toVector
-      assert(actual.head == "/opt/r/scripts/run_pgen_susie_batch.R", "Unexpected batch CLI")
+      val cli = if (taskName == "FilterPgen") "filter_pgen_susie.R" else "run_pgen_susie_batch.R"
+      assert(actual.head == "/opt/r/scripts/" + cli, "Unexpected CLI")
       for ((name, path) <- expectedFiles) {
         val flag = "--" + name.replace('_', '-')
         val index = actual.indexOf(flag)
         assert(index >= 0 && index + 1 < actual.size && actual(index + 1) == path,
           "Cromwell did not pass the exact local path for " + flag + ": " + actual)
       }
-      for (name <- List("sample_list", "ancestry", "variant_list", "additional_genotypes")) {
+      for (name <- List("sample_list", "ancestry", "variant_list", "additional_genotypes", "genotype_qc_report")
+           if taskName == "RunPgenSusieBatch") {
         assert(actual.contains("--" + name.replace('_', '-')) == includeOptional,
           "Incorrect optional file argument: " + name)
       }
-      assert(actual.contains("--missing-code=-1"), "Negative missing code changed")
+      if (taskName == "RunPgenSusieBatch") {
+        assert(actual.contains("--missing-code=-1"), "Negative missing code changed")
+      } else {
+        assert(actual.find(_.startsWith("--min-call-rate=")).get.split("=", 2)(1).toDouble == 0.95,
+          "Call-rate threshold did not reach the QC CLI")
+      }
       assert(actual.contains(if (includeOptional) "--mac=5" else "--mac=0"),
         "MAC threshold did not reach the batch CLI")
       assert(!actual.exists(_.contains("gs://")), "Unresolved cloud input reached the batch CLI")
       assert(!Files.exists(cwd.resolve("PWNED")), "File or string argument executed shell code")
-      println("Cromwell 85 batch command localization passed (optional inputs=" + includeOptional + ")")
+      println("Cromwell 85 " + taskName + " command localization passed (optional inputs=" + includeOptional + ")")
     } finally {
       val paths = Files.walk(cwd)
       try paths.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.delete)

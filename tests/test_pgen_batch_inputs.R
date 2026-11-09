@@ -44,6 +44,9 @@ check_batch_provenance <- function() {
   a <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
   stopifnot(identical(a$settings$memory_debug, FALSE),
     identical(a$settings$mac, 0),
+    identical(a$settings$min_call_rate, 0),
+    identical(a$settings$sample_scope, "disabled"),
+    identical(a$settings$genotype_qc_count_source, "disabled"),
     identical(a$settings$mac_sample_scope, "all_input_pgen_samples"),
     identical(a$settings$mac_include_nonfounders, TRUE))
   opt$memory_debug <- TRUE
@@ -93,6 +96,168 @@ check_batch_provenance <- function() {
   stopifnot(identical(mac_only$settings$variant_filter_mode, "mac"))
 }
 
+check_shared_qc_provenance <- function() {
+  # A report must identify these exact prepared files before a fit can use it.
+  directory <- tempfile("batch-shared-qc-")
+  dir.create(directory)
+  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  roles <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed", "qtl_results",
+             "covariates")
+  opt <- setNames(lapply(roles, function(role) {
+    path <- file.path(directory, role)
+    writeLines(role, path)
+    path
+  }), roles)
+  opt <- c(opt, list(maf = 0, mac = 0, cis_distance = 100L, missing_code = "NA",
+    base_seed = 82L, select_top_phenotype_per_cluster = FALSE,
+    top_phenotype_pvalue_column = "qval", plink_memory_mb = 1024L))
+  batch_files <- unlist(opt[c("pgen", "pvar", "psam")], use.names = FALSE)
+  baseline <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  counts <- file.path(directory, "counts.tsv.gz")
+  writeLines("QC counts", counts)
+  record <- function(path) list(present = TRUE, basename = basename(path),
+    size_bytes = file.info(path)$size, sha256 = digest::digest(file = path, algo = "sha256"))
+  source_records <- purrr::map(setNames(c("pgen", "pvar", "psam"), c("pgen", "pvar", "psam")),
+    function(role) {
+      path <- file.path(directory, paste0("original.", role))
+      writeLines(paste("Original genotype", role), path)
+      record(path)
+    })
+  report <- list(schema_version = 1L, count_source = "pgen_hardcalls",
+    sample_scope = "all_input_pgen_samples", include_nonfounders = TRUE,
+    sample_count = 10L, variant_count_before = 12L, variant_count_after = 8L,
+    thresholds = list(mac = 5L, min_call_rate = .95),
+    source_files = source_records,
+    filtered_files = baseline$inputs[c("pgen", "pvar", "psam")],
+    counts_file = record(counts), plink_version = "PLINK test")
+  opt$genotype_qc_report <- file.path(directory, "genotype_qc.json")
+  save_report <- function(value) jsonlite::write_json(value, opt$genotype_qc_report,
+    auto_unbox = TRUE, na = "null", pretty = TRUE)
+  save_report(report)
+  actual <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(actual$genotype_qc$thresholds$mac, 5L),
+    identical(actual$genotype_qc$source_files$pgen$sha256, source_records$pgen$sha256),
+    !identical(actual$genotype_qc$source_files$pgen$sha256, actual$inputs$pgen$sha256),
+    identical(actual$inputs$pgen$sha256, baseline$inputs$pgen$sha256),
+    identical(actual$settings$mac, 5L), identical(actual$settings$min_call_rate, .95),
+    identical(actual$settings$variant_filter_mode, "mac+call_rate"),
+    identical(actual$settings$sample_scope, "all_input_pgen_samples"),
+    identical(actual$settings$genotype_qc_count_source, "pgen_hardcalls"),
+    isTRUE(actual$settings$include_nonfounders),
+    actual$inputs$genotype_qc_report$present,
+    identical(actual$inputs$genotype_qc_report$sha256,
+      digest::digest(file = opt$genotype_qc_report, algo = "sha256")),
+    nzchar(actual$source$pipeline$PgenQcFunctions.R$sha256),
+    nzchar(actual$source$pipeline$filter_pgen_susie.R$sha256))
+  opt$maf <- .1
+  opt$ancestry <- opt$covariates
+  ancestry <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(ancestry$settings$variant_filter_mode, "mac+call_rate+ancestry_maf"))
+  opt$variant_list <- opt$covariates
+  variants <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(variants$settings$variant_filter_mode, "mac+call_rate+variant_list"))
+  opt$variant_list <- opt$ancestry <- NULL
+  report$thresholds$mac <- 0L
+  save_report(report)
+  call_rate_only <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(call_rate_only$settings$variant_filter_mode, "call_rate"))
+  report$thresholds <- list(mac = 5L, min_call_rate = 0)
+  save_report(report)
+  mac_only <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(mac_only$settings$variant_filter_mode, "mac"))
+  report$thresholds <- list(mac = 0L, min_call_rate = 0)
+  report$variant_count_before <- 8L
+  save_report(report)
+  disabled <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(disabled$settings$variant_filter_mode, "none"))
+  report$thresholds <- list(mac = 5L, min_call_rate = .95)
+  report$variant_count_before <- 12L
+  save_report(report)
+  matched_cohort <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test", 10L)
+  stopifnot(identical(matched_cohort$genotype_qc$sample_count, 10L))
+  wrong_cohort <- tryCatch(
+    makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test", 9L), error = identity)
+  stopifnot(inherits(wrong_cohort, "error"),
+    grepl("sample_count", conditionMessage(wrong_cohort)))
+
+  expect_invalid <- function(value, pattern = "genotype QC report") {
+    save_report(value)
+    error <- tryCatch(makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test"),
+      error = identity)
+    stopifnot(inherits(error, "error"), grepl(pattern, conditionMessage(error), ignore.case = TRUE))
+  }
+  # Removing validation, accepting a stale report, or accepting invalid cohort
+  # counts must fail these cases even when the report parses as valid JSON.
+  for (role in c("pgen", "pvar", "psam")) {
+    wrong <- report
+    wrong$filtered_files[[role]]$sha256 <- paste(rep("0", 64), collapse = "")
+    expect_invalid(wrong, paste0("filtered.*", role, ".*hash|", role, ".*sha256"))
+  }
+  for (field in names(report)) {
+    missing <- report
+    missing[[field]] <- NULL
+    expect_invalid(missing)
+  }
+  invalid_fields <- list(schema_version = 2L, count_source = "pvar_info",
+    sample_scope = "phenotype_intersection", include_nonfounders = FALSE,
+    sample_count = 0L, variant_count_before = 7L, variant_count_after = 13L,
+    plink_version = "")
+  for (field in names(invalid_fields)) {
+    invalid <- report
+    invalid[[field]] <- invalid_fields[[field]]
+    expect_invalid(invalid)
+  }
+  for (field in c("sample_count", "variant_count_before", "variant_count_after")) {
+    invalid <- report
+    invalid[[field]] <- 1.5
+    expect_invalid(invalid)
+  }
+  for (thresholds in list(list(mac = -1, min_call_rate = .95),
+    list(mac = 1.5, min_call_rate = .95), list(mac = 0, min_call_rate = 1.1),
+    list(mac = 0, min_call_rate = NA_real_), list(mac = Inf, min_call_rate = .95),
+    list(mac = "5", min_call_rate = .95))) {
+    invalid <- report
+    invalid$thresholds <- thresholds
+    expect_invalid(invalid)
+  }
+  save_report(report)
+  writeLines(sub('"mac": 5', '"mac": 1e999',
+    readLines(opt$genotype_qc_report), fixed = TRUE), opt$genotype_qc_report)
+  nonfinite <- tryCatch(makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test"),
+    error = identity)
+  stopifnot(inherits(nonfinite, "error"),
+    grepl("genotype QC report", conditionMessage(nonfinite)))
+  for (files in c("source_files", "filtered_files")) {
+    for (field in c("present", "basename", "size_bytes", "sha256")) {
+      invalid <- report
+      invalid[[files]]$pgen[[field]] <- NULL
+      expect_invalid(invalid)
+    }
+  }
+  invalid <- report
+  invalid$counts_file$present <- FALSE
+  expect_invalid(invalid)
+  invalid <- report
+  invalid$thresholds <- list(mac = 0L, min_call_rate = 0)
+  expect_invalid(invalid)
+  invalid <- report
+  invalid$filtered_files$pgen$size_bytes <- 99L
+  expect_invalid(invalid)
+  writeLines("{not json", opt$genotype_qc_report)
+  error <- tryCatch(makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test"),
+    error = identity)
+  stopifnot(inherits(error, "error"), grepl("genotype QC report", conditionMessage(error)))
+  save_report(report)
+  opt$mac <- 1
+  expect_invalid(report, "--mac.*0|repeat.*filter")
+  opt$mac <- 0
+  opt$genotype_qc_report <- NULL
+  omitted <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(is.null(omitted$genotype_qc), identical(omitted$settings$mac, 0),
+    identical(omitted$settings$min_call_rate, 0),
+    !omitted$inputs$genotype_qc_report$present)
+}
+
 check_mac_cli_and_validation <- function() {
   parser <- optparse::OptionParser(option_list = batch_options)
   defaults <- optparse::parse_args(parser, args = character(), print_help_and_exit = FALSE)
@@ -100,6 +265,9 @@ check_mac_cli_and_validation <- function() {
   enabled <- optparse::parse_args(parser, args = c("--mac", "5"), print_help_and_exit = FALSE)
   fractional <- optparse::parse_args(parser, args = c("--mac", "1.5"), print_help_and_exit = FALSE)
   stopifnot(identical(enabled$mac, 5), identical(fractional$mac, 1.5))
+  qc <- optparse::parse_args(parser, args = c("--genotype-qc-report", "qc.json"),
+    print_help_and_exit = FALSE)
+  stopifnot(is.null(defaults$genotype_qc_report), identical(qc$genotype_qc_report, "qc.json"))
 
   directory <- tempfile("batch-mac-inputs-")
   dir.create(directory)
@@ -128,6 +296,15 @@ check_mac_cli_and_validation <- function() {
     runPgenSusieBatch(options)
     stop("Expected the batch to stop", call. = FALSE)
   }, error = identity)
+  report <- opt
+  report$genotype_qc_report <- "gs://bucket/qc.json"
+  error <- failure(report)
+  stopifnot(grepl("localization error", conditionMessage(error)), !file.exists(capture))
+  report$genotype_qc_report <- opt$pgen
+  report$mac <- 1
+  error <- failure(report)
+  stopifnot(grepl("--mac to 0", conditionMessage(error)), !file.exists(capture),
+    !dir.exists(opt$output_dir))
   for (value in list(-1, 1.5, NA_real_, NaN, Inf, "5", c(1, 2), .Machine$integer.max + 1)) {
     invalid <- opt
     invalid$mac <- value
@@ -176,5 +353,8 @@ check_memory_debug_cli <- function() {
 check_memory_debug_cli()
 check_mac_cli_and_validation()
 if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "additional")) check_additional_ownership()
-if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "provenance")) check_batch_provenance()
+if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "provenance")) {
+  check_batch_provenance()
+  check_shared_qc_provenance()
+}
 message("PGEN batch input tests passed")

@@ -9,7 +9,7 @@ run_pgen_gene_tests <- function(repo_dir) {
                                unset = file.path(repo_dir, "R", "utils"))
   for (filename in c("InitFunctions.R", "ImportFunctions.R", "MemoryHelpers.R",
                      "SusiePerformance.R", "SusieFunctions.R", "PgenFunctions.R",
-                     "SusieOutputFunctions.R", "PgenGeneFunctions.R")) {
+                     "SusieOutputFunctions.R", "PgenGeneFunctions.R", "PgenBatchFunctions.R")) {
     source(file.path(functions_path, filename), local = TRUE)
   }
   for (name in c("formatSusieOutputs", "writeSusieOutputs", "finemapPgenPhenotype",
@@ -251,6 +251,51 @@ run_pgen_gene_tests <- function(repo_dir) {
                             error = conditionMessage)
     expect_identical_value(pgen_error, raw_error, "NA phenotype behavior")
   })
+  run_named_test("timing callbacks cover loading preparation and fitting without changing fits or RNG", {
+    # Removing a stage callback or storing measurements in a fit must fail this check.
+    events <- list()
+    record_stage <- function(stage, event) {
+      events[[length(events) + 1L]] <<- c(stage = stage, event = event)
+    }
+    set.seed(181L)
+    reference <- finemapPgenPhenotype("trait1", se, reader, covariates, 200L, "NA")
+    expected_rng <- .Random.seed
+    set.seed(181L)
+    timed <- finemapPgenPhenotype("trait1", se, reader, covariates, 200L, "NA",
+                                  timing_callback = record_stage)
+    expect_identical_value(timed, reference, "timing leaves complete fit unchanged")
+    expect_identical_value(.Random.seed, expected_rng, "timing leaves RNG unchanged")
+    expect_identical_value(events, list(
+      c(stage = "data_loading", event = "start"),
+      c(stage = "data_loading", event = "complete"),
+      c(stage = "data_preparation", event = "start"),
+      c(stage = "data_preparation", event = "complete"),
+      c(stage = "fine_mapping", event = "start"),
+      c(stage = "fine_mapping", event = "complete")))
+    events <- list()
+    invalid_covariates <- cbind(covariates, duplicate_pc = covariates[, "pc"])
+    expect_error_message(finemapPgenPhenotype("trait1", se, reader,
+      invalid_covariates, 200L, "NA", timing_callback = record_stage), "singular")
+    stopifnot(identical(tail(events, 1L)[[1L]],
+                       c(stage = "data_preparation", event = "failed")),
+              !any(vapply(events, function(event) event[["stage"]] == "fine_mapping", logical(1))))
+    reusable <- prepareReusableGenotype("trait1", se, raw, covariates, 200L)
+    events <- list()
+    set.seed(181L)
+    reference <- finemapPhenotype("trait1", se, raw, covariates, 200L,
+                                  reusable_genotype = reusable)
+    expected_rng <- .Random.seed
+    set.seed(181L)
+    timed <- finemapPhenotype("trait1", se, raw, covariates, 200L,
+                               reusable_genotype = reusable, timing_callback = record_stage)
+    expect_identical_value(timed, reference, "timing leaves reusable fit unchanged")
+    expect_identical_value(.Random.seed, expected_rng, "reusable timing leaves RNG unchanged")
+    expect_identical_value(events, list(
+      c(stage = "data_preparation", event = "start"),
+      c(stage = "data_preparation", event = "complete"),
+      c(stage = "fine_mapping", event = "start"),
+      c(stage = "fine_mapping", event = "complete")))
+  })
   outcomes <- list(
     `outcome / α` = list(phenotype_id = "trait1", se = se, covariates = covariates,
                          cis_distance = 200L, region = "chr1_-100_300"),
@@ -281,9 +326,18 @@ run_pgen_gene_tests <- function(repo_dir) {
     stopifnot(identical(.Random.seed, rng), identical(RNGkind(), kind),
               identical(names(result), c("summary", "credible_sets", "diagnostics", "index", "files")),
               identical(names(result$index), c("gene_id", "gene_key", "outcome_id", "phenotype_id",
-                "seed", "status", "converged", "credible_set_count", "reason")),
+                "seed", "status", "converged", "credible_set_count", "reason",
+                "data_loading_seconds", "data_preparation_seconds", "fine_mapping_seconds",
+                "outcome_total_seconds")),
               is.integer(result$index$seed), is.integer(result$index$credible_set_count),
               is.logical(result$index$converged), all(file.exists(result$files)))
+    timing_columns <- c("data_loading_seconds", "data_preparation_seconds", "fine_mapping_seconds",
+                        "outcome_total_seconds")
+    stopifnot(all(vapply(result$index[timing_columns], is.double, logical(1))),
+              all(is.finite(as.matrix(result$index[timing_columns]))),
+              all(as.matrix(result$index[timing_columns]) >= 0),
+              all(rowSums(as.matrix(result$index[timing_columns[1:3]])) <=
+                    result$index$outcome_total_seconds))
     fits <- readRDS(result$files[["rds"]])
     expect_identical_value(extracted_fits, unname(fits), "one extraction for each saved fit")
     stopifnot(identical(names(fits), names(outcomes)),
@@ -345,6 +399,59 @@ run_pgen_gene_tests <- function(repo_dir) {
     provenance <- jsonlite::read_json(result$files[["provenance"]], simplifyVector = TRUE)
     stopifnot(identical(provenance$inputs$pgen$sha256, "supplied"),
               all(provenance$artifacts$basename %in% basename(result$files)))
+    for (column in timing_columns[1:3]) {
+      stopifnot(abs(provenance$timing[[column]] - sum(result$index[[column]])) < 1e-6)
+    }
+    stopifnot(is.finite(provenance$timing$gene_total_seconds),
+              provenance$timing$gene_total_seconds >= sum(result$index$outcome_total_seconds),
+              identical(provenance$timing$scope,
+                        "gene processing and output writing; excludes final hashing and provenance writing"),
+              any(grepl("Gene timing:", readLines(result$files[["log"]]), fixed = TRUE)))
+    # A log update after artifact hashing would make the published hash stale.
+    log_record <- provenance$artifacts[provenance$artifacts$name == "log", ]
+    stopifnot(identical(log_record$sha256,
+                       digest::digest(file = result$files[["log"]], algo = "sha256")))
+    # The aggregator must parse timing fields, preserve their values, and reject text in a numeric field.
+    aggregate_root <- file.path(temp, "timing-aggregate")
+    dir.create(aggregate_root)
+    batch_index <- result$index[1:2, ] |>
+      dplyr::mutate(batch_id = "batch_000001", chromosome = "1")
+    expected <- batch_index |>
+      dplyr::select(batch_id, chromosome, gene_id, outcome_id, phenotype_id) |>
+      dplyr::mutate(phenotype_pos = c(100, 210), requested_window_start = c(-100, 120),
+                    requested_window_end = c(300, 300), window_start = c(1, 120),
+                    window_end = 300, region = c("chr1_-100_300", "chr1_120_300"))
+    mapping <- dplyr::select(expected, batch_id, gene_id, outcome_id, phenotype_id)
+    decorate <- function(table) table |>
+      dplyr::filter(.data$molecular_trait_id %in% mapping$outcome_id) |>
+      dplyr::left_join(mapping, by = c("molecular_trait_id" = "outcome_id")) |>
+      dplyr::mutate(outcome_id = molecular_trait_id)
+    aggregate_inputs <- file.path(aggregate_root, c("expected.tsv", "summary.parquet",
+      "cs.parquet", "index.tsv", "diagnostics.tsv"))
+    readr::write_tsv(expected, aggregate_inputs[[1L]])
+    arrow::write_parquet(decorate(result$summary), aggregate_inputs[[2L]])
+    arrow::write_parquet(decorate(result$credible_sets), aggregate_inputs[[3L]])
+    readr::write_tsv(batch_index, aggregate_inputs[[4L]])
+    diagnostics <- decorate(result$diagnostics) |>
+      dplyr::mutate(chromosome = "1")
+    readr::write_tsv(diagnostics, aggregate_inputs[[5L]])
+    aggregate_run <- function() aggregatePgenBatches(aggregate_inputs[[1L]],
+      aggregate_inputs[[2L]], aggregate_inputs[[3L]], aggregate_inputs[[4L]],
+      aggregate_inputs[[5L]], file.path(aggregate_root, "combined"))
+    aggregate_files <- aggregate_run()
+    combined <- readr::read_tsv(aggregate_files[["index"]], show_col_types = FALSE)
+    for (column in timing_columns) {
+      stopifnot(is.double(combined[[column]]),
+                all(abs(combined[[column]] - batch_index[[column]]) < 1e-9))
+    }
+    invalid_index <- batch_index
+    invalid_index$fine_mapping_seconds <- c("invalid", "1")
+    readr::write_tsv(invalid_index, aggregate_inputs[[4L]])
+    expect_error_message(aggregate_run(), "Invalid numeric column: fine_mapping_seconds")
+    invalid_index <- batch_index
+    invalid_index$data_loading_seconds[[1L]] <- -1
+    readr::write_tsv(invalid_index, aggregate_inputs[[4L]])
+    expect_error_message(aggregate_run(), "Invalid outcome index timing")
     reversed <- runPgenGene("gene/α", rev(outcomes), reader, file.path(temp, "reverse"), 13L, "NA")
     reverse_fits <- readRDS(reversed$files[["rds"]])
     for (id in names(outcomes)) expect_identical_value(fits[[id]], reverse_fits[[id]], "order-independent fit")
@@ -396,6 +503,22 @@ run_pgen_gene_tests <- function(repo_dir) {
               length(readLines(paste0(prefix, ".variant_position_summary.tsv"))) == 1L,
               length(readLines(paste0(prefix, ".covariate_explained_variants.tsv"))) == 1L,
               any(grepl("FAILED", readLines(paste0(prefix, ".log")))))
+    stopifnot(is.finite(index$data_loading_seconds), index$data_loading_seconds >= 0,
+              is.na(index$data_preparation_seconds), is.na(index$fine_mapping_seconds),
+              is.finite(index$outcome_total_seconds), index$outcome_total_seconds >= index$data_loading_seconds,
+              any(grepl("Gene timing:", readLines(paste0(prefix, ".log")), fixed = TRUE)))
+    constant <- outcomes[1L]
+    constant_se <- se
+    SummarizedExperiment::assay(constant_se)[1L, ] <- 1
+    constant[[1L]]$se <- constant_se
+    expect_error_message(runPgenGene("constant", constant, reader, root, 13L, "NA"), "failed:")
+    prefix <- file.path(root, "genes", geneArtifactKey("constant"), geneArtifactKey("constant"))
+    index <- readr::read_tsv(paste0(prefix, ".outcome_index.tsv"), show_col_types = FALSE)
+    stages <- c("data_loading_seconds", "data_preparation_seconds", "fine_mapping_seconds")
+    stopifnot(identical(index$status, "FAILED"),
+              all(is.finite(as.matrix(index[stages]))), all(as.matrix(index[stages]) >= 0),
+              sum(as.matrix(index[stages])) <= index$outcome_total_seconds,
+              any(grepl("stage: fine_mapping; status: failed", readLines(paste0(prefix, ".log")), fixed = TRUE)))
   })
   run_named_test("NONCONVERGED native fits stay in the index and RDS", {
     # A one-iteration native fit makes status persistence deterministic. The
@@ -414,6 +537,8 @@ run_pgen_gene_tests <- function(repo_dir) {
       result <- runPgenGene("incomplete", outcomes[1L], reader, temp, 13L, "NA")
       stopifnot(identical(result$index$status, "NONCONVERGED"),
                 identical(result$index$converged, FALSE),
+                all(is.na(result$index[c("data_loading_seconds", "data_preparation_seconds", "fine_mapping_seconds")])),
+                is.finite(result$index$outcome_total_seconds),
                 identical(readRDS(result$files[["rds"]])[[1L]], incomplete))
     }, finally = {
       finemapPgenPhenotype <- production_adapter

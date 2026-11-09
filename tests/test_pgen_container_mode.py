@@ -68,7 +68,7 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
         result, calls = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-        self.assertEqual(scripts, ["tests/test_pgen_mac.R", "tests/test_pgen_qc.R", "tests/test_pgen_smoke.R"])
+        self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R", "tests/test_pgen_smoke.R"])
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
         self.assertTrue(any(call[:2] == ["plink2", "--version"] for call in calls))
 
@@ -96,7 +96,7 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
                 self.assertEqual(result.returncode, 43, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_mac.R"])
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R"])
 
     def test_unknown_or_extra_arguments_fail_before_running_tools(self):
         for arguments in (["--ful"], ["--full", "extra"], [""]):
@@ -113,7 +113,7 @@ if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc
                 self.assertEqual(result.returncode, 44, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_mac.R", "tests/test_pgen_qc.R"])
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R"])
 
     def test_workflow_passes_full_flag_only_when_selected(self):
         workflow = yaml.load(

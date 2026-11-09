@@ -3,7 +3,15 @@ finemapPgenPhenotype <- function(phenotype_id, se, reader, covariates,
                                  cis_distance, missing_code,
                                  ancestry_data = NULL, MAF = 0,
                                  variant_list = NULL, additional_genotypes = NULL,
-                                 variant_report_file = NULL) {
+                                 variant_report_file = NULL, timing_callback = NULL) {
+  if (!is.null(timing_callback) && !is.function(timing_callback)) {
+    stop("timing_callback must be a function or NULL", call. = FALSE)
+  }
+  loading <- TRUE
+  if (!is.null(timing_callback)) timing_callback("data_loading", "start")
+  on.exit({
+    if (loading && !is.null(timing_callback)) timing_callback("data_loading", "failed")
+  }, add = TRUE)
   .pgenGeneId(phenotype_id, "phenotype_id")
   metadata <- as.data.frame(SummarizedExperiment::rowData(se)) |>
     dplyr::filter(.data$phenotype_id == .env$phenotype_id)
@@ -30,10 +38,12 @@ finemapPgenPhenotype <- function(phenotype_id, se, reader, covariates,
   message("PGEN window dimensions: ", nrow(raw), " variants x ", ncol(raw), " samples")
   filtered <- filterMAF(raw, ancestry_data, MAF_threshold = MAF, variant_list = variant_list)
   message("PGEN variants after MAF/list filtering: ", nrow(filtered))
+  if (!is.null(timing_callback)) timing_callback("data_loading", "complete")
+  loading <- FALSE
   finemapPhenotype(phenotype_id, se, filtered, covariates, cis_distance,
                    ancestry_data = ancestry_data, MAF = MAF, variant_list = variant_list,
                    additional_genotypes = additional_genotypes,
-                   variant_report_file = variant_report_file)
+                   variant_report_file = variant_report_file, timing_callback = timing_callback)
 }
 
 .pgenGeneId <- function(value, label) {
@@ -85,7 +95,9 @@ geneOutcomeSeed <- function(base_seed, gene_id, outcome_id) {
 .pgenGeneEmptyIndex <- function() {
   tibble::tibble(gene_id = character(), gene_key = character(), outcome_id = character(),
                 phenotype_id = character(), seed = integer(), status = character(),
-                converged = logical(), credible_set_count = integer(), reason = character())
+                converged = logical(), credible_set_count = integer(), reason = character(),
+                data_loading_seconds = double(), data_preparation_seconds = double(),
+                fine_mapping_seconds = double(), outcome_total_seconds = double())
 }
 
 .pgenGeneEmptyPositions <- function() {
@@ -103,6 +115,7 @@ geneOutcomeSeed <- function(base_seed, gene_id, outcome_id) {
 # Save large fitted objects once, then return only compact batch-level tables.
 runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
                         missing_code, provenance = list()) {
+  gene_started <- proc.time()[["elapsed"]]
   gene_key <- geneArtifactKey(gene_id)
   outcome_ids <- names(outcomes)
   if (!is.list(outcomes) || !length(outcomes) || is.null(outcome_ids) ||
@@ -139,6 +152,25 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     message(text)
   }
   index <- .pgenGeneEmptyIndex()
+  gene_complete <- FALSE
+  timing_logged <- FALSE
+  log_gene_timing <- function() {
+    timing <- list(
+      data_loading_seconds = sum(index$data_loading_seconds),
+      data_preparation_seconds = sum(index$data_preparation_seconds),
+      fine_mapping_seconds = sum(index$fine_mapping_seconds),
+      gene_total_seconds = proc.time()[["elapsed"]] - gene_started,
+      scope = "gene processing and output writing; excludes final hashing and provenance writing")
+    log_line(paste0("Gene timing: ", gene_id, "; status: ",
+      if (gene_complete) "COMPLETE" else "FAILED", "; ",
+      paste(names(timing)[1:4], format(unlist(timing[1:4]), digits = 6L),
+            sep = "=", collapse = "; "), "; ", timing$scope))
+    timing_logged <<- TRUE
+    timing
+  }
+  on.exit({
+    if (!timing_logged) log_gene_timing()
+  }, add = TRUE)
   readr::write_tsv(index, extra_files[["index"]], quote = "needed")
   readr::write_tsv(.pgenGeneEmptyPositions(), extra_files[["variant_positions"]],
                    quote = "needed")
@@ -151,6 +183,24 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
   for (id in outcome_ids) {
     outcome <- outcomes[[id]]
     seed <- seeds[[id]]
+    outcome_started <- proc.time()[["elapsed"]]
+    stages <- c("data_loading", "data_preparation", "fine_mapping")
+    stage_started <- stats::setNames(rep(NA_real_, length(stages)), stages)
+    stage_seconds <- stats::setNames(rep(NA_real_, length(stages)), paste0(stages, "_seconds"))
+    timing_callback <- function(stage, event) {
+      now <- proc.time()[["elapsed"]]
+      if (event == "start") {
+        stage_started[[stage]] <<- now
+      } else {
+        seconds <- now - stage_started[[stage]]
+        stage_seconds[[paste0(stage, "_seconds")]] <<- seconds
+        message("Outcome timing: ", id, "; stage: ", stage, "; status: ", event,
+                "; elapsed_seconds=", format(seconds, digits = 6L))
+      }
+      invisible(NULL)
+    }
+    timing_row <- function() tibble::as_tibble_row(c(as.list(stage_seconds),
+      list(outcome_total_seconds = proc.time()[["elapsed"]] - outcome_started)))
     log_line(paste0("Outcome start: ", id, "; phenotype: ", outcome$phenotype_id, "; seed: ", seed))
     fitted <- tryCatch(
       withCallingHandlers(
@@ -159,17 +209,17 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
           outcome$cis_distance, missing_code, ancestry_data = outcome$ancestry_data,
           MAF = if (is.null(outcome$MAF)) 0 else outcome$MAF,
           variant_list = outcome$variant_list, additional_genotypes = outcome$additional_genotypes,
-          variant_report_file = extra_files[["variant_positions"]])),
+          variant_report_file = extra_files[["variant_positions"]], timing_callback = timing_callback)),
         message = function(condition) cat(conditionMessage(condition), file = extra_files[["log"]], append = TRUE),
         warning = function(condition) cat("WARNING: ", conditionMessage(condition), "\n",
           file = extra_files[["log"]], append = TRUE, sep = "")),
       error = function(condition) condition)
     if (inherits(fitted, "error")) {
       reason <- conditionMessage(fitted)
-      index <- dplyr::bind_rows(index, tibble::tibble(
+      index <- dplyr::bind_rows(index, dplyr::bind_cols(tibble::tibble(
         gene_id = gene_id, gene_key = gene_key, outcome_id = id,
         phenotype_id = outcome$phenotype_id, seed = seed, status = "FAILED",
-        converged = NA, credible_set_count = NA_integer_, reason = reason))
+        converged = NA, credible_set_count = NA_integer_, reason = reason), timing_row()))
       readr::write_tsv(index, extra_files[["index"]], quote = "needed")
       log_line(paste0("FAILED outcome ", id, ": ", reason))
       stop("Gene ", gene_id, ", outcome ", id, " failed: ", reason, call. = FALSE)
@@ -180,11 +230,11 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     extracted_results[[id]] <- extractResults(fitted)
     exported_sets <- extracted_results[[id]]$cs_df
     count <- if (is.null(exported_sets)) 0L else as.integer(nrow(exported_sets))
-    index <- dplyr::bind_rows(index, tibble::tibble(
+    index <- dplyr::bind_rows(index, dplyr::bind_cols(tibble::tibble(
       gene_id = gene_id, gene_key = gene_key, outcome_id = id,
       phenotype_id = outcome$phenotype_id, seed = seed, status = status,
       converged = converged, credible_set_count = count,
-      reason = if (converged) "" else "SuSiE did not converge"))
+      reason = if (converged) "" else "SuSiE did not converge"), timing_row()))
     readr::write_tsv(index, extra_files[["index"]], quote = "needed")
     log_line(paste0("Outcome complete: ", id, "; ", status, "; credible sets: ", count))
   }
@@ -194,6 +244,8 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
   tables <- formatSusieOutputs(results, regions, extracted_results = extracted_results)
   files <- c(writeSusieOutputs(results, tables, prefix), extra_files)
   log_line(paste0("Gene complete: ", gene_id))
+  gene_complete <- TRUE
+  gene_timing <- log_gene_timing()
   hashed_files <- files[names(files) != "provenance"]
   artifacts <- tibble::tibble(
     name = names(hashed_files), basename = basename(hashed_files),
@@ -203,7 +255,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     base_seed = as.integer(base_seed), missing_code = missing_code,
     seed_algorithm = "susier-gene-outcome-seed-v1:UTF8-byte-length:SHA256-first7hex",
     rng_kind = c("Mersenne-Twister", "Inversion", "Rejection"),
-    outcomes = index, artifacts = artifacts))
+    outcomes = index, timing = gene_timing, artifacts = artifacts))
   jsonlite::write_json(record, files[["provenance"]], auto_unbox = TRUE, pretty = TRUE, na = "null")
   list(summary = tables$in_cs_variant_df, credible_sets = tables$cs_df,
        diagnostics = tables$covariate_explained_variants, index = index, files = files)

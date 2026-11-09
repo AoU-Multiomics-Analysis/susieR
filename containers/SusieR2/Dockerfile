@@ -47,7 +47,7 @@ RUN Rscript -e ' \
     invisible(lapply(c("tidyverse", "data.table", "optparse", "arrow", "devtools", \
                        "Rfast", "matrixStats", "digest", "jsonlite", "caret", \
                        "SummarizedExperiment", "Rsamtools", "eQTLUtils", "susieR", \
-                       "pgenlibr", "R.utils"), function(package) stopifnot(requireNamespace(package, quietly = TRUE))))'
+                       "pgenlibr", "R.utils", "parallelly", "RhpcBLASctl"), function(package) stopifnot(requireNamespace(package, quietly = TRUE))))'
 
 USER root
 RUN mkdir -p /opt/r/lib /opt/r/scripts
@@ -56,6 +56,7 @@ COPY R/utils/ImportFunctions.R \
      R/utils/MemoryHelpers.R \
      R/utils/OptParser.R \
      R/utils/SusiePerformance.R \
+     R/utils/PgenRuntime.R \
      R/utils/SusieFunctions.R \
      R/utils/PgenFunctions.R \
      R/utils/SusieOutputFunctions.R \

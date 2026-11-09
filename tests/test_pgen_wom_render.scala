@@ -101,6 +101,9 @@ if sys.argv[1].endswith('/filter_pgen_susie.R'):
       }
       if (taskName == "RunPgenSusieBatch") {
         assert(actual.contains("--missing-code=-1"), "Negative missing code changed")
+        val threadsIndex = actual.indexOf("--threads")
+        assert(threadsIndex >= 0 && actual(threadsIndex + 1) == "1",
+          "Thread limit did not reach the batch CLI")
       } else {
         assert(actual.find(_.startsWith("--min-call-rate=")).get.split("=", 2)(1).toDouble == 0.95,
           "Call-rate threshold did not reach the QC CLI")

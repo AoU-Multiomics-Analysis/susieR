@@ -15,6 +15,7 @@
   "SusieR2.TopPhenotypePvalueColumn": "qval",
   "SusieR2.DockerImage": "ghcr.io/aou-multiomics-analysis/susier/pgen:main",
   "SusieR2.Cpu": 1,
+  "SusieR2.Threads": 0,
   "SusieR2.BatchMemoryGB": 16,
   "SusieR2.BatchDiskGB": 100,
   "SusieR2.QcMemoryGB": 8,

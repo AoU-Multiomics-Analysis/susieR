@@ -7,6 +7,8 @@ dependencies:
   - r-base=4.4.3
   - r-tidyverse=2.0.0
   - r-data.table=1.17.0
+  - r-parallelly=1.48.0
+  - r-rhpcblasctl=0.23_42
   # data.table::fread requires R.utils for gzip/bzip2 inputs.
   - r-r.utils=2.13.0
   - r-optparse=1.7.5

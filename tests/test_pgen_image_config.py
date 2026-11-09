@@ -14,7 +14,7 @@ IMAGE_DIR = ROOT / "containers/SusieR2"
 WORKFLOW = ROOT / ".github/workflows/susier-v2-image.yml"
 UTILS = {
     "ImportFunctions.R", "InitFunctions.R", "MemoryHelpers.R", "OptParser.R",
-    "SusiePerformance.R", "SusieFunctions.R", "PgenFunctions.R",
+    "SusiePerformance.R", "PgenRuntime.R", "SusieFunctions.R", "PgenFunctions.R",
     "SusieOutputFunctions.R", "PgenGeneFunctions.R", "PgenBatchFunctions.R", "PgenQcFunctions.R",
 }
 SCRIPTS = {
@@ -81,7 +81,7 @@ class ImageContractTests(unittest.TestCase):
                          {"zlib": "1.3.2", "zstd": "1.5.7", "libdeflate": "1.25"})
         for name in {
             "r-base", "r-tidyverse", "r-data.table", "r-optparse", "r-arrow",
-            "r-r.utils",
+            "r-r.utils", "r-parallelly", "r-rhpcblasctl",
             "r-devtools", "r-rfast", "r-matrixstats", "r-digest", "r-jsonlite",
             "r-assertthat", "r-caret", "r-igraph", "r-lobstr", "r-rcpp",
             "r-cpp11", "r-cpp11armadillo", "r-mixsqp", "r-reshape", "r-crayon",

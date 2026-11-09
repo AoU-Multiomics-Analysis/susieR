@@ -32,6 +32,7 @@ workflow SusieR2 {
     String TopPhenotypePvalueColumn = "qval"
     String DockerImage = "ghcr.io/aou-multiomics-analysis/susier/pgen:main"
     Int Cpu = 1
+    Int Threads = 0
     Int BatchMemoryGB = 16
     Int BatchDiskGB = 100
     Int PlinkMemoryMB = 1024
@@ -136,6 +137,7 @@ workflow SusieR2 {
         plink_memory_mb = PlinkMemoryMB,
         docker_image = DockerImage,
         cpu = Cpu,
+        threads = Threads,
         memory_gb = BatchMemoryGB,
         disk_gb = BatchDiskGB,
         preemptible_attempts = PreemptibleAttempts,
@@ -396,6 +398,7 @@ task RunPgenSusieBatch {
     Int plink_memory_mb
     String docker_image
     Int cpu
+    Int threads = 0
     Int memory_gb
     Int disk_gb
     Int preemptible_attempts
@@ -433,6 +436,7 @@ task RunPgenSusieBatch {
       '--mac=~{mac}'
       --base-seed '~{base_seed}'
       --plink-memory-mb '~{plink_memory_mb}'
+      --threads '~{threads}'
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'
       --output-dir batch
     )

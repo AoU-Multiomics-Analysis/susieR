@@ -18,6 +18,7 @@ on:
       - "R/utils/MemoryHelpers.R"
       - "R/utils/OptParser.R"
       - "R/utils/SusiePerformance.R"
+      - "R/utils/PgenRuntime.R"
       - "R/utils/SusieFunctions.R"
       - "R/utils/PgenFunctions.R"
       - "R/utils/SusieOutputFunctions.R"
@@ -37,6 +38,7 @@ on:
       - "R/utils/MemoryHelpers.R"
       - "R/utils/OptParser.R"
       - "R/utils/SusiePerformance.R"
+      - "R/utils/PgenRuntime.R"
       - "R/utils/SusieFunctions.R"
       - "R/utils/PgenFunctions.R"
       - "R/utils/SusieOutputFunctions.R"
@@ -88,6 +90,13 @@ jobs:
           tags: susier-pgen:smoke-test
           cache-from: type=gha,scope=susier-pgen
           cache-to: type=gha,mode=max,scope=susier-pgen
+      - name: Check CPU detection inside a limited container
+        run: |
+          docker run --rm --cpus=1 susier-pgen:smoke-test Rscript -e '
+            source(file.path(Sys.getenv("SUSIER_FUNCTIONS_PATH"), "PgenRuntime.R"))
+            threading <- configurePgenThreads(0)
+            stopifnot(threading$available_threads == 1L, threading$selected_threads == 1L)
+          '
       - name: Test installed PGEN pipeline
         env:
           FULL_CHECKS: ${{ github.event_name == 'workflow_dispatch' && inputs.full_checks || false }}

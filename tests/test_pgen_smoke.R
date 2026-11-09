@@ -129,7 +129,7 @@ run_pgen_smoke <- function() {
   invoke("run_pgen_susie_batch.R", c(batch_args, "--pgen", "gs://bucket/input.pgen"),
          "unlocalized_input", "localization error")
   # No sample-list argument: use the genotype/phenotype intersection in PSAM order.
-  invoke("run_pgen_susie_batch.R", batch_args, "batch")
+  invoke("run_pgen_susie_batch.R", c(batch_args, "--threads", "2"), "batch")
   extracted_files <- paste0(file.path(batch_dir, "batch.genotypes"),
                              c(".pgen", ".pvar", ".psam"))
   stopifnot(all(file.exists(extracted_files)))
@@ -156,6 +156,13 @@ run_pgen_smoke <- function() {
   provenance_files <- gene_files[grepl("[.]provenance[.]json$", gene_files)]
   stopifnot(length(provenance_files) == 1L)
   provenance <- jsonlite::read_json(provenance_files[[1L]], simplifyVector = TRUE)
+  threading <- provenance$settings$threading
+  stopifnot(is.list(threading), threading$requested_threads == 2L,
+    threading$selected_threads == min(2L, threading$available_threads),
+    provenance$settings$plink_threads == threading$selected_threads)
+  plink_output <- readLines(file.path(batch_dir, "batch.genotypes.log"))
+  stopifnot(any(grepl(paste0("--threads ", threading$selected_threads), plink_output,
+                     fixed = TRUE)))
   stopifnot(provenance$settings$sample_count == 48L,
     provenance$settings$min_call_rate == .95,
     provenance$settings$mac == 0,
@@ -200,6 +207,17 @@ run_pgen_smoke <- function() {
   stopifnot(nrow(index) == 1L, identical(index$outcome_id, phenotype_id),
             identical(index$gene_id, gene_id), identical(index$status, "CONVERGED"),
             isTRUE(index$converged))
+  timing_columns <- c("data_loading_seconds", "data_preparation_seconds",
+                      "fine_mapping_seconds", "outcome_total_seconds")
+  stopifnot(all(timing_columns %in% names(index)),
+    all(vapply(index[timing_columns], is.numeric, logical(1))),
+    all(is.finite(as.matrix(index[timing_columns]))),
+    all(as.matrix(index[timing_columns]) >= 0),
+    index$outcome_total_seconds >= sum(as.matrix(index[timing_columns[1:3]])))
+  gene_log <- readLines(gene_files[grepl("[.]log$", gene_files)])
+  stopifnot(any(grepl("Gene timing:", gene_log, fixed = TRUE)),
+    any(grepl("data_loading", gene_log, fixed = TRUE)),
+    any(grepl("fine_mapping", gene_log, fixed = TRUE)))
   summary <- arrow::read_parquet(file.path(aggregate_dir, "susie.parquet"))
   credible_sets <- arrow::read_parquet(file.path(aggregate_dir, "credible_sets.parquet"))
   stopifnot(nrow(summary) > 0L, nrow(credible_sets) > 0L,

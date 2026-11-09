@@ -42,7 +42,10 @@ check_batch_provenance <- function() {
     top_phenotype_pvalue_column = "qval", plink_memory_mb = 1024L))
   batch_files <- unlist(opt[c("pgen", "pvar", "psam")], use.names = FALSE)
   a <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
-  stopifnot(identical(a$settings$memory_debug, FALSE))
+  stopifnot(identical(a$settings$memory_debug, FALSE),
+    identical(a$settings$mac, 0),
+    identical(a$settings$mac_sample_scope, "all_input_pgen_samples"),
+    identical(a$settings$mac_include_nonfounders, TRUE))
   opt$memory_debug <- TRUE
   debug <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
   stopifnot(identical(debug$settings$memory_debug, TRUE))
@@ -78,6 +81,77 @@ check_batch_provenance <- function() {
   variants <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
   stopifnot(variants$inputs$variant_list$present,
     identical(variants$settings$variant_filter_mode, "variant_list"))
+  opt$mac <- 5
+  mac_variants <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(mac_variants$settings$mac, 5),
+    identical(mac_variants$settings$variant_filter_mode, "mac+variant_list"))
+  opt$variant_list <- NULL
+  mac_ancestry <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(mac_ancestry$settings$variant_filter_mode, "mac+ancestry_maf"))
+  opt$ancestry <- NULL
+  mac_only <- makePgenBatchProvenance(opt, "batch1", batch_files, "PLINK test")
+  stopifnot(identical(mac_only$settings$variant_filter_mode, "mac"))
+}
+
+check_mac_cli_and_validation <- function() {
+  parser <- optparse::OptionParser(option_list = batch_options)
+  defaults <- optparse::parse_args(parser, args = character(), print_help_and_exit = FALSE)
+  stopifnot("The MAC filter must be off by default" = identical(defaults$mac, 0))
+  enabled <- optparse::parse_args(parser, args = c("--mac", "5"), print_help_and_exit = FALSE)
+  fractional <- optparse::parse_args(parser, args = c("--mac", "1.5"), print_help_and_exit = FALSE)
+  stopifnot(identical(enabled$mac, 5), identical(fractional$mac, 1.5))
+
+  directory <- tempfile("batch-mac-inputs-")
+  dir.create(directory)
+  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  roles <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed", "qtl_results", "covariates")
+  opt <- setNames(lapply(roles, function(role) {
+    path <- file.path(directory, role)
+    writeLines("fixture", path)
+    path
+  }), roles)
+  opt <- c(opt, list(missing_code = "NA", output_dir = file.path(directory, "output"),
+    cis_distance = 10L, base_seed = 1L, plink_memory_mb = 1024L, maf = 0))
+  readr::write_tsv(tibble::tibble(batch_id = "batch1", chromosome = "1", gene_id = "gene1",
+    outcome_id = "p1", phenotype_id = "p1", phenotype_pos = 100L,
+    requested_window_start = 90L, requested_window_end = 110L,
+    window_start = 90L, window_end = 110L, region = "1:90-110"), opt$worklist)
+  capture <- file.path(directory, "plink.args")
+  opt$plink2 <- file.path(directory, "record-plink")
+  # Replace only the external executable. The real runner builds and quotes
+  # the command; the deliberate exit stops before opening dummy PGEN files.
+  writeLines(c("#!/usr/bin/env bash", "set -euo pipefail",
+    'if [[ "${1-}" == --version ]]; then echo "PLINK recording fixture"; exit 0; fi',
+    paste0("printf '%s\\n' \"$@\" > ", shQuote(capture)), "exit 1"), opt$plink2)
+  Sys.chmod(opt$plink2, mode = "0755")
+  failure <- function(options) tryCatch({
+    runPgenSusieBatch(options)
+    stop("Expected the batch to stop", call. = FALSE)
+  }, error = identity)
+  for (value in list(-1, 1.5, NA_real_, NaN, Inf, "5", c(1, 2), .Machine$integer.max + 1)) {
+    invalid <- opt
+    invalid$mac <- value
+    error <- failure(invalid)
+    stopifnot(inherits(error, "error"), grepl("MAC", conditionMessage(error)),
+      !file.exists(capture), !dir.exists(opt$output_dir))
+  }
+  for (value in list(NULL, 0, 5)) {
+    current <- opt
+    current$mac <- value
+    error <- failure(current)
+    stopifnot(grepl("PLINK multi-region extraction failed", conditionMessage(error)),
+      file.exists(capture))
+    arguments <- readLines(capture)
+    if (is.null(value) || value == 0) {
+      stopifnot(!"--mac" %in% arguments, !"--nonfounders" %in% arguments)
+    } else {
+      index <- match("--mac", arguments)
+      stopifnot(!is.na(index), identical(arguments[[index + 1L]], "5"),
+        sum(arguments == "--mac") == 1L, "--nonfounders" %in% arguments)
+    }
+    unlink(capture)
+    unlink(opt$output_dir, recursive = TRUE)
+  }
 }
 check_memory_debug_cli <- function() {
   parser <- optparse::OptionParser(option_list = batch_options)
@@ -100,6 +174,7 @@ check_memory_debug_cli <- function() {
   }
 }
 check_memory_debug_cli()
+check_mac_cli_and_validation()
 if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "additional")) check_additional_ownership()
 if (Sys.getenv("PGEN_INPUT_CHECK", "all") %in% c("all", "provenance")) check_batch_provenance()
 message("PGEN batch input tests passed")

@@ -193,6 +193,21 @@ class PgenWdlTests(unittest.TestCase):
         WDL.values_from_json(absent, self.doc.workflow.available_inputs,
                              self.doc.workflow.required_inputs, namespace='SusieR2')
 
+    def test_mac_defaults_off_and_reaches_the_batch_cli(self):
+        inputs = {decl.name: decl for decl in self.doc.workflow.inputs}
+        self.assertIn('MAC', inputs)
+        self.assertIsInstance(inputs['MAC'].type, WDL.Type.Int)
+        self.assertEqual(inputs['MAC'].expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 0)
+        call = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        for threshold in (0, 5):
+            with self.subTest(mac=threshold):
+                env = WDL.Env.Bindings().bind('MAC', WDL.Value.Int(threshold))
+                forwarded = call.inputs['mac'].eval(env, WDL.StdLib.Base('1.0'))
+                self.assertEqual(forwarded.value, threshold)
+                payload = self.execute(self.tasks['RunPgenSusieBatch'], overrides={'mac': forwarded})
+                self.assertIn('--mac=' + str(threshold), payload['args'])
+
     def manifest_files(self):
         rows = next(node for node in walk(self.doc.workflow)
                     if isinstance(node, WDL.Tree.Decl) and node.name == 'pgen_rows')

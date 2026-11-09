@@ -26,6 +26,7 @@ workflow SusieR2 {
     Int BaseSeed = 1
     Boolean MemoryDebug = false
     Float MAF = 0.0
+    Int MAC = 0
     Boolean SelectTopPhenotypePerCluster = false
     String TopPhenotypePvalueColumn = "qval"
     String DockerImage = "ghcr.io/aou-multiomics-analysis/susier/pgen:main"
@@ -91,6 +92,7 @@ workflow SusieR2 {
         additional_genotypes = AdditionalGenotypes,
         cis_distance = CisDistance,
         maf = MAF,
+        mac = MAC,
         base_seed = BaseSeed,
         memory_debug = MemoryDebug,
         select_top_phenotype_per_cluster = SelectTopPhenotypePerCluster,
@@ -268,6 +270,7 @@ task RunPgenSusieBatch {
     File? additional_genotypes
     Int cis_distance
     Float maf
+    Int mac = 0
     Int base_seed
     Boolean memory_debug
     Boolean select_top_phenotype_per_cluster
@@ -309,6 +312,7 @@ task RunPgenSusieBatch {
       '--missing-code=~{sub(missing_code, "'", "'\"'\"'")}'
       --cis-distance '~{cis_distance}'
       --maf '~{maf}'
+      '--mac=~{mac}'
       --base-seed '~{base_seed}'
       --plink-memory-mb '~{plink_memory_mb}'
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'

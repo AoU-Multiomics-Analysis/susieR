@@ -46,7 +46,9 @@ object PgenWomRender extends App {
             field -> inputValue(fieldType, field)
           }, composite)
         case WomBooleanType => WomBoolean(includeOptional)
-        case WomIntegerType => WomInteger(1)
+        case WomIntegerType => WomInteger(if (name == "mac") {
+          if (includeOptional) 5 else 0
+        } else 1)
         case WomFloatType => WomFloat(0.0)
         case WomStringType =>
           WomString(if (name == "missing_code") "-1" else "qval 'quoted' $(touch PWNED) `touch PWNED`")
@@ -92,6 +94,8 @@ pathlib.Path('capture.args').write_bytes(b''.join(os.fsencode(arg) + b'\0' for a
           "Incorrect optional file argument: " + name)
       }
       assert(actual.contains("--missing-code=-1"), "Negative missing code changed")
+      assert(actual.contains(if (includeOptional) "--mac=5" else "--mac=0"),
+        "MAC threshold did not reach the batch CLI")
       assert(!actual.exists(_.contains("gs://")), "Unresolved cloud input reached the batch CLI")
       assert(!Files.exists(cwd.resolve("PWNED")), "File or string argument executed shell code")
       println("Cromwell 85 batch command localization passed (optional inputs=" + includeOptional + ")")

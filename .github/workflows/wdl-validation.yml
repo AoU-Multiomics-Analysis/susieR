@@ -9,6 +9,7 @@ on:
       - "tests/test_covariate_explained_wdl.sh"
       - "tests/test_pgen_wdl.py"
       - "tests/test_pgen_womtool.sh"
+      - "tests/test_pgen_wom_render.scala"
       - "workflows/**/*.wdl"
   pull_request:
     branches: [ "main" ]
@@ -17,6 +18,7 @@ on:
       - "tests/test_covariate_explained_wdl.sh"
       - "tests/test_pgen_wdl.py"
       - "tests/test_pgen_womtool.sh"
+      - "tests/test_pgen_wom_render.scala"
       - "workflows/**/*.wdl"
 
 jobs:

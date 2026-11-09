@@ -96,10 +96,21 @@ writePgenQcPlan <- function(manifest, batch_chromosomes, output_dir) {
   indices <- as.integer(mapping$pgen_index)
   unique_manifest <- file.path(output_dir, "unique_pgens.tsv")
   batch_pgen_indices <- file.path(output_dir, "batch_pgen_indices.json")
+  pgen_batch_indices <- file.path(output_dir, "pgen_batch_indices.json")
+  batch_within_pgen_indices <- file.path(output_dir, "batch_within_pgen_indices.json")
+  groups <- lapply(seq_len(nrow(unique_pgens)) - 1L, function(source_index) {
+    which(indices == source_index) - 1L
+  })
+  within_indices <- integer(length(indices))
+  for (group in groups) within_indices[group + 1L] <- seq_along(group) - 1L
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   writePgenManifest(unique_pgens, unique_manifest)
   jsonlite::write_json(indices, batch_pgen_indices, auto_unbox = FALSE)
+  jsonlite::write_json(groups, pgen_batch_indices, auto_unbox = FALSE)
+  jsonlite::write_json(within_indices, batch_within_pgen_indices, auto_unbox = FALSE)
   invisible(list(unique_manifest = unique_manifest, batch_pgen_indices = batch_pgen_indices,
+                 pgen_batch_indices = pgen_batch_indices,
+                 batch_within_pgen_indices = batch_within_pgen_indices,
                  unique_pgens = unique_pgens, indices = indices))
 }
 

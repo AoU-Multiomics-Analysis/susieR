@@ -8,6 +8,7 @@ import languages.wdl.draft3.WdlDraft3LanguageFactory
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.sys.process._
+import scala.concurrent.Future
 import wom.callable.{CommandTaskDefinition, RuntimeEnvironment}
 import eu.timepit.refined.types.numeric.PosInt
 import wom.expression.EmptyIoFunctionSet
@@ -21,12 +22,14 @@ object PgenWomRender extends App {
   val factory = new WdlDraft3LanguageFactory(ConfigFactory.parseString("enabled = true"))
   val bundle = factory.getWomBundle(source, None, "", List.empty, List(factory))
     .fold(errors => sys.error(errors.toString), identity)
-  for (taskName <- List("FilterPgen", "RunPgenSusieBatch"); includeOptional <- List(false, true)) {
+  for (taskName <- List("PreparePgenBatches", "RunPgenSusieBatch"); includeOptional <- List(false, true)) {
     val task = bundle.allCallables(taskName).asInstanceOf[CommandTaskDefinition]
     val cwd = Files.createTempDirectory("susier-wom-render-")
     try {
       val mapping = mutable.Map.empty[String, String]
       val expectedFiles = mutable.Map.empty[String, String]
+      val expectedLists = mutable.Map.empty[String, Vector[String]]
+      val generatedFiles = mutable.Set.empty[String]
       def inputValue(typ: WomType, name: String): WomValue = typ match {
         case WomSingleFileType =>
           val uri = "gs://bucket/" + name
@@ -35,6 +38,10 @@ object PgenWomRender extends App {
           mapping(uri) = local.toString
           expectedFiles(name) = local.toString
           WomSingleFile(uri)
+        case array: WomArrayType =>
+          val members = Vector(0, 1).map(index => inputValue(array.memberType, name + "_" + index))
+          expectedLists(name) = Vector(0, 1).map(index => expectedFiles.remove(name + "_" + index).get)
+          WomArray(array, members)
         case optional: WomOptionalType =>
           WomOptionalValue(optional.memberType,
             if (includeOptional) Some(inputValue(optional.memberType, name)) else None)
@@ -58,12 +65,20 @@ object PgenWomRender extends App {
       // Cromwell must map File values while it instantiates the command.
       def localize(value: WomValue): WomValue = WomFileMapper.mapWomFiles(file => {
         val path = mapping.getOrElse(file.value,
-          if (mapping.valuesIterator.contains(file.value)) file.value
+          if (mapping.valuesIterator.contains(file.value) || generatedFiles.contains(file.value)) file.value
           else sys.error("Unexpected command File: " + file.value))
         WomSingleFile(path)
       })(value).get
       val runtime = RuntimeEnvironment(cwd.toString, cwd.toString, PosInt.unsafeFrom(1), 16.0, 0L, 0L)
-      val command = task.instantiateCommand(inputs, new EmptyIoFunctionSet, localize, runtime)
+      val io = new EmptyIoFunctionSet {
+        override def writeFile(path: String, content: String): Future[WomSingleFile] = {
+          val output = cwd.resolve(path)
+          Files.writeString(output, content)
+          generatedFiles += output.toString
+          Future.successful(WomSingleFile(output.toString))
+        }
+      }
+      val command = task.instantiateCommand(inputs, io, localize, runtime)
         .toEither.fold(errors => sys.error(errors.toString), _.commandString)
       Files.writeString(cwd.resolve("command.sh"), command)
       val bin = Files.createDirectory(cwd.resolve("bin"))
@@ -71,11 +86,20 @@ object PgenWomRender extends App {
       Files.writeString(stub, """#!/usr/bin/env python3
 import os, pathlib, sys
 pathlib.Path('capture.args').write_bytes(b''.join(os.fsencode(arg) + b'\0' for arg in sys.argv[1:]))
-if sys.argv[1].endswith('/filter_pgen_susie.R'):
+if sys.argv[1].endswith('/prepare_pgen_susie.R'):
     output = pathlib.Path(sys.argv[sys.argv.index('--output-dir') + 1])
-    output.mkdir()
+    batches = output / 'batches'
+    batches.mkdir(parents=True)
+    worklists = pathlib.Path(sys.argv[sys.argv.index('--worklists-file') + 1]).read_text().splitlines()
+    pathlib.Path('capture.worklists').write_text('\n'.join(worklists) + '\n')
+    for number in range(1, len(worklists) + 1):
+        for extension in ('pgen', 'pvar', 'psam', 'preparation.json'):
+            (batches / ('batch_%06d.' % number + extension)).write_text('fixture\n')
+    (output / 'batch_worklists.txt').write_text('\n'.join(worklists) + '\n')
+    qc = output / 'qc'
+    qc.mkdir()
     for name in ('filtered.pgen', 'filtered.pvar', 'filtered.psam', 'variant_qc.tsv.gz', 'qc.json'):
-        (output / name).write_text('fixture\n')
+        (qc / name).write_text('fixture\n')
 """)
       assert(stub.toFile.setExecutable(true), "Could not make the recording CLI executable")
       val stdout = new StringBuilder
@@ -86,13 +110,20 @@ if sys.argv[1].endswith('/filter_pgen_susie.R'):
       assert(exit == 0, "Cromwell-rendered batch command failed (optional inputs=" + includeOptional + "):\n" + stderr)
       val actual = new String(Files.readAllBytes(cwd.resolve("capture.args")), UTF_8)
         .split("\u0000", -1).dropRight(1).toVector
-      val cli = if (taskName == "FilterPgen") "filter_pgen_susie.R" else "run_pgen_susie_batch.R"
+      val cli = if (taskName == "PreparePgenBatches") "prepare_pgen_susie.R" else "run_pgen_susie_batch.R"
       assert(actual.head == "/opt/r/scripts/" + cli, "Unexpected CLI")
       for ((name, path) <- expectedFiles) {
         val flag = "--" + name.replace('_', '-')
         val index = actual.indexOf(flag)
         assert(index >= 0 && index + 1 < actual.size && actual(index + 1) == path,
           "Cromwell did not pass the exact local path for " + flag + ": " + actual)
+      }
+      for ((name, paths) <- expectedLists) {
+        assert(name == "worklists", "Unexpected File array input: " + name)
+        val captured = Files.readAllLines(cwd.resolve("capture.worklists")).asScala.toVector
+        assert(captured == paths, "Cromwell did not localize File array members before write_lines: " + captured)
+        assert(captured.forall(path => Files.isReadable(Paths.get(path))), "Generated list contains an unreadable input")
+        assert(!captured.exists(_.contains("gs://")), "Unresolved cloud URI reached the generated list")
       }
       for (name <- List("sample_list", "ancestry", "variant_list", "additional_genotypes", "genotype_qc_report")
            if taskName == "RunPgenSusieBatch") {

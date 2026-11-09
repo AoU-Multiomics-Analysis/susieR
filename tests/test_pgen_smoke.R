@@ -8,7 +8,7 @@ source(file.path(functions_dir, "PgenFunctions.R"))
 run_pgen_smoke <- function() {
   plink <- Sys.getenv("PLINK2", unset = Sys.which("plink2"))
   stopifnot("A real PLINK 2 executable is required" = nzchar(plink))
-  scripts <- c("plan_pgen_susie.R", "filter_pgen_susie.R", "run_pgen_susie_batch.R", "aggregate_pgen_susie.R")
+  scripts <- c("plan_pgen_susie.R", "filter_pgen_susie.R", "prepare_pgen_susie.R", "run_pgen_susie_batch.R", "aggregate_pgen_susie.R")
   stopifnot("The PGEN CLIs must be installed" =
               all(file.exists(file.path(scripts_dir, scripts))))
   directory <- tempfile("pgen smoke 'quoted' $literal ", tmpdir = dirname(tempdir()))
@@ -105,10 +105,12 @@ run_pgen_smoke <- function() {
             identical(work$gene_id, gene_id), work$window_start == 900L,
             work$window_end == 1100L)
 
-  qc_dir <- file.path(directory, "qc")
-  invoke("filter_pgen_susie.R", c("--pgen", pgen, "--pvar", pvar, "--psam", psam,
+  prepare_dir <- file.path(directory, "prepared")
+  qc_dir <- file.path(prepare_dir, "qc")
+  invoke("prepare_pgen_susie.R", c("--pgen", pgen, "--pvar", pvar, "--psam", psam,
+    "--worklists-file", file.path(plan_dir, "batch_worklists.txt"), "--cis-distance", "100",
     "--mac", "0", "--min-call-rate", "0.95", "--plink2", plink,
-    "--output-dir", qc_dir), "shared_qc")
+    "--output-dir", prepare_dir), "preparation")
   prepared <- paste0(file.path(qc_dir, "filtered"), c(".pgen", ".pvar", ".psam"))
   qc_report <- file.path(qc_dir, "qc.json")
   qc <- jsonlite::read_json(qc_report, simplifyVector = TRUE)
@@ -117,21 +119,26 @@ run_pgen_smoke <- function() {
     identical(jsonlite::read_json(file.path(plan_dir, "batch_pgen_indices.json"),
                                   simplifyVector = TRUE), 0L))
 
+  shards <- paste0(file.path(prepare_dir, "batches", work$batch_id[[1L]]), c(".pgen", ".pvar", ".psam"))
+  preparation_report <- file.path(prepare_dir, "batches", paste0(work$batch_id[[1L]], ".preparation.json"))
+  stopifnot(all(file.exists(shards)), file.exists(preparation_report))
   batch_dir <- file.path(directory, "batch")
   batch_args <- c(
-    "--pgen", prepared[[1L]], "--pvar", prepared[[2L]], "--psam", prepared[[3L]],
+    "--pgen", shards[[1L]], "--pvar", shards[[2L]], "--psam", shards[[3L]],
+    "--prepared-batch-manifest", preparation_report,
     "--genotype-qc-report", qc_report,
     "--worklist", worklists[[1L]], "--phenotype-bed", beds[[1L]],
     "--qtl-results", qtl, "--covariates", covariates, "--cis-distance", "100",
-    "--base-seed", "82", "--plink2", plink, "--missing-code=NA",
+    "--base-seed", "82", "--plink2", file.path(directory, "does-not-exist-plink"), "--missing-code=NA",
     "--output-dir", batch_dir
   )
   invoke("run_pgen_susie_batch.R", c(batch_args, "--pgen", "gs://bucket/input.pgen"),
          "unlocalized_input", "localization error")
   # No sample-list argument: use the genotype/phenotype intersection in PSAM order.
-  invoke("run_pgen_susie_batch.R", c(batch_args, "--threads", "2"), "batch")
-  extracted_files <- paste0(file.path(batch_dir, "batch.genotypes"),
-                             c(".pgen", ".pvar", ".psam"))
+  batch_output <- invoke("run_pgen_susie_batch.R", c(batch_args, "--threads", "2"), "batch")
+  extracted_files <- shards
+  stopifnot(!file.exists(file.path(batch_dir, "batch.genotypes.pgen")),
+    !file.exists(file.path(batch_dir, "plink.stdout.log")))
   stopifnot(all(file.exists(extracted_files)))
   reader <- openPgenReader(extracted_files[[1L]], extracted_files[[2L]], extracted_files[[3L]])
   on.exit(closePgenReader(reader), add = TRUE)
@@ -159,14 +166,25 @@ run_pgen_smoke <- function() {
   threading <- provenance$settings$threading
   stopifnot(is.list(threading), threading$requested_threads == 2L,
     threading$selected_threads == min(2L, threading$available_threads),
-    provenance$settings$plink_threads == threading$selected_threads)
-  plink_output <- readLines(file.path(batch_dir, "batch.genotypes.log"))
-  stopifnot(any(grepl(paste0("--threads ", threading$selected_threads), plink_output,
-                     fixed = TRUE)))
+    provenance$settings$plink_threads == 1L,
+    threading$arrow_threads == threading$selected_threads,
+    threading$data_table_threads <= threading$selected_threads)
+  stopifnot(!file.exists(file.path(batch_dir, "batch.genotypes.log")),
+    any(grepl("CPU threads: requested=2", batch_output, fixed = TRUE)),
+    any(grepl("USE prepared batch shard; no PLINK execution", batch_output, fixed = TRUE)))
+  batch_timing <- unlist(provenance$batch_timing, use.names = FALSE)
+  stopifnot(length(batch_timing) == 4L, all(is.finite(batch_timing)), all(batch_timing >= 0),
+    provenance$batch_timing$plink_extraction_seconds == 0,
+    provenance$batch_timing$setup_total_seconds >= sum(batch_timing[1:3]))
   stopifnot(provenance$settings$sample_count == 48L,
     provenance$settings$min_call_rate == .95,
     provenance$settings$mac == 0,
     identical(provenance$genotype_qc$count_source, "pgen_hardcalls"),
+    provenance$prepared_batch$variant_count == 40L,
+    identical(provenance$inputs$pgen$sha256, provenance$prepared_batch$shard_files$pgen$sha256),
+    identical(provenance$genotype_qc$filtered_files$pgen$sha256,
+      provenance$prepared_batch$source_filtered_files$pgen$sha256),
+    provenance$inputs$prepared_batch_manifest$present,
     identical(provenance$settings$sample_selection, "genotype_phenotype_intersection"),
     identical(provenance$settings$sample_order, "psam"),
     identical(provenance$inputs$sample_list$present, FALSE),
@@ -236,7 +254,7 @@ run_pgen_smoke <- function() {
   stopifnot(nrow(reusable) == 1L, identical(reusable$chromosome, "1"),
     identical(unlist(reusable[c("pgen", "pvar", "psam")], use.names = FALSE), prepared))
   passed <- TRUE
-  message("PGEN smoke passed: one planner, PLINK extraction, fitted outcome and aggregate")
+  message("PGEN smoke passed: upstream preparation, no-PLINK worker, fitted outcome and aggregate")
 }
 
 run_pgen_smoke()

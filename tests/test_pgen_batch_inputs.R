@@ -269,6 +269,11 @@ check_mac_cli_and_validation <- function() {
     print_help_and_exit = FALSE)
   stopifnot(is.null(defaults$genotype_qc_report), identical(qc$genotype_qc_report, "qc.json"))
 
+  prepared <- optparse::parse_args(parser,
+    args = c("--prepared-batch-manifest", "batch.preparation.json"), print_help_and_exit = FALSE)
+  stopifnot(is.null(defaults$prepared_batch_manifest),
+    identical(prepared$prepared_batch_manifest, "batch.preparation.json"))
+
   directory <- tempfile("batch-mac-inputs-")
   dir.create(directory)
   on.exit(unlink(directory, recursive = TRUE), add = TRUE)
@@ -303,6 +308,12 @@ check_mac_cli_and_validation <- function() {
   report$genotype_qc_report <- opt$pgen
   report$mac <- 1
   error <- failure(report)
+  stopifnot(grepl("--mac to 0", conditionMessage(error)), !file.exists(capture),
+    !dir.exists(opt$output_dir))
+  prepared <- opt
+  prepared$prepared_batch_manifest <- opt$pgen
+  prepared$mac <- 1
+  error <- failure(prepared)
   stopifnot(grepl("--mac to 0", conditionMessage(error)), !file.exists(capture),
     !dir.exists(opt$output_dir))
   for (value in list(-1, 1.5, NA_real_, NaN, Inf, "5", c(1, 2), .Machine$integer.max + 1)) {

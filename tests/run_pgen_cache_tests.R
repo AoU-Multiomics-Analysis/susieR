@@ -1,0 +1,10 @@
+# Run real PGEN cache planning, storage, and complete-fit checks.
+benchmark_library <- Sys.getenv("BENCH_LIBRARY", unset = "")
+if (nzchar(benchmark_library)) .libPaths(c(benchmark_library, .libPaths()))
+args <- commandArgs(trailingOnly = TRUE)
+repo_dir <- normalizePath(if (length(args)) args[[1L]] else getwd(), mustWork = TRUE)
+source(file.path(repo_dir, "tests", "test_pgen_cache.R"))
+run_pgen_cache_tests(repo_dir)
+source(file.path(repo_dir, "tests", "test_pgen_cache_fits.R"))
+run_pgen_cache_fit_tests(repo_dir)
+message("All adaptive PGEN cache tests passed.")

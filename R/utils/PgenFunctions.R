@@ -1,6 +1,6 @@
 # Reusable reader for diploid, biallelic autosomal PGEN hardcalls.
 # The reader owns its handles. Call closePgenReader() when work is complete.
-# No imputation, dosage conversion or statistical filtering occurs here.
+# Indexed and window reads can optionally mean-impute native dosages.
 
 .pgenNormalizeChromosome <- function(value) {
   sub("^(chr)+", "", as.character(value), ignore.case = TRUE)
@@ -107,6 +107,7 @@ openPgenReader <- function(pgen_path, pvar_path, psam_path, sample_ids = NULL) {
   reader <- new.env(parent = emptyenv())
   class(reader) <- "PgenReader"
   reader$closed <- FALSE
+  reader$pgen_path <- normalizePath(pgen_path, mustWork = TRUE)
   reader$pvar <- NULL
   reader$pgen <- NULL
   opened <- FALSE
@@ -159,10 +160,8 @@ openPgenReader <- function(pgen_path, pvar_path, psam_path, sample_ids = NULL) {
   reader
 }
 
-# Bounds are inclusive. The output is always a variants-by-samples matrix.
-# missing_code is exactly "NA" or "-1"; integer storage is the default.
-readPgenWindow <- function(reader, chrom, start, end,
-                           as_double = FALSE, missing_code = "NA") {
+# Resolve inclusive windows using metadata only, retaining physical file order.
+.pgenWindowIndices <- function(reader, chrom, start, end, allow_empty = FALSE) {
   if (!is.environment(reader) || !inherits(reader, "PgenReader")) {
     stop("reader must be a PgenReader", call. = FALSE)
   }
@@ -174,44 +173,123 @@ readPgenWindow <- function(reader, chrom, start, end,
   chromosome <- .pgenNormalizeChromosome(chrom)
   if (!chromosome %in% as.character(seq_len(22L))) {
     stop("Unsupported ploidy: only diploid autosomal chromosomes 1-22 are supported; ",
-         "sex, mitochondrial and other chromosome codes are not supported",
-         call. = FALSE)
+         "sex, mitochondrial and other chromosome codes are not supported", call. = FALSE)
   }
   valid_coordinate <- function(value) {
     is.numeric(value) && length(value) == 1L && !is.na(value) &&
       is.finite(value) && value >= 1 && value == floor(value)
   }
   if (!valid_coordinate(start) || !valid_coordinate(end) || start > end) {
-    stop("start and end must be positive integer bounds, with start <= end",
-         call. = FALSE)
-  }
-  if (!is.logical(as_double) || length(as_double) != 1L || is.na(as_double)) {
-    stop("as_double must be TRUE or FALSE", call. = FALSE)
-  }
-  if (!is.character(missing_code) || length(missing_code) != 1L ||
-      is.na(missing_code) || !missing_code %in% c("NA", "-1")) {
-    stop("missing_code must be \"NA\" or \"-1\"", call. = FALSE)
+    stop("start and end must be positive integer bounds, with start <= end", call. = FALSE)
   }
   lookup <- reader$position_lookup[[chromosome]]
   if (is.null(lookup)) {
+    if (allow_empty) return(integer())
     stop("No variants in the requested PGEN region", call. = FALSE)
   }
   left <- findInterval(start, lookup$positions, left.open = TRUE) + 1L
   right <- findInterval(end, lookup$positions)
   if (left > right) {
+    if (allow_empty) return(integer())
     stop("No variants in the requested PGEN region", call. = FALSE)
   }
-  indices <- sort(lookup$indices[seq.int(left, right)])
+  sort(lookup$indices[seq.int(left, right)])
+}
+
+# Decode physical variant indices. Return retained indices as well as values so
+# duplicate variant names and all-missing exclusions cannot change row mapping.
+readPgenVariants <- function(reader, variant_indices, sample_ids = NULL,
+                             as_double = TRUE, missing_code = "NA", meanimpute = TRUE) {
+  if (!is.environment(reader) || !inherits(reader, "PgenReader")) {
+    stop("reader must be a PgenReader", call. = FALSE)
+  }
+  if (isTRUE(reader$closed)) stop("PgenReader is closed", call. = FALSE)
+  if (!is.numeric(variant_indices) || anyNA(variant_indices) ||
+      any(!is.finite(variant_indices)) || any(variant_indices != floor(variant_indices)) ||
+      any(variant_indices < 1 | variant_indices > nrow(reader$variants)) ||
+      anyDuplicated(variant_indices)) {
+    stop("variant_indices must be distinct physical PGEN row indices", call. = FALSE)
+  }
+  indices <- as.integer(variant_indices)
   region <- reader$variants[indices, , drop = FALSE]
+  if (any(!region$chromosome %in% as.character(seq_len(22L)))) {
+    stop("Unsupported ploidy: only diploid autosomal chromosomes 1-22 are supported", call. = FALSE)
+  }
   if (any(grepl(",", region$ALT, fixed = TRUE))) {
     stop("The requested PGEN region has multiallelic variants", call. = FALSE)
   }
-  hardcalls <- pgenlibr::ReadIntList(reader$pgen, as.integer(indices))
-  result <- t(hardcalls[reader$sample_order, , drop = FALSE])
-  dimnames(result) <- list(region$variant_id, reader$sample_ids)
-  if (missing_code == "-1") result[is.na(result)] <- -1L
-  if (as_double) storage.mode(result) <- "double"
-  result
+  if (!is.logical(as_double) || length(as_double) != 1L || is.na(as_double)) {
+    stop("as_double must be TRUE or FALSE", call. = FALSE)
+  }
+  if (!is.logical(meanimpute) || length(meanimpute) != 1L || is.na(meanimpute)) {
+    stop("meanimpute must be TRUE or FALSE", call. = FALSE)
+  }
+  if (!is.character(missing_code) || length(missing_code) != 1L ||
+      is.na(missing_code) || !missing_code %in% c("NA", "-1")) {
+    stop("missing_code must be \"NA\" or \"-1\"", call. = FALSE)
+  }
+  pgen <- reader$pgen
+  sample_order <- reader$sample_order
+  selected_ids <- reader$sample_ids
+  if (!is.null(sample_ids)) {
+    if (!is.character(sample_ids) || !length(sample_ids) || anyNA(sample_ids) ||
+        any(!nzchar(sample_ids)) || anyDuplicated(sample_ids) ||
+        !all(sample_ids %in% reader$sample_ids)) {
+      stop("sample_ids must be unique nonempty IDs present in the PgenReader", call. = FALSE)
+    }
+    selected_ids <- sample_ids
+    if (length(indices) && !identical(sample_ids, reader$sample_ids)) {
+      raw_indices <- match(sample_ids, reader$raw_sample_ids)
+      sorted_indices <- sort(raw_indices)
+      sample_order <- match(raw_indices, sorted_indices)
+      pgen <- pgenlibr::NewPgen(reader$pgen_path, pvar = reader$pvar,
+        raw_sample_ct = reader$raw_sample_count,
+        sample_subset = as.integer(sorted_indices))
+      on.exit(pgenlibr::ClosePgen(pgen), add = TRUE)
+    }
+  }
+  if (!length(indices)) {
+    result <- matrix(if (meanimpute || as_double) numeric() else integer(),
+      nrow = 0L, ncol = length(selected_ids), dimnames = list(NULL, selected_ids))
+    return(list(genotypes = result, variant_indices = integer()))
+  }
+  if (meanimpute) {
+    repeat {
+      genotypes <- tryCatch(pgenlibr::ReadList(pgen, indices, meanimpute = TRUE), error = identity)
+      if (!inherits(genotypes, "error")) break
+      detail <- conditionMessage(genotypes)
+      pattern <- "^variant ([0-9]+) has only missing dosages$"
+      if (!grepl(pattern, detail)) stop(genotypes)
+      missing_index <- as.integer(sub(pattern, "\\1", detail))
+      if (is.na(missing_index) || !missing_index %in% indices) stop(genotypes)
+      message("Removing entirely missing PGEN variant: ",
+              reader$variants$variant_id[[missing_index]])
+      indices <- indices[indices != missing_index]
+      if (!length(indices)) {
+        genotypes <- matrix(numeric(), nrow = length(selected_ids), ncol = 0L)
+        break
+      }
+    }
+    region <- reader$variants[indices, , drop = FALSE]
+  } else {
+    genotypes <- pgenlibr::ReadIntList(pgen, indices)
+  }
+  result <- t(genotypes[sample_order, , drop = FALSE])
+  dimnames(result) <- list(if (length(indices)) region$variant_id else NULL, selected_ids)
+  if (!meanimpute && missing_code == "-1") result[is.na(result)] <- -1L
+  if (as_double && !meanimpute) storage.mode(result) <- "double"
+  list(genotypes = result, variant_indices = indices)
+}
+
+# Window reads keep the existing matrix-only interface and empty-window error.
+readPgenWindow <- function(reader, chrom, start, end,
+                           as_double = FALSE, missing_code = "NA",
+                           meanimpute = FALSE, sample_ids = NULL) {
+  indices <- .pgenWindowIndices(reader, chrom, start, end)
+  result <- readPgenVariants(reader, indices, sample_ids = sample_ids,
+    as_double = as_double, missing_code = missing_code, meanimpute = meanimpute)
+  if (!length(result$variant_indices)) stop("No variant with alt alleles", call. = FALSE)
+  result$genotypes
 }
 
 # Close both owned handles, including on a partial open. Repeated calls are safe.

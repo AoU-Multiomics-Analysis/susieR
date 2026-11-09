@@ -477,7 +477,7 @@ fitSusieModel <- function(X, y, legacy = FALSE,
 
 # Fine-map one phenotype by loading local cis dosages, residualizing expression
 # and genotypes against covariates, then fitting susieR.
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL,timing_callback = NULL){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL,timing_callback = NULL,genotype_imputer = NULL,genotypes_imputed = FALSE){
   if (!is.null(timing_callback) && !is.function(timing_callback)) {
     stop("timing_callback must be a function or NULL", call. = FALSE)
   }
@@ -661,7 +661,16 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   }
   # Impute missing values using row means and keep variant IDs before matrix
   # operations drop or reorder row names.
-  gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
+  if (!genotypes_imputed) {
+    gt_matrix <- if (is.null(genotype_imputer)) {
+      impute_matrix_rowmean(gt_matrix, missing_value = -1)
+    } else {
+      genotype_imputer(gt_matrix, missing_value = -1)
+    }
+  }
+  if (!nrow(gt_matrix)) {
+    stop("No variant with alt alleles")
+  }
   variant_names <- rownames(gt_matrix)
   reportVariantDirectionCounts(
     variant_names,

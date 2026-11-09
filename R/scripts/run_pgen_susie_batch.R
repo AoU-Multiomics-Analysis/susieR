@@ -8,7 +8,7 @@ suppressPackageStartupMessages(library(stringr))
 suppressPackageStartupMessages(library(purrr))
 functions_dir <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
 pipeline_function_files <- c("ImportFunctions.R", "InitFunctions.R", "SusiePerformance.R", "PgenRuntime.R",
-                   "MemoryHelpers.R", "SusieFunctions.R", "PgenFunctions.R",
+                   "MemoryHelpers.R", "SusieFunctions.R", "PgenFunctions.R", "PgenCacheFunctions.R",
                    "SusieOutputFunctions.R", "PgenGeneFunctions.R",
                    "PgenBatchFunctions.R", "PgenQcFunctions.R", "PgenPreparationFunctions.R")
 for (filename in pipeline_function_files) {
@@ -231,11 +231,31 @@ makePgenBatchExperiment <- function(data) {
   eQTLUtils::subsetSEByColumnValue(se, "qtl_group", "ALL")
 }
 
+pgenBatchExecutionWorklist <- function(worklist) {
+  worklist[order(match(worklist$gene_id, unique(worklist$gene_id))), , drop = FALSE]
+}
+
 runPgenSusieBatch <- function(opt) {
   batch_started <- proc.time()[["elapsed"]]
   previous_memory_debug <- options(susier.memory_debug = isTRUE(opt$memory_debug))
   on.exit(options(previous_memory_debug), add = TRUE)
   if (is.null(opt$mac)) opt$mac <- 0
+  if (is.null(opt$genotype_cache_mode)) opt$genotype_cache_mode <- "auto"
+  if (is.null(opt$genotype_cache_memory_gb)) opt$genotype_cache_memory_gb <- 0
+  if (is.null(opt$job_memory_gb)) opt$job_memory_gb <- 16
+  if (length(opt$genotype_cache_mode) != 1L || is.na(opt$genotype_cache_mode) ||
+      !opt$genotype_cache_mode %in% c("auto", "whole", "rolling", "none")) {
+    stop("Genotype cache mode must be auto, whole, rolling, or none", call. = FALSE)
+  }
+  valid_memory <- function(value, positive = FALSE) {
+    is.numeric(value) && length(value) == 1L && is.finite(value) &&
+      if (positive) value > 0 else value >= 0
+  }
+  if (!valid_memory(opt$genotype_cache_memory_gb) ||
+      !valid_memory(opt$job_memory_gb, positive = TRUE) ||
+      opt$genotype_cache_memory_gb > opt$job_memory_gb) {
+    stop("Cache memory must be nonnegative and no greater than positive job memory", call. = FALSE)
+  }
   required_names <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed",
                       "qtl_results", "covariates")
   if (any(vapply(opt[required_names], is.null, logical(1)))) {
@@ -404,6 +424,30 @@ runPgenSusieBatch <- function(opt) {
     as.character(SummarizedExperiment::colData(se)$genotype_id),
     algo = "sha256", serializeVersion = 2
   )
+  analysis_samples <- as.character(SummarizedExperiment::colData(se)$genotype_id)
+  cache_design <- cbind(data$covariates_matrix[analysis_samples, , drop = FALSE], 1)
+  cache_restrictions <- c(
+    if (!is.null(additional_table)) "additional genotypes require per-feature preparation",
+    if (!is.null(data$variant_list)) "variant-list filtering uses the per-feature path",
+    if (is.null(data$variant_list) && !is.null(data$AncestryDf) && data$MAF_threshold > 0)
+      "ancestry MAF requires raw full-cohort calls"
+  )
+  execution_worklist <- pgenBatchExecutionWorklist(worklist)
+  cache_plan <- planPgenGenotypeCache(reader, execution_worklist, analysis_samples,
+    mode = opt$genotype_cache_mode, cache_memory_gb = opt$genotype_cache_memory_gb,
+    job_memory_gb = opt$job_memory_gb, eligible = !length(cache_restrictions),
+    reason = if (length(cache_restrictions)) paste(cache_restrictions, collapse = "; ") else NULL)
+  cache_selection <- cache_plan[setdiff(names(cache_plan), c("window_indices", "union_indices", "sample_ids"))]
+  cache_selection$covariates_sha256 <- digest::digest(cache_design, algo = "sha256", serializeVersion = 2)
+  provenance$settings$genotype_cache <- cache_selection
+  message("GENOTYPE CACHE: ", cache_plan$mode, "; ", cache_plan$reason,
+          "; budget_bytes=", format(cache_plan$budget_bytes, scientific = FALSE),
+          "; estimated_bytes=", format(cache_plan$estimated_bytes, scientific = FALSE),
+          "; whole_saved_fraction=", round(cache_plan$whole_saved_fraction, 3),
+          "; rolling_saved_fraction=", round(cache_plan$rolling_saved_fraction, 3))
+  genotype_cache <- if (cache_plan$mode == "none") NULL else
+    createPgenGenotypeCache(reader, cache_plan, analysis_samples, cache_design)
+  on.exit(if (!is.null(genotype_cache)) clearPgenGenotypeCache(genotype_cache), add = TRUE)
   provenance$batch_timing <- list(plink_extraction_seconds = extraction_seconds,
     shared_data_loading_seconds = loading_seconds,
     input_verification_seconds = provenance_seconds + proc.time()[["elapsed"]] - provenance_started,
@@ -411,8 +455,8 @@ runPgenSusieBatch <- function(opt) {
   message(sprintf("Batch timing: input verification = %.3f seconds; setup total = %.3f seconds",
     provenance$batch_timing$input_verification_seconds,
     provenance$batch_timing$setup_total_seconds))
-  compact <- purrr::map(unique(worklist$gene_id), function(gene_id) {
-    selected <- dplyr::filter(worklist, .data$gene_id == .env$gene_id)
+  compact <- purrr::map(unique(execution_worklist$gene_id), function(gene_id) {
+    selected <- dplyr::filter(execution_worklist, .data$gene_id == .env$gene_id)
     additional_genotypes <- additionalGenotypesForGene(additional_table, selected$phenotype_id)
     outcomes <- purrr::map(seq_len(nrow(selected)), function(i) {
       list(phenotype_id = selected$phenotype_id[[i]], se = se,
@@ -424,7 +468,7 @@ runPgenSusieBatch <- function(opt) {
     })
     names(outcomes) <- selected$outcome_id
     result <- runPgenGene(gene_id, outcomes, reader, output_dir, opt$base_seed,
-                           opt$missing_code, provenance)
+                           opt$missing_code, provenance, genotype_cache = genotype_cache)
     result$summary <- decorateBatchTable(result$summary, worklist, gene_id)
     result$credible_sets <- decorateBatchTable(result$credible_sets, worklist, gene_id)
     result$diagnostics <- decorateBatchTable(result$diagnostics, worklist, gene_id)
@@ -449,6 +493,13 @@ runPgenSusieBatch <- function(opt) {
                     file.path(output_dir, "batch.outcome_index.tsv"), quote = "needed")
   readr::write_tsv(bind_compact("diagnostics"),
                     file.path(output_dir, "batch.covariate_explained_variants.tsv"), quote = "needed")
+  cache_runtime <- if (is.null(genotype_cache)) list(mode = "none") else
+    pgenGenotypeCacheSummary(genotype_cache)
+  jsonlite::write_json(list(schema_version = 1L, batch_id = batch_id,
+    selection = cache_selection, runtime = cache_runtime),
+    file.path(output_dir, "batch.genotype_cache.json"), auto_unbox = TRUE,
+    pretty = TRUE, digits = NA, null = "null")
+  message("COMPLETE genotype cache: ", jsonlite::toJSON(cache_runtime, auto_unbox = TRUE))
   message(sprintf("COMPLETE batch %s; total = %.3f seconds", batch_id,
     proc.time()[["elapsed"]] - batch_started))
   invisible(TRUE)
@@ -466,6 +517,12 @@ batch_options <- list(
   batchOption("base-seed", "integer", 1L), batchOption("maf", "double", 0),
   batchOption("threads", "double", 0,
     help = "Thread limit for PLINK and supported numerical libraries; 0 uses the detected task CPU allowance"),
+  batchOption("genotype-cache-mode", default = "auto",
+    help = "Prepared-genotype cache: auto, whole, rolling, or none"),
+  batchOption("genotype-cache-memory-gb", "double", 0,
+    help = "Cache memory limit in decimal GB; 0 uses 20 percent of job memory"),
+  batchOption("job-memory-gb", "double", 16,
+    help = "Declared task memory in decimal GB for automatic cache budgeting"),
   batchOption("mac", "double", 0,
     help = "Minimum minor allele count across all input PGEN samples; 0 disables the filter"),
   batchOption("prepared-batch-manifest",

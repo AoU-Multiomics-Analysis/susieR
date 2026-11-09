@@ -59,6 +59,7 @@ COPY R/utils/ImportFunctions.R \
      R/utils/PgenRuntime.R \
      R/utils/SusieFunctions.R \
      R/utils/PgenFunctions.R \
+     R/utils/PgenCacheFunctions.R \
      R/utils/SusieOutputFunctions.R \
      R/utils/PgenGeneFunctions.R \
      R/utils/PgenBatchFunctions.R \

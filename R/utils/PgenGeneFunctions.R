@@ -1,9 +1,134 @@
+# Impute after the existing hardcall filters and fit sample selection. ReadList
+# uses stored dosages; this path expects integer-valued hardcall dosages.
+imputePgenHardcalls <- function(reader, mat, missing_value = -1) {
+  if (!inherits(reader, "PgenReader") || isTRUE(reader$closed)) {
+    stop("Native imputation requires an open PgenReader", call. = FALSE)
+  }
+  missing_counts <- matrixStats::rowCounts(mat, value = NA_real_) +
+    matrixStats::rowCounts(mat, value = missing_value, na.rm = TRUE)
+  # An entirely missing variant has no mean and must not reach ReadList().
+  all_missing <- which(missing_counts == ncol(mat))
+  if (length(all_missing)) {
+    message("Removing ", length(all_missing), " entirely missing PGEN variants")
+    keep <- missing_counts < ncol(mat)
+    mat <- mat[keep, , drop = FALSE]
+    missing_counts <- missing_counts[keep]
+  }
+  missing_rows <- which(missing_counts > 0L & missing_counts < ncol(mat))
+  if (!length(missing_rows)) return(mat)
+
+  variant_ids <- rownames(mat)[missing_rows]
+  metadata_ids <- reader$variants$variant_id
+  if (anyDuplicated(metadata_ids[metadata_ids %in% variant_ids])) {
+    stop("Native imputation has ambiguous duplicate variant keys", call. = FALSE)
+  }
+  variant_indices <- match(variant_ids, metadata_ids)
+  sample_indices <- match(colnames(mat), reader$raw_sample_ids)
+  if (anyNA(variant_indices) || anyNA(sample_indices) ||
+      anyDuplicated(colnames(mat)) || !length(sample_indices)) {
+    stop("Native imputation sample or variant IDs do not match the PGEN", call. = FALSE)
+  }
+  sorted_samples <- sort(sample_indices)
+  sample_order <- match(sample_indices, sorted_samples)
+  pgen <- pgenlibr::NewPgen(reader$pgen_path, pvar = reader$pvar,
+    raw_sample_ct = reader$raw_sample_count,
+    sample_subset = as.integer(sorted_samples))
+  on.exit(pgenlibr::ClosePgen(pgen), add = TRUE)
+  message("Mean-imputing ", length(missing_rows), " PGEN variants across ",
+          ncol(mat), " selected samples with pgenlibr")
+  # Small read blocks limit temporary matrices. No genotypes persist between fits.
+  for (start in seq.int(1L, length(missing_rows), by = 256L)) {
+    block <- seq.int(start, min(start + 255L, length(missing_rows)))
+    native <- pgenlibr::ReadList(pgen, as.integer(variant_indices[block]),
+                               meanimpute = TRUE)
+    mat[missing_rows[block], ] <- t(native[sample_order, , drop = FALSE])
+  }
+  mat
+}
+
+# Fit a prepared window while keeping phenotype preparation local to the fit.
+# Return NULL only when the existing full-window numerical guard is required.
+finemapPreparedPgenPhenotype <- function(phenotype_id, se, reader, covariates,
+                                         cis_distance, metadata, genotype_cache,
+                                         cache_outcome_id, variant_report_file,
+                                         timing_callback = NULL) {
+  timing_event <- function(stage, event) {
+    if (!is.null(timing_callback)) timing_callback(stage, event)
+    invisible(NULL)
+  }
+  timing_stage <- "data_preparation"
+  timing_event(timing_stage, "start")
+  on.exit({
+    if (!is.null(timing_stage)) timing_event(timing_stage, "failed")
+  }, add = TRUE)
+  cache <- genotype_cache
+  if (!is.environment(cache) || !inherits(cache, "PgenGenotypeCache") ||
+      isTRUE(cache$cleared) || !identical(cache$reader, reader)) {
+    stop("Prepared genotype cache does not match the open PGEN reader", call. = FALSE)
+  }
+  gene_vector <- eQTLUtils::extractPhentypeFromSE(phenotype_id, se, "counts") %>%
+    dplyr::mutate(phenotype_value_std = qnorm((rank(phenotype_value, na.last = "keep") - 0.5) /
+                                            sum(!is.na(phenotype_value))))
+  sample_ids <- as.character(gene_vector$genotype_id)
+  design <- cbind(covariates[sample_ids, , drop = FALSE], 1)
+  if (!identical(sample_ids, cache$sample_ids) ||
+      !identical(unname(design), unname(cache$covariates_matrix))) {
+    stop("Prepared genotype cache sample order or covariates differ from the feature", call. = FALSE)
+  }
+  position <- as.numeric(metadata$phenotype_pos[[1L]])
+  start <- max(1, position - cis_distance)
+  end <- position + cis_distance
+  expected <- .pgenWindowIndices(reader, metadata$chromosome[[1L]], start, end,
+                                 allow_empty = TRUE)
+  if (!identical(expected, cache$plan$window_indices[[cache_outcome_id]])) {
+    stop("Prepared genotype cache window differs from the feature window", call. = FALSE)
+  }
+  state <- new.env(parent = emptyenv())
+  state$hat <- NULL
+  state$legacy_cache <- NULL
+  state$covariate_explained_variants <- emptyCovariateExplainedVariants()
+  adjustment <- list(covariates = design, projection = cache$projection, state = state)
+  expression_vector <- residualizeWithCovariates(adjustment, gene_vector$phenotype_value_std)
+  names(expression_vector) <- sample_ids
+  if (!is.null(state$hat)) {
+    cache$guard_recomputations <- cache$guard_recomputations + 1L
+    message("USE existing per-feature numerical guard for phenotype: ", phenotype_id)
+    timing_event("data_preparation", "complete")
+    timing_stage <- NULL
+    return(NULL)
+  }
+  window <- getPgenGenotypeCacheWindow(cache, cache_outcome_id)
+  if (window$guard_required) {
+    cache$guard_recomputations <- cache$guard_recomputations + 1L
+    message("USE existing per-feature numerical guard for genotypes: ", phenotype_id)
+    timing_event("data_preparation", "complete")
+    timing_stage <- NULL
+    return(NULL)
+  }
+  if (!length(window$variant_names)) stop("No variant with alt alleles", call. = FALSE)
+  message("Using ", cache$mode, " covariate-adjusted genotype cache for ", phenotype_id,
+          ": ", length(window$variant_names), " variants")
+  reportVariantDirectionCounts(window$variant_names, metadata,
+    context = "fine-mapping genotype matrix", output_file = variant_report_file,
+    requested_window_start = position - cis_distance, requested_window_end = end)
+  timing_event("data_preparation", "complete")
+  timing_stage <- "fine_mapping"
+  timing_event(timing_stage, "start")
+  fitted <- fitSusieModel(window$gt_hat, expression_vector, legacy = FALSE,
+    covariate_explained_variants = window$covariate_explained_variants)
+  timing_event(timing_stage, "complete")
+  timing_stage <- NULL
+  fitted$variant_id <- window$variant_names
+  fitted
+}
+
 # Per-outcome storage adapter. Statistical preparation stays in finemapPhenotype().
 finemapPgenPhenotype <- function(phenotype_id, se, reader, covariates,
                                  cis_distance, missing_code,
                                  ancestry_data = NULL, MAF = 0,
                                  variant_list = NULL, additional_genotypes = NULL,
-                                 variant_report_file = NULL, timing_callback = NULL) {
+                                 variant_report_file = NULL, timing_callback = NULL,
+                                 genotype_cache = NULL, cache_outcome_id = phenotype_id) {
   if (!is.null(timing_callback) && !is.function(timing_callback)) {
     stop("timing_callback must be a function or NULL", call. = FALSE)
   }
@@ -23,27 +148,56 @@ finemapPgenPhenotype <- function(phenotype_id, se, reader, covariates,
       cis_distance != floor(cis_distance)) {
     stop("cis_distance must be a nonnegative integer", call. = FALSE)
   }
-  if (is.null(variant_list) && !is.null(ancestry_data) && MAF > 0 &&
+  needs_full_cohort_maf <- is.null(variant_list) && !is.null(ancestry_data) && MAF > 0
+  if (needs_full_cohort_maf &&
       (length(reader$sample_ids) != reader$raw_sample_count ||
        !setequal(reader$sample_ids, reader$raw_sample_ids))) {
     stop("Ancestry MAF requires the complete raw PGEN sample cohort", call. = FALSE)
+  }
+  if (!is.null(genotype_cache)) {
+    if (needs_full_cohort_maf || !is.null(variant_list) || !is.null(additional_genotypes)) {
+      stop("Prepared caching is unavailable for this genotype preparation path", call. = FALSE)
+    }
+    if (!is.null(timing_callback)) timing_callback("data_loading", "complete")
+    loading <- FALSE
+    cached <- finemapPreparedPgenPhenotype(phenotype_id, se, reader, covariates,
+      cis_distance, metadata, genotype_cache, cache_outcome_id, variant_report_file,
+      timing_callback = timing_callback)
+    if (!is.null(cached)) return(cached)
+    loading <- TRUE
+    if (!is.null(timing_callback)) timing_callback("data_loading", "start")
   }
   position <- as.numeric(metadata$phenotype_pos[[1L]])
   start <- position - cis_distance
   end <- position + cis_distance
   message("Reading PGEN window for ", phenotype_id, ": ",
           metadata$chromosome[[1L]], ":", max(1, start), "-", end)
+  native_first <- is.null(additional_genotypes) && !needs_full_cohort_maf
+  feature_samples <- if (native_first) {
+    as.character(eQTLUtils::extractPhentypeFromSE(phenotype_id, se, "counts")$genotype_id)
+  } else NULL
+  if (native_first) {
+    message("Mean-imputing with pgenlibr on the first read across ",
+            length(feature_samples), " selected samples")
+  }
   raw <- readPgenWindow(reader, metadata$chromosome[[1L]], max(1, start), end,
-                        as_double = TRUE, missing_code = missing_code)
+                        as_double = TRUE,
+                        missing_code = if (is.null(additional_genotypes)) "NA" else missing_code,
+                        meanimpute = native_first, sample_ids = feature_samples)
   message("PGEN window dimensions: ", nrow(raw), " variants x ", ncol(raw), " samples")
   filtered <- filterMAF(raw, ancestry_data, MAF_threshold = MAF, variant_list = variant_list)
   message("PGEN variants after MAF/list filtering: ", nrow(filtered))
   if (!is.null(timing_callback)) timing_callback("data_loading", "complete")
   loading <- FALSE
+  genotype_imputer <- if (!native_first && is.null(additional_genotypes)) {
+    function(mat, missing_value) imputePgenHardcalls(reader, mat, missing_value)
+  } else NULL
   finemapPhenotype(phenotype_id, se, filtered, covariates, cis_distance,
                    ancestry_data = ancestry_data, MAF = MAF, variant_list = variant_list,
                    additional_genotypes = additional_genotypes,
-                   variant_report_file = variant_report_file, timing_callback = timing_callback)
+                   variant_report_file = variant_report_file, timing_callback = timing_callback,
+                   genotype_imputer = genotype_imputer,
+                   genotypes_imputed = native_first)
 }
 
 .pgenGeneId <- function(value, label) {
@@ -114,7 +268,7 @@ geneOutcomeSeed <- function(base_seed, gene_id, outcome_id) {
 
 # Save large fitted objects once, then return only compact batch-level tables.
 runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
-                        missing_code, provenance = list()) {
+                        missing_code, provenance = list(), genotype_cache = NULL) {
   gene_started <- proc.time()[["elapsed"]]
   gene_key <- geneArtifactKey(gene_id)
   outcome_ids <- names(outcomes)
@@ -193,7 +347,9 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
         stage_started[[stage]] <<- now
       } else {
         seconds <- now - stage_started[[stage]]
-        stage_seconds[[paste0(stage, "_seconds")]] <<- seconds
+        field <- paste0(stage, "_seconds")
+        previous <- stage_seconds[[field]]
+        stage_seconds[[field]] <<- if (is.finite(previous)) previous + seconds else seconds
         message("Outcome timing: ", id, "; stage: ", stage, "; status: ", event,
                 "; elapsed_seconds=", format(seconds, digits = 6L))
       }
@@ -209,7 +365,8 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
           outcome$cis_distance, missing_code, ancestry_data = outcome$ancestry_data,
           MAF = if (is.null(outcome$MAF)) 0 else outcome$MAF,
           variant_list = outcome$variant_list, additional_genotypes = outcome$additional_genotypes,
-          variant_report_file = extra_files[["variant_positions"]], timing_callback = timing_callback)),
+          variant_report_file = extra_files[["variant_positions"]], timing_callback = timing_callback,
+          genotype_cache = genotype_cache, cache_outcome_id = id)),
         message = function(condition) cat(conditionMessage(condition), file = extra_files[["log"]], append = TRUE),
         warning = function(condition) cat("WARNING: ", conditionMessage(condition), "\n",
           file = extra_files[["log"]], append = TRUE, sep = "")),

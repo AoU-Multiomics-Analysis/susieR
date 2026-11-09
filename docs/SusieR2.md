@@ -1,6 +1,6 @@
 # SuSiE 2.0 PGEN workflow
 
-[SusieR2.wdl](../workflows/SusieR2.wdl) is a WDL 1.0 workflow for Terra's managed Cromwell service. It plans batches, extracts the cis windows with PLINK 2, fits each selected outcome, and combines the batch tables. The default batch size is 50 genes. Set `SusieR2.BatchSize` to another positive integer, such as 100, to change this limit. All outcomes for one gene stay in one batch.
+[SusieR2.wdl](../workflows/SusieR2.wdl) is a WDL 1.0 workflow for Terra's managed Cromwell service. It plans batches, filters each selected genotype file once, extracts the cis windows with PLINK 2, fits each selected outcome, and combines the batch tables. The default batch size is 50 genes. Set `SusieR2.BatchSize` to another positive integer, such as 100, to change this limit. All outcomes for one gene stay in one batch.
 
 The complete workflow has **not completed validation on Terra**. Local WDL checks and command tests do not establish Terra compatibility. No cloud jobs were submitted for these checks.
 
@@ -21,6 +21,7 @@ Copy [the input example](../examples/inputs/SusieR2.inputs.json) and replace eac
 | `VariantList` | Optional File | Variant selection list, with the existing loader's selection rules. |
 | `AdditionalGenotypes` | Optional File | Additional genotype BED for the existing data loader. |
 | `MAC` | Integer, default `0` | Minimum minor allele count for PGEN variants. `0` disables this filter. |
+| `MinCallRate` | Float, default `0.95` | Minimum fraction of input samples with called genotypes. For diploid autosomes this is `AN / (2 × sample count)`. `0` disables this filter. |
 
 Initial PGEN support is for diploid, biallelic variants on autosomes 1–22. The planner accepts chromosome aliases such as `1` and `chr1`. A gene cannot span chromosomes. The planner rejects missing chromosome inputs, duplicate chromosome IDs, ambiguous mappings, and duplicate phenotype IDs.
 
@@ -30,7 +31,7 @@ Plain text, gzip, and BGZF files use the same parser, regardless of the filename
 
 The planner checks the header, metadata, row count, and selected-row counts again during splitting. Errors report the failing line or metadata row. An ID mismatch alone does not establish that the file changed.
 
-The planner validates the manifest without opening its genotype locations and preserves its row order. It writes a small normalized TSV. WDL reads that table and converts each PGEN, PVAR, and PSAM location into a typed File inside a `ChromosomePgen` struct. Each batch receives the three members as separate `File` inputs. Cromwell can then replace each cloud URI with its local path before the command escapes it for the shell. Each batch's zero-based chromosome index refers to the manifest row order. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
+The planner validates the manifest without opening its genotype locations and preserves its row order. It also writes a table of unique selected PGEN/PVAR/PSAM triplets and a QC index for each batch. A file shared by several chromosomes or batches is prepared once when all three paths match. Different companion files make distinct inputs. Unused manifest entries do not start QC tasks. WDL converts these locations into typed Files; QC and batch tasks receive separate `File` inputs. The planner's JSON index arrays are output metadata, not script argument wrappers.
 
 When `SampleList` is omitted, sample selection uses IDs rather than phenotype values. Genotype-only and phenotype-only samples are excluded, while phenotype missing values retain their existing handling. Covariates must cover every retained sample; they do not silently reduce the cohort. A supplied list keeps its existing order and selection behavior. The PGEN reader and ancestry MAF calculation retain the complete genotype cohort before the phenotype subset. Additional-genotype sample restrictions still apply afterward. Provenance records the initial selection mode, PSAM/list order rule, sample count, and cohort hash before any additional-genotype restriction.
 
@@ -44,6 +45,7 @@ When `SampleList` is omitted, sample selection uses IDs rather than phenotype va
 | `MemoryDebug` | false |
 | `MAF` | 0 |
 | `MAC` | 0 (off) |
+| `MinCallRate` | 0.95 |
 | `SelectTopPhenotypePerCluster` | false |
 | `TopPhenotypePvalueColumn` | `qval` |
 | `DockerImage` | `ghcr.io/aou-multiomics-analysis/susier/pgen:main` |
@@ -51,6 +53,7 @@ When `SampleList` is omitted, sample selection uses IDs rather than phenotype va
 | `BatchMemoryGB` / `BatchDiskGB` | 16 / 100 |
 | `PlinkMemoryMB` | 1024 |
 | `PlanMemoryGB` / `PlanDiskGB` | 8 / 50 |
+| `QcMemoryGB` / `QcDiskGB` | 8 / 100 |
 | `AggregateMemoryGB` / `AggregateDiskGB` | 8 / 50 |
 | `PreemptibleAttempts` / `MaxRetries` | 3 / 1 |
 
@@ -60,9 +63,15 @@ Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` 
 
 The planner sorts genes by chromosome and position. It derives each feature position from `floor((BED start + BED end) / 2)`. Cis windows use inclusive coordinates, with the query start clamped to 1. PLINK uses `--extract range` for these 1-based regions. Disjoint windows retain their gaps. Extraction retains the complete genotype sample cohort. Ancestry MAF filtering therefore runs before the phenotype sample subset. The fit keeps the existing phenotype missing-value behavior. The initial image and batch command use one BLAS thread for reproducible arithmetic.
 
-Set `SusieR2.MAC` to a positive integer to enable the minor allele count filter. For example, `"SusieR2.MAC": 5` keeps PGEN variants with a count of at least 5. The batch adds `--mac 5 --nonfounders` to PLINK during cis-window extraction. Counts use all samples in the input PGEN, including nonfounders, before phenotype sample selection. The filter uses PLINK's allele dosage sums; these are allele counts for hard-call genotypes. For the supported biallelic variants, PLINK's default nonmajor count is the minor allele count. See the [PLINK allele count filter](https://www.cog-genomics.org/plink/2.0/filter#mac).
+`MinCallRate` defaults to `0.95`: a variant must have called genotypes in at least 95% of the input PGEN samples. A value exactly at the threshold passes. `MAC` defaults to `0`; set it to a positive integer, such as `"SusieR2.MAC": 5`, to require a minor allele count of at least 5 as well. These filters use the complete input cohort, including nonfounders and samples without phenotypes, before imputation or phenotype sample selection.
 
-`MAC` must be a nonnegative integer. With `MAC = 0`, the batch adds no PLINK MAC filter. The MAC filter runs before the existing ancestry MAF or variant-list filter, so a variant list cannot restore a variant removed by MAC. It applies to PGEN variants; variants supplied through `AdditionalGenotypes` keep their existing handling. Each gene's provenance records the threshold and sample scope. The direct batch CLI uses `--mac 5` and also defaults to `0`.
+The shared QC task uses [PLINK hardcall counts](https://www.cog-genomics.org/plink/2.0/basic_stats#geno_counts), which match the genotypes read by SuSiE. It calculates `AN = 2 × called samples`, `AC = heterozygotes + 2 × alternate homozygotes`, `MAC = min(AC, AN − AC)`, and call rate `AN / (2 × input samples)`. PVAR INFO annotations are not used to supply these counts, even when MAC or AN annotations are present. Missing hard calls remain missing for QC when dosage data is present. The retained native PGEN records preserve their phase and dosage data.
+
+Each unique selected triplet has one count calculation and one native PGEN extraction. Temporary row IDs prevent duplicate or missing raw variant IDs from selecting the wrong records. Retained PVAR records and PSAM contents are preserved. Fresh MAC, AN, and call-rate values are in `GenotypeQcCounts`; original INFO annotations remain unchanged. Unsupported records outside the analysed windows are kept with QC marked as not applied. The existing reader still rejects unsupported variants if an analysed window selects them.
+
+Set both `MAC = 0` and `MinCallRate = 0` to skip the shared QC task and use the original files. `MAC` must be a nonnegative integer; `MinCallRate` must be from 0 to 1. A filter that removes all supported variants stops with a clear error. QC disk must hold the source and filtered files plus temporary metadata. Batches only extract their cis windows from the prepared files. They do not repeat MAC or call-rate calculations. The existing ancestry MAF or variant-list filter runs afterward; it cannot restore a variant removed by shared QC. `AdditionalGenotypes` keeps its existing handling.
+
+Gene provenance includes the shared QC report, thresholds, cohort size, and source/output hashes. A report that does not match the prepared files is rejected before fitting. The report is structured result data, not a JSON argument configuration. For standalone preparation, use `filter_pgen_susie.R` with named arguments `--mac` and `--min-call-rate`; pass its report to the batch CLI with `--genotype-qc-report` and leave batch `--mac` at 0. The older standalone batch `--mac` option remains available and uses PLINK's native dosage-based rule.
 
 Seeds depend on the base seed, original gene ID, and original outcome ID. They do not depend on batch size, input order, or output paths. Changing batch size preserves the seed for each outcome. Each RDS contains a named list of that gene's outcome fits.
 
@@ -91,6 +100,9 @@ The workflow returns these combined tables:
 - `OutcomeIndex`: every expected outcome, including outcomes with no credible sets and fits that did not converge.
 - `CovariateExplainedVariants`: covariate-explained variant diagnostics.
 - `ExpectedOutcomes` and `BatchIndex`: planner tables for checking batch ownership.
+- `PreparedPgenManifest`: a headered manifest with the selected chromosome locations for later reuse. Set both QC thresholds to 0 when using already prepared files to avoid another QC pass.
+- `PreparedPgens`, `PreparedPvars`, and `PreparedPsams`: one effective triplet per unique selected input, with original files used when shared QC is disabled.
+- `GenotypeQcCounts`, `GenotypeQcReports`, `GenotypeQcLogs`, and `GenotypeQcErrors`: shared QC results. These arrays are empty when shared QC is disabled.
 - `ChromosomeGeneManifests`: one TSV per processed chromosome, named `chr<N>.gene_outputs.tsv`.
 
 Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
@@ -122,4 +134,4 @@ python3 tests/test_pgen_wdl.py .
 
 The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. The WDL CI job also uses the command renderer in the pinned WOMtool 85 JAR to check the batch command with cloud File values and a local-path mapper. This catches the struct-member path error that a test with pre-localized inputs cannot detect. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.
 
-Normal image builds run the MAC extraction check and one small installed-code smoke test: 48 samples, one PLINK extraction, one SuSiE fit, and aggregation. They check MAC boundaries, extracted genotypes, inferred sample order, model outputs, and the chromosome gene manifest. The full regression and legacy parity suites remain available. To run them in GitHub Actions, start the **SuSiE PGEN image CI** workflow manually and enable `full_checks`. To run them in an existing image, use `bash tests/test_pgen_container.sh --full`. Automatic image builds still require a change to source installed in the image.
+Normal image builds run the standalone MAC check, the shared QC count tests, and one small installed-code smoke test: 48 samples, shared preparation, one cis-window extraction, one SuSiE fit, and aggregation. They check count and call-rate boundaries, duplicate IDs, retained phase/dosage, source hashes, extracted genotypes, inferred sample order, model outputs, and reusable manifests. The full regression and legacy parity suites remain available. To run them in GitHub Actions, start the **SuSiE PGEN image CI** workflow manually and enable `full_checks`. To run them in an existing image, use `bash tests/test_pgen_container.sh --full`. Automatic image builds still require a change to source installed in the image.

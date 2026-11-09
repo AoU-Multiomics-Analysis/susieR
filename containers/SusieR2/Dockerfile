@@ -60,8 +60,10 @@ COPY R/utils/ImportFunctions.R \
      R/utils/PgenFunctions.R \
      R/utils/SusieOutputFunctions.R \
      R/utils/PgenGeneFunctions.R \
-     R/utils/PgenBatchFunctions.R /opt/r/lib/
+     R/utils/PgenBatchFunctions.R \
+     R/utils/PgenQcFunctions.R /opt/r/lib/
 COPY R/scripts/plan_pgen_susie.R \
+     R/scripts/filter_pgen_susie.R \
      R/scripts/run_pgen_susie_batch.R \
      R/scripts/aggregate_pgen_susie.R \
      R/scripts/susie.R /opt/r/scripts/

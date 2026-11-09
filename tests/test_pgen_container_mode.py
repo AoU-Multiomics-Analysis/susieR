@@ -34,6 +34,8 @@ if os.environ.get("FAIL_SMOKE") == "true" and sys.argv[1:2] == ["tests/test_pgen
     raise SystemExit(42)
 if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_mac.R"]:
     raise SystemExit(43)
+if os.environ.get("FAIL_QC") == "true" and sys.argv[1:2] == ["tests/test_pgen_qc.R"]:
+    raise SystemExit(44)
 """
         for name in names:
             executable = directory / name
@@ -41,7 +43,7 @@ if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_m
             executable.chmod(0o755)
         return log
 
-    def run_runner(self, arguments=(), fail_smoke=False, fail_mac=False):
+    def run_runner(self, arguments=(), fail_smoke=False, fail_mac=False, fail_qc=False):
         with tempfile.TemporaryDirectory(prefix="pgen-runner-") as directory:
             directory = Path(directory)
             log = self.recording_commands(directory, ("Rscript", "plink2", "bgzip", "tabix"))
@@ -51,6 +53,7 @@ if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_m
                 PGEN_COMMAND_LOG=str(log),
                 FAIL_SMOKE="true" if fail_smoke else "false",
                 FAIL_MAC="true" if fail_mac else "false",
+                FAIL_QC="true" if fail_qc else "false",
                 SUSIER_FUNCTIONS_PATH="/installed functions",
                 SUSIER_SCRIPTS_PATH="/installed scripts",
             )
@@ -65,7 +68,7 @@ if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_m
         result, calls = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-        self.assertEqual(scripts, ["tests/test_pgen_mac.R", "tests/test_pgen_smoke.R"])
+        self.assertEqual(scripts, ["tests/test_pgen_mac.R", "tests/test_pgen_qc.R", "tests/test_pgen_smoke.R"])
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
         self.assertTrue(any(call[:2] == ["plink2", "--version"] for call in calls))
 
@@ -74,6 +77,7 @@ if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_m
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
         self.assertEqual(scripts.count("tests/test_pgen_mac.R"), 1)
+        self.assertEqual(scripts.count("tests/test_pgen_qc.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_smoke.R"), 1)
         self.assertLess(scripts.index("tests/test_pgen_mac.R"), scripts.index("tests/test_pgen_smoke.R"))
         for suite in FULL_SUITES:
@@ -101,6 +105,15 @@ if os.environ.get("FAIL_MAC") == "true" and sys.argv[1:2] == ["tests/test_pgen_m
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(calls, [])
                 self.assertIn("usage", result.stderr.lower())
+
+    def test_shared_qc_failure_stops_model_smoke_in_both_modes(self):
+        for arguments in ([], ["--full"]):
+            with self.subTest(arguments=arguments):
+                result, calls = self.run_runner(arguments, fail_qc=True)
+                self.assertEqual(result.returncode, 44, result.stderr)
+                scripts = [call[1] for call in calls
+                           if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
+                self.assertEqual(scripts, ["tests/test_pgen_mac.R", "tests/test_pgen_qc.R"])
 
     def test_workflow_passes_full_flag_only_when_selected(self):
         workflow = yaml.load(

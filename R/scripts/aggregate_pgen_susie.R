@@ -7,8 +7,9 @@ function_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = "/opt/r/lib")
 source(file.path(function_path, "PgenBatchFunctions.R"))
 metadata_names <- c("gene_rds_uris_file", "gene_parquet_uris_file", "gene_tsv_uris_file",
                      "gene_log_uris_file", "gene_provenance_uris_file")
+pgen_metadata_names <- c("pgen_chromosomes_file", "pgen_uris_file", "pvar_uris_file", "psam_uris_file")
 options <- lapply(c("expected-outcomes", "summary-files", "credible-set-files", "index-files",
-                    "diagnostic-files", "output-dir", gsub("_", "-", metadata_names)), function(name) {
+                    "diagnostic-files", "output-dir", gsub("_", "-", c(metadata_names, pgen_metadata_names))), function(name) {
   make_option(paste0("--", name), type = "character")
 })
 opt <- parse_args(OptionParser(option_list = options), convert_hyphens_to_underscores = TRUE)
@@ -18,6 +19,10 @@ if (length(missing)) stop("Missing required arguments: ", paste(missing, collaps
 has_metadata <- !vapply(opt[metadata_names], is.null, logical(1))
 if (any(has_metadata) && !all(has_metadata)) {
   stop("Supply all five gene-output URI metadata lists together", call. = FALSE)
+}
+has_pgen_metadata <- !vapply(opt[pgen_metadata_names], is.null, logical(1))
+if (any(has_pgen_metadata) && !all(has_pgen_metadata)) {
+  stop("Supply all four PGEN output metadata lists together", call. = FALSE)
 }
 read_uri_metadata <- function(path) {
   # Open the localized list file only. Its contents describe completed outputs;
@@ -31,6 +36,22 @@ read_uri_metadata <- function(path) {
 metadata <- if (all(has_metadata)) {
   setNames(lapply(opt[metadata_names], read_uri_metadata), sub("_file$", "", metadata_names))
 } else NULL
+pgen_metadata <- if (all(has_pgen_metadata)) {
+  setNames(lapply(opt[pgen_metadata_names], read_uri_metadata),
+           c("chromosomes", "pgen_uris", "pvar_uris", "psam_uris"))
+} else NULL
+if (!is.null(pgen_metadata)) {
+  expected <- pgenReadTextTable(opt$expected_outcomes)
+  pgenRequireColumns(expected, c("batch_id", "chromosome"), "Expected outcomes")
+  expected_batches <- expected |>
+    dplyr::distinct(batch_id, chromosome)
+  if (any(vapply(pgen_metadata, length, integer(1)) != nrow(expected_batches))) {
+    stop("Each PGEN output metadata list length must match the expected batch count", call. = FALSE)
+  }
+  if (!identical(pgenAutosome(pgen_metadata$chromosomes), pgenAutosome(expected_batches$chromosome))) {
+    stop("PGEN output metadata chromosomes do not match the expected batch order", call. = FALSE)
+  }
+}
 read_file_list <- function(path) {
   paths <- readLines(pgenLocalFile(path, "Localized file list"), warn = FALSE)
   if (!length(paths) || anyNA(paths) || any(!nzchar(paths)) || any(grepl("[\r\n\t]", paths))) {
@@ -53,5 +74,10 @@ if (!is.null(metadata)) {
   do.call(writeChromosomeGeneManifests, c(list(
     outcome_index_file = files[["index"]],
     output_dir = file.path(opt$output_dir, "gene_manifests")), metadata))
+}
+if (!is.null(pgen_metadata)) {
+  message("Writing a reusable PGEN manifest from completed output metadata")
+  do.call(writePgenOutputManifest, c(pgen_metadata,
+    list(output_file = file.path(opt$output_dir, "pgen_manifest.tsv"))))
 }
 message("PGEN batch aggregation complete")

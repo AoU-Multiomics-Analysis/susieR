@@ -1,7 +1,7 @@
 version 1.0
 
-# Planner indices refer to manifest row positions. The workflow promotes the
-# validated path fields to typed Files before supplying them to a batch.
+# QC indices refer to unique selected PGEN/PVAR/PSAM triplets. The workflow
+# promotes their paths to typed Files before QC or batch localization.
 struct ChromosomePgen {
   String chromosome
   File pgen
@@ -27,6 +27,7 @@ workflow SusieR2 {
     Boolean MemoryDebug = false
     Float MAF = 0.0
     Int MAC = 0
+    Float MinCallRate = 0.95
     Boolean SelectTopPhenotypePerCluster = false
     String TopPhenotypePvalueColumn = "qval"
     String DockerImage = "ghcr.io/aou-multiomics-analysis/susier/pgen:main"
@@ -36,6 +37,8 @@ workflow SusieR2 {
     Int PlinkMemoryMB = 1024
     Int PlanMemoryGB = 8
     Int PlanDiskGB = 50
+    Int QcMemoryGB = 8
+    Int QcDiskGB = 100
     Int AggregateMemoryGB = 8
     Int AggregateDiskGB = 50
     Int PreemptibleAttempts = 3
@@ -50,6 +53,8 @@ workflow SusieR2 {
       gene_map = GeneMap,
       batch_size = BatchSize,
       cis_distance = CisDistance,
+      mac = MAC,
+      min_call_rate = MinCallRate,
       select_top_phenotype_per_cluster = SelectTopPhenotypePerCluster,
       top_phenotype_pvalue_column = TopPhenotypePvalueColumn,
       docker_image = DockerImage,
@@ -60,8 +65,8 @@ workflow SusieR2 {
   }
 
   # The planner opens only the small manifest. These declarations make its
-  # genotype paths explicit File inputs that Cromwell localizes for each batch.
-  Array[Array[String]] pgen_rows = read_tsv(PlanPgenSusie.NormalizedManifest)
+  # genotype paths explicit File inputs. Identical selected triplets share QC.
+  Array[Array[String]] pgen_rows = read_tsv(PlanPgenSusie.UniquePgenManifest)
   scatter (pgen_row in pgen_rows) {
     ChromosomePgen chromosome_pgen = object {
       chromosome: pgen_row[0],
@@ -69,13 +74,43 @@ workflow SusieR2 {
       pvar: pgen_row[2],
       psam: pgen_row[3]
     }
+    if (MAC > 0 || MinCallRate > 0) {
+      call FilterPgen {
+        input:
+          pgen = chromosome_pgen.pgen,
+          pvar = chromosome_pgen.pvar,
+          psam = chromosome_pgen.psam,
+          mac = MAC,
+          min_call_rate = MinCallRate,
+          plink_memory_mb = PlinkMemoryMB,
+          docker_image = DockerImage,
+          memory_gb = QcMemoryGB,
+          disk_gb = QcDiskGB,
+          preemptible_attempts = PreemptibleAttempts,
+          max_retries = MaxRetries
+      }
+    }
+    File prepared_pgen = select_first([FilterPgen.Pgen, chromosome_pgen.pgen])
+    File prepared_pvar = select_first([FilterPgen.Pvar, chromosome_pgen.pvar])
+    File prepared_psam = select_first([FilterPgen.Psam, chromosome_pgen.psam])
+    ChromosomePgen prepared_files = object {
+      chromosome: chromosome_pgen.chromosome,
+      pgen: prepared_pgen,
+      pvar: prepared_pvar,
+      psam: prepared_psam
+    }
   }
-  Array[ChromosomePgen] ChromosomePgens = chromosome_pgen
+  Array[ChromosomePgen] ChromosomePgens = prepared_files
 
   # zip rejects unequal output counts before any batch starts localization.
-  scatter (batch in zip(zip(PlanPgenSusie.Worklists, PlanPgenSusie.PhenotypeBeds), PlanPgenSusie.ChromosomeIndices)) {
+  scatter (batch in zip(zip(PlanPgenSusie.Worklists, PlanPgenSusie.PhenotypeBeds), zip(PlanPgenSusie.BatchPgenIndices, PlanPgenSusie.Chromosomes))) {
     # Keep a named Int for the chromosome lookup in Dockstore's Cromwell parser.
-    Int chromosome_index = batch.right
+    Int chromosome_index = batch.right.left
+    # These locations are output-manifest metadata, never local input paths.
+    String pgen_chromosome = batch.right.right
+    String pgen_uri = ChromosomePgens[chromosome_index].pgen
+    String pvar_uri = ChromosomePgens[chromosome_index].pvar
+    String psam_uri = ChromosomePgens[chromosome_index].psam
     call RunPgenSusieBatch {
       input:
         pgen = ChromosomePgens[chromosome_index].pgen,
@@ -90,9 +125,10 @@ workflow SusieR2 {
         ancestry = Ancestry,
         variant_list = VariantList,
         additional_genotypes = AdditionalGenotypes,
+        genotype_qc_report = FilterPgen.Report[chromosome_index],
         cis_distance = CisDistance,
         maf = MAF,
-        mac = MAC,
+        mac = 0,
         base_seed = BaseSeed,
         memory_debug = MemoryDebug,
         select_top_phenotype_per_cluster = SelectTopPhenotypePerCluster,
@@ -121,6 +157,10 @@ workflow SusieR2 {
       gene_tsv_uris = flatten(RunPgenSusieBatch.GeneTsvs),
       gene_log_uris = flatten(RunPgenSusieBatch.GeneLogs),
       gene_provenance_uris = flatten(RunPgenSusieBatch.GeneProvenance),
+      pgen_chromosomes = pgen_chromosome,
+      pgen_uris = pgen_uri,
+      pvar_uris = pvar_uri,
+      psam_uris = psam_uri,
       docker_image = DockerImage,
       memory_gb = AggregateMemoryGB,
       disk_gb = AggregateDiskGB,
@@ -135,6 +175,14 @@ workflow SusieR2 {
     File CovariateExplainedVariants = AggregatePgenSusie.Diagnostics
     File ExpectedOutcomes = PlanPgenSusie.ExpectedOutcomes
     File BatchIndex = PlanPgenSusie.BatchIndex
+    File PreparedPgenManifest = AggregatePgenSusie.PreparedPgenManifest
+    Array[File] PreparedPgens = prepared_pgen
+    Array[File] PreparedPvars = prepared_pvar
+    Array[File] PreparedPsams = prepared_psam
+    Array[File] GenotypeQcCounts = select_all(FilterPgen.Counts)
+    Array[File] GenotypeQcReports = select_all(FilterPgen.Report)
+    Array[File] GenotypeQcLogs = select_all(FilterPgen.TaskStdout)
+    Array[File] GenotypeQcErrors = select_all(FilterPgen.TaskStderr)
     Array[File] GeneRds = flatten(RunPgenSusieBatch.GeneRds)
     Array[File] GeneParquets = flatten(RunPgenSusieBatch.GeneParquets)
     Array[File] GeneTsvs = flatten(RunPgenSusieBatch.GeneTsvs)
@@ -157,6 +205,8 @@ task PlanPgenSusie {
     File? gene_map
     Int batch_size
     Int cis_distance
+    Int mac = 0
+    Float min_call_rate = 0.95
     Boolean select_top_phenotype_per_cluster
     String top_phenotype_pvalue_column
     String docker_image
@@ -187,6 +237,8 @@ task PlanPgenSusie {
       --pgen-manifest '~{sub(pgen_manifest, "'", "'\"'\"'")}'
       --batch-size '~{batch_size}'
       --cis-distance '~{cis_distance}'
+      '--mac=~{mac}'
+      '--min-call-rate=~{min_call_rate}'
       --top-phenotype-pvalue-column '~{sub(top_phenotype_pvalue_column, "'", "'\"'\"'")}'
       --output-dir plan
     )
@@ -202,6 +254,7 @@ task PlanPgenSusie {
     Rscript /opt/r/scripts/plan_pgen_susie.R "${args[@]}"
     echo 'CHECK planned batch files before cloud output collection'
     require_readable plan/batch_worklists.txt plan/batch_phenotype_beds.txt
+    require_readable plan/unique_pgens.tsv plan/batch_pgen_indices.json
     if [[ ! -s plan/batch_worklists.txt || ! -s plan/batch_phenotype_beds.txt ]]; then
       echo 'ERROR planner must list at least one worklist and phenotype BED' >&2
       exit 1
@@ -240,6 +293,70 @@ task PlanPgenSusie {
     File ExpectedOutcomes = "plan/expected_outcomes.tsv"
     File BatchIndex = "plan/batch_index.tsv"
     File NormalizedManifest = "plan/chromosome_pgens.tsv"
+    File UniquePgenManifest = "plan/unique_pgens.tsv"
+    Array[Int] BatchPgenIndices = read_json("plan/batch_pgen_indices.json")
+    File TaskStdout = stdout()
+    File TaskStderr = stderr()
+  }
+  runtime {
+    docker: docker_image
+    cpu: 1
+    memory: "~{memory_gb} GB"
+    disks: "local-disk ~{disk_gb} HDD"
+    preemptible: preemptible_attempts
+    maxRetries: max_retries
+  }
+}
+
+task FilterPgen {
+  input {
+    File pgen
+    File pvar
+    File psam
+    Int mac = 0
+    Float min_call_rate = 0.95
+    Int plink_memory_mb
+    String docker_image
+    Int memory_gb
+    Int disk_gb
+    Int preemptible_attempts
+    Int max_retries
+  }
+  command <<<
+    set -euo pipefail
+    echo 'START shared PGEN MAC and call-rate QC'
+    export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 VROOM_THREADS=1
+    require_readable() {
+      local path
+      for path in "$@"; do
+        case "$path" in
+          *://*) printf 'ERROR localization: unresolved URI: %s\n' "$path" >&2; exit 1 ;;
+        esac
+        if [[ -z "$path" || "$path" == *$'\n'* || "$path" == *$'\r'* || ! -f "$path" || ! -r "$path" ]]; then
+          printf 'ERROR input must be a readable local file: %s\n' "$path" >&2
+          exit 1
+        fi
+      done
+    }
+    require_readable '~{sub(pgen, "'", "'\"'\"'")}' '~{sub(pvar, "'", "'\"'\"'")}' '~{sub(psam, "'", "'\"'\"'")}'
+    Rscript /opt/r/scripts/filter_pgen_susie.R \
+      --pgen '~{sub(pgen, "'", "'\"'\"'")}' \
+      --pvar '~{sub(pvar, "'", "'\"'\"'")}' \
+      --psam '~{sub(psam, "'", "'\"'\"'")}' \
+      '--mac=~{mac}' \
+      '--min-call-rate=~{min_call_rate}' \
+      --plink-memory-mb '~{plink_memory_mb}' \
+      --output-dir qc
+    require_readable qc/filtered.pgen qc/filtered.pvar qc/filtered.psam qc/variant_qc.tsv.gz qc/qc.json
+    echo 'COMPLETE shared PGEN MAC and call-rate QC'
+  >>>
+  output {
+    File Pgen = "qc/filtered.pgen"
+    File Pvar = "qc/filtered.pvar"
+    File Psam = "qc/filtered.psam"
+    File Counts = "qc/variant_qc.tsv.gz"
+    File Report = "qc/qc.json"
+    Array[File] PlinkLogs = glob("qc/*.log")
     File TaskStdout = stdout()
     File TaskStderr = stderr()
   }
@@ -268,6 +385,7 @@ task RunPgenSusieBatch {
     File? ancestry
     File? variant_list
     File? additional_genotypes
+    File? genotype_qc_report
     Int cis_distance
     Float maf
     Int mac = 0
@@ -336,9 +454,12 @@ task RunPgenSusieBatch {
     if [[ ~{true="true" false="false" memory_debug} == true ]]; then
       args+=(--memory-debug)
     fi
+    if [[ -n '~{sub(select_first([genotype_qc_report, ""]), "'", "'\"'\"'")}' ]]; then
+      args+=(--genotype-qc-report '~{sub(select_first([genotype_qc_report, ""]), "'", "'\"'\"'")}')
+    fi
     for (( j=0; j<${#args[@]}; j++ )); do
       case "${args[j]}" in
-        --sample-list|--ancestry|--variant-list|--additional-genotypes) require_readable "${args[j+1]}" ;;
+        --sample-list|--ancestry|--variant-list|--additional-genotypes|--genotype-qc-report) require_readable "${args[j+1]}" ;;
       esac
     done
     Rscript /opt/r/scripts/run_pgen_susie_batch.R "${args[@]}"
@@ -381,6 +502,10 @@ task AggregatePgenSusie {
     Array[String] gene_tsv_uris
     Array[String] gene_log_uris
     Array[String] gene_provenance_uris
+    Array[String] pgen_chromosomes
+    Array[String] pgen_uris
+    Array[String] pvar_uris
+    Array[String] psam_uris
     String docker_image
     Int memory_gb
     Int disk_gb
@@ -419,6 +544,10 @@ task AggregatePgenSusie {
     cp '~{write_lines(gene_tsv_uris)}' gene_tsv_uris.txt
     cp '~{write_lines(gene_log_uris)}' gene_log_uris.txt
     cp '~{write_lines(gene_provenance_uris)}' gene_provenance_uris.txt
+    cp '~{write_lines(pgen_chromosomes)}' pgen_chromosomes.txt
+    cp '~{write_lines(pgen_uris)}' pgen_uris.txt
+    cp '~{write_lines(pvar_uris)}' pvar_uris.txt
+    cp '~{write_lines(psam_uris)}' psam_uris.txt
     Rscript /opt/r/scripts/aggregate_pgen_susie.R \
       --expected-outcomes '~{sub(expected_outcomes, "'", "'\"'\"'")}' \
       --summary-files summary_files.txt \
@@ -430,6 +559,10 @@ task AggregatePgenSusie {
       --gene-tsv-uris-file gene_tsv_uris.txt \
       --gene-log-uris-file gene_log_uris.txt \
       --gene-provenance-uris-file gene_provenance_uris.txt \
+      --pgen-chromosomes-file pgen_chromosomes.txt \
+      --pgen-uris-file pgen_uris.txt \
+      --pvar-uris-file pvar_uris.txt \
+      --psam-uris-file psam_uris.txt \
       --output-dir aggregate
     echo 'COMPLETE PGEN batch aggregation'
   >>>
@@ -438,6 +571,7 @@ task AggregatePgenSusie {
     File CredibleSets = "aggregate/credible_sets.parquet"
     File OutcomeIndex = "aggregate/outcome_index.tsv"
     File Diagnostics = "aggregate/covariate_explained_variants.tsv"
+    File PreparedPgenManifest = "aggregate/pgen_manifest.tsv"
     Array[File] ChromosomeGeneManifests = glob("aggregate/gene_manifests/chr*.gene_outputs.tsv")
     File TaskStdout = stdout()
     File TaskStderr = stderr()

@@ -76,6 +76,54 @@ writePgenManifest <- function(manifest, output_file) {
   invisible(output_file)
 }
 
+# Group selected input locations without opening the genotype files.
+writePgenQcPlan <- function(manifest, batch_chromosomes, output_dir) {
+  manifest <- .validatePgenManifest(manifest)
+  pgenCheckIds(batch_chromosomes, "Batch chromosomes")
+  if (!length(batch_chromosomes)) stop("Batch chromosomes must be nonempty", call. = FALSE)
+  manifest_indices <- match(pgenAutosome(batch_chromosomes), pgenAutosome(manifest$chromosome))
+  if (anyNA(manifest_indices)) {
+    stop("A selected batch chromosome is absent from the PGEN manifest", call. = FALSE)
+  }
+  # Keep selected manifest row order. All three paths define the cohort.
+  unique_pgens <- manifest[sort(unique(manifest_indices)), ] |>
+    dplyr::distinct(pgen, pvar, psam, .keep_all = TRUE)
+  path_columns <- c("pgen", "pvar", "psam")
+  mapping <- manifest[manifest_indices, path_columns] |>
+    dplyr::left_join(unique_pgens |>
+      dplyr::mutate(pgen_index = dplyr::row_number() - 1L) |>
+      dplyr::select(-chromosome), by = path_columns)
+  indices <- as.integer(mapping$pgen_index)
+  unique_manifest <- file.path(output_dir, "unique_pgens.tsv")
+  batch_pgen_indices <- file.path(output_dir, "batch_pgen_indices.json")
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  writePgenManifest(unique_pgens, unique_manifest)
+  jsonlite::write_json(indices, batch_pgen_indices, auto_unbox = FALSE)
+  invisible(list(unique_manifest = unique_manifest, batch_pgen_indices = batch_pgen_indices,
+                 unique_pgens = unique_pgens, indices = indices))
+}
+
+# These locations describe outputs. Do not open or localize their contents.
+writePgenOutputManifest <- function(chromosomes, pgen_uris, pvar_uris, psam_uris, output_file) {
+  values <- list(chromosome = chromosomes, pgen = pgen_uris, pvar = pvar_uris, psam = psam_uris)
+  lengths <- vapply(values, length, integer(1))
+  if (!lengths[[1L]] || any(lengths != lengths[[1L]])) {
+    stop("PGEN output metadata lists must have the same nonzero length", call. = FALSE)
+  }
+  for (name in names(values)) pgenCheckIds(values[[name]], paste("PGEN output metadata", name))
+  manifest <- tibble::as_tibble(values) |>
+    dplyr::mutate(chromosome = as.character(pgenAutosome(chromosome))) |>
+    dplyr::distinct()
+  if (anyDuplicated(manifest$chromosome)) {
+    stop("Each output chromosome must have one PGEN/PVAR/PSAM triplet", call. = FALSE)
+  }
+  manifest <- .validatePgenManifest(manifest)
+  # Use the same single-line output-path validation as the normalized writer.
+  writePgenManifest(manifest, output_file)
+  readr::write_tsv(manifest, output_file, quote = "needed")
+  invisible(output_file)
+}
+
 pgenRelativePath <- function(path) {
   # read_lines task outputs must remain paths relative to the execution directory.
   absolute <- strsplit(normalizePath(path, mustWork = TRUE), "/", fixed = TRUE)[[1]]

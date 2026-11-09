@@ -16,7 +16,7 @@ batch_script_path <- if (any(nzchar(source_files))) tail(source_files[nzchar(sou
 pipeline_function_files <- c("ImportFunctions.R", "InitFunctions.R", "SusiePerformance.R",
                    "MemoryHelpers.R", "SusieFunctions.R", "PgenFunctions.R",
                    "SusieOutputFunctions.R", "PgenGeneFunctions.R",
-                   "PgenBatchFunctions.R")
+                   "PgenBatchFunctions.R", "PgenQcFunctions.R")
 for (filename in pipeline_function_files) {
   source(file.path(functions_dir, filename))
 }
@@ -32,7 +32,87 @@ additionalGenotypesForGene <- function(additional_table, phenotype_ids) {
     data.matrix()
 }
 
-makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version) {
+readPgenBatchQcReport <- function(path, inputs, mac = 0, pgen_sample_count = NULL) {
+  if (is.null(path)) return(NULL)
+  if (mac > 0) {
+    stop("Set --mac to 0 with --genotype-qc-report; do not repeat the genotype filter",
+         call. = FALSE)
+  }
+  invalid <- function(detail) {
+    stop("Invalid genotype QC report: ", detail, call. = FALSE)
+  }
+  report <- tryCatch(jsonlite::read_json(path, simplifyVector = FALSE),
+    error = function(error) invalid(paste0("cannot read JSON: ", conditionMessage(error))))
+  required <- c("schema_version", "count_source", "sample_scope", "include_nonfounders",
+    "sample_count", "variant_count_before", "variant_count_after", "thresholds",
+    "source_files", "filtered_files", "counts_file", "plink_version")
+  has_fields <- function(value, fields) {
+    is.list(value) && !is.null(names(value)) && !anyDuplicated(names(value)) &&
+      all(fields %in% names(value))
+  }
+  scalar_string <- function(value) {
+    is.character(value) && length(value) == 1L && !is.na(value) && nzchar(value) &&
+      !grepl("[\r\n]", value)
+  }
+  count <- function(value, minimum = 0) {
+    is.numeric(value) && length(value) == 1L && is.finite(value) &&
+      value >= minimum && value == floor(value)
+  }
+  if (!has_fields(report, required)) invalid("required fields are missing or duplicated")
+  if (!count(report$schema_version, 1) || report$schema_version != 1 ||
+      !identical(report$count_source, "pgen_hardcalls") ||
+      !identical(report$sample_scope, "all_input_pgen_samples") ||
+      !identical(report$include_nonfounders, TRUE)) {
+    invalid("unsupported schema version, count source or sample scope")
+  }
+  if (!count(report$sample_count, 1) || !count(report$variant_count_before) ||
+      !count(report$variant_count_after) ||
+      report$variant_count_after > report$variant_count_before) {
+    invalid("sample and variant counts must be valid whole numbers; after must not exceed before")
+  }
+  if (!is.null(pgen_sample_count) && report$sample_count != pgen_sample_count) {
+    invalid("sample_count differs from the input PGEN cohort")
+  }
+  if (!has_fields(report$thresholds, c("mac", "min_call_rate"))) {
+    invalid("MAC and called fraction thresholds are required")
+  }
+  tryCatch(validatePgenQcThresholds(report$thresholds$mac, report$thresholds$min_call_rate),
+    error = function(error) invalid(conditionMessage(error)))
+  if (report$thresholds$mac == 0 && report$thresholds$min_call_rate == 0 &&
+      report$variant_count_before != report$variant_count_after) {
+    invalid("variant counts differ although both filters are disabled")
+  }
+  if (!scalar_string(report$plink_version)) invalid("PLINK version is missing")
+  valid_record <- function(value) {
+    has_fields(value, c("present", "basename", "size_bytes", "sha256")) &&
+      identical(value$present, TRUE) && scalar_string(value$basename) &&
+      identical(basename(value$basename), value$basename) && count(value$size_bytes) &&
+      scalar_string(value$sha256) && grepl("^[a-fA-F0-9]{64}$", value$sha256)
+  }
+  for (group in c("source_files", "filtered_files")) {
+    if (!has_fields(report[[group]], c("pgen", "pvar", "psam"))) {
+      invalid(paste0(group, " must contain PGEN, PVAR and PSAM records"))
+    }
+    for (role in c("pgen", "pvar", "psam")) {
+      record <- report[[group]][[role]]
+      if (!valid_record(record)) invalid(paste(group, role, "file record is invalid"))
+      if (group == "filtered_files") {
+        # Input hashes already exist in provenance. Do not reread a chromosome.
+        if (tolower(record$sha256) != tolower(inputs[[role]]$sha256)) {
+          invalid(paste("filtered", role, "hash differs from the batch input"))
+        }
+        if (record$size_bytes != inputs[[role]]$size_bytes) {
+          invalid(paste("filtered", role, "file size differs from the batch input"))
+        }
+      }
+    }
+  }
+  if (!valid_record(report$counts_file)) invalid("counts_file record is invalid")
+  report
+}
+
+makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version,
+                                  pgen_sample_count = NULL) {
   # Cache by local path across roles. Hash scientific inputs and extracted files
   # once per batch, before the gene loop; never hash a chromosome for each gene.
   hashes <- new.env(parent = emptyenv())
@@ -46,15 +126,21 @@ makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version) {
          sha256 = get(path, envir = hashes, inherits = FALSE))
   }
   roles <- c("pgen", "pvar", "psam", "worklist", "phenotype_bed", "qtl_results",
-             "covariates", "sample_list", "ancestry", "variant_list", "additional_genotypes")
+             "covariates", "sample_list", "ancestry", "variant_list", "additional_genotypes",
+             "genotype_qc_report")
   inputs <- purrr::map(setNames(roles, roles), ~ file_record(opt[[.x]]))
+  standalone_mac <- if (is.null(opt$mac)) 0 else opt$mac
+  genotype_qc <- readPgenBatchQcReport(opt$genotype_qc_report, inputs, standalone_mac,
+                                      pgen_sample_count)
   scripts_dir <- dirname(normalizePath(batch_script_path, mustWork = TRUE))
   source_paths <- c(file.path(functions_dir, pipeline_function_files),
     file.path(scripts_dir, c("plan_pgen_susie.R", "run_pgen_susie_batch.R",
-                            "aggregate_pgen_susie.R")))
+                            "aggregate_pgen_susie.R", "filter_pgen_susie.R")))
   pipeline <- purrr::map(setNames(source_paths, basename(source_paths)), file_record)
-  mac <- if (is.null(opt$mac)) 0 else opt$mac
+  mac <- if (is.null(genotype_qc)) standalone_mac else genotype_qc$thresholds$mac
+  min_call_rate <- if (is.null(genotype_qc)) 0 else genotype_qc$thresholds$min_call_rate
   filter_modes <- if (mac > 0) "mac" else character()
+  if (min_call_rate > 0) filter_modes <- c(filter_modes, "call_rate")
   if (!is.null(opt$variant_list)) {
     filter_modes <- c(filter_modes, "variant_list")
   } else if (!is.null(opt$ancestry) && opt$maf > 0) {
@@ -62,8 +148,15 @@ makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version) {
   }
   filter_mode <- if (length(filter_modes)) paste(filter_modes, collapse = "+") else "none"
   list(batch_id = batch_id, plink_version = plink_version, inputs = inputs,
+    genotype_qc = genotype_qc,
     extracted_genotypes = purrr::map(setNames(batch_files, c("pgen", "pvar", "psam")), file_record),
-    settings = list(maf = opt$maf, mac = mac, variant_filter_mode = filter_mode,
+    settings = list(maf = opt$maf, mac = mac, min_call_rate = min_call_rate,
+      variant_filter_mode = filter_mode,
+      sample_scope = if (!is.null(genotype_qc) || mac > 0)
+        "all_input_pgen_samples" else "disabled",
+      include_nonfounders = !is.null(genotype_qc) || mac > 0,
+      genotype_qc_count_source = if (!is.null(genotype_qc)) genotype_qc$count_source else
+        if (mac > 0) "plink2_mac" else "disabled",
       mac_sample_scope = "all_input_pgen_samples", mac_include_nonfounders = TRUE,
       memory_debug = isTRUE(opt$memory_debug),
       cis_distance = opt$cis_distance, missing_code = opt$missing_code,
@@ -149,7 +242,8 @@ runPgenSusieBatch <- function(opt) {
          call. = FALSE)
   }
   requireBatchLocalFiles(opt[required_names])
-  optional_names <- c("sample_list", "ancestry", "variant_list", "additional_genotypes")
+  optional_names <- c("sample_list", "ancestry", "variant_list", "additional_genotypes",
+                      "genotype_qc_report")
   optional_paths <- opt[optional_names]
   optional_paths <- optional_paths[!vapply(optional_paths, is.null, logical(1))]
   if (length(optional_paths)) requireBatchLocalFiles(optional_paths)
@@ -169,6 +263,10 @@ runPgenSusieBatch <- function(opt) {
   }
   if (!valid_integer(opt$mac, 0)) {
     stop("MAC must be a nonnegative integer no greater than ", .Machine$integer.max,
+         call. = FALSE)
+  }
+  if (!is.null(opt$genotype_qc_report) && opt$mac > 0) {
+    stop("Set --mac to 0 with --genotype-qc-report; do not repeat the genotype filter",
          call. = FALSE)
   }
   if (!valid_integer(opt$cis_distance, 0) || !valid_integer(opt$base_seed, 0) ||
@@ -232,6 +330,8 @@ runPgenSusieBatch <- function(opt) {
     plink_args <- c(plink_args, "--mac", as.character(opt$mac), "--nonfounders")
     message("FILTER batch variants: MAC >= ", opt$mac,
             " across all input PGEN samples, including nonfounders")
+  } else if (!is.null(opt$genotype_qc_report)) {
+    message("USE shared genotype QC; no repeated batch MAC filter")
   } else {
     message("MAC filter disabled (MAC = 0)")
   }
@@ -289,7 +389,13 @@ runPgenSusieBatch <- function(opt) {
          call. = FALSE)
   }
   se <- makePgenBatchExperiment(data)
-  provenance <- makePgenBatchProvenance(opt, batch_id, batch_files, version)
+  provenance <- makePgenBatchProvenance(opt, batch_id, batch_files, version,
+                                       reader$raw_sample_count)
+  if (!is.null(provenance$genotype_qc)) {
+    message("VERIFY shared genotype QC: MAC >= ", provenance$settings$mac,
+            ", called fraction >= ", provenance$settings$min_call_rate,
+            "; prepared input hashes and full-cohort sample count match")
+  }
   provenance$settings$sample_selection <- if (is.null(opt$sample_list))
     "genotype_phenotype_intersection" else "provided_list"
   provenance$settings$sample_order <- if (is.null(opt$sample_list)) "psam" else "sample_list"
@@ -352,6 +458,8 @@ batch_options <- list(
   batchOption("base-seed", "integer", 1L), batchOption("maf", "double", 0),
   batchOption("mac", "double", 0,
     help = "Minimum minor allele count across all input PGEN samples; 0 disables the filter"),
+  batchOption("genotype-qc-report",
+    help = "Shared genotype QC report for the prepared PGEN files; requires --mac 0"),
   batchOption("ancestry"), batchOption("variant-list"),
   batchOption("additional-genotypes"), batchOption("plink2", default = "plink2"),
   batchOption("plink-memory-mb", "integer", 1024L),

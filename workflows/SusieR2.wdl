@@ -1,7 +1,7 @@
 version 1.0
 
 # Planner indices refer to manifest row positions. The workflow promotes the
-# validated path fields to typed Files before supplying a chromosome to a batch.
+# validated path fields to typed Files before supplying them to a batch.
 struct ChromosomePgen {
   String chromosome
   File pgen
@@ -77,7 +77,9 @@ workflow SusieR2 {
     Int chromosome_index = batch.right
     call RunPgenSusieBatch {
       input:
-        pgen_files = ChromosomePgens[chromosome_index],
+        pgen = ChromosomePgens[chromosome_index].pgen,
+        pvar = ChromosomePgens[chromosome_index].pvar,
+        psam = ChromosomePgens[chromosome_index].psam,
         worklist = batch.left.left,
         phenotype_bed = batch.left.right,
         qtl_results = QtlResults,
@@ -251,7 +253,10 @@ task PlanPgenSusie {
 
 task RunPgenSusieBatch {
   input {
-    ChromosomePgen pgen_files
+    # Separate File inputs let Cromwell map paths before sub() escapes them.
+    File pgen
+    File pvar
+    File psam
     File worklist
     File phenotype_bed
     File qtl_results
@@ -292,11 +297,11 @@ task RunPgenSusieBatch {
         fi
       done
     }
-    require_readable '~{sub(pgen_files.pgen, "'", "'\"'\"'")}' '~{sub(pgen_files.pvar, "'", "'\"'\"'")}' '~{sub(pgen_files.psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
+    require_readable '~{sub(pgen, "'", "'\"'\"'")}' '~{sub(pvar, "'", "'\"'\"'")}' '~{sub(psam, "'", "'\"'\"'")}' '~{sub(worklist, "'", "'\"'\"'")}' '~{sub(phenotype_bed, "'", "'\"'\"'")}' '~{sub(qtl_results, "'", "'\"'\"'")}' '~{sub(covariates, "'", "'\"'\"'")}'
     args=(
-      --pgen '~{sub(pgen_files.pgen, "'", "'\"'\"'")}'
-      --pvar '~{sub(pgen_files.pvar, "'", "'\"'\"'")}'
-      --psam '~{sub(pgen_files.psam, "'", "'\"'\"'")}'
+      --pgen '~{sub(pgen, "'", "'\"'\"'")}'
+      --pvar '~{sub(pvar, "'", "'\"'\"'")}'
+      --psam '~{sub(psam, "'", "'\"'\"'")}'
       --worklist '~{sub(worklist, "'", "'\"'\"'")}'
       --phenotype-bed '~{sub(phenotype_bed, "'", "'\"'\"'")}'
       --qtl-results '~{sub(qtl_results, "'", "'\"'\"'")}'

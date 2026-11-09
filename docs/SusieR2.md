@@ -2,7 +2,7 @@
 
 [SusieR2.wdl](../workflows/SusieR2.wdl) is a WDL 1.0 workflow for Terra's managed Cromwell service. It plans batches, extracts the cis windows with PLINK 2, fits each selected outcome, and combines the batch tables. The default batch size is 50 genes. Set `SusieR2.BatchSize` to another positive integer, such as 100, to change this limit. All outcomes for one gene stay in one batch.
 
-The complete workflow has **not been tested on Terra**. Local WDL checks and command tests do not establish Terra compatibility. No cloud jobs were submitted for these checks.
+The complete workflow has **not completed validation on Terra**. Local WDL checks and command tests do not establish Terra compatibility. No cloud jobs were submitted for these checks.
 
 ## Inputs
 
@@ -29,7 +29,7 @@ Plain text, gzip, and BGZF files use the same parser, regardless of the filename
 
 The planner checks the header, metadata, row count, and selected-row counts again during splitting. Errors report the failing line or metadata row. An ID mismatch alone does not establish that the file changed.
 
-The planner validates the manifest without opening its genotype locations and preserves its row order. It writes a small normalized TSV. WDL reads that table and converts each PGEN, PVAR, and PSAM location into a typed File inside a `ChromosomePgen` struct. These Files are explicit batch inputs and are localized by Cromwell. No genotype URI is passed to an R script as an unlocalized local filename. Each batch's zero-based chromosome index refers to the manifest row order. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
+The planner validates the manifest without opening its genotype locations and preserves its row order. It writes a small normalized TSV. WDL reads that table and converts each PGEN, PVAR, and PSAM location into a typed File inside a `ChromosomePgen` struct. Each batch receives the three members as separate `File` inputs. Cromwell can then replace each cloud URI with its local path before the command escapes it for the shell. Each batch's zero-based chromosome index refers to the manifest row order. The planner's `batch_chromosome_indices.json` is output metadata; it is not a script argument wrapper.
 
 When `SampleList` is omitted, sample selection uses IDs rather than phenotype values. Genotype-only and phenotype-only samples are excluded, while phenotype missing values retain their existing handling. Covariates must cover every retained sample; they do not silently reduce the cohort. A supplied list keeps its existing order and selection behavior. The PGEN reader and ancestry MAF calculation retain the complete genotype cohort before the phenotype subset. Additional-genotype sample restrictions still apply afterward. Provenance records the initial selection mode, PSAM/list order rule, sample count, and cohort hash before any additional-genotype restriction.
 
@@ -68,7 +68,9 @@ The [IKZF1 cis benchmark](../benchmarks/synthetic_scale/reports/2026-11-06-real-
 
 ## Localization and commands
 
-All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Files remain typed inside chromosome structs until command rendering. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. It collects these files with explicit `glob()` outputs so Terra uploads them before the planner VM exits. Reading a list of filenames with `read_lines()` is not sufficient for this upload step. The command checks file counts, matching batch IDs, and file order against the planner lists. The workflow pairs both file arrays and chromosome indexes with `zip()`, which rejects unequal counts before batch localization. These files remain typed outputs and inputs for the fit tasks.
+All files that tasks open use WDL `File`, `File?`, or `Array[File]` inputs. Genotype files remain typed in the workflow's chromosome structs and in the batch task's separate inputs. The workflow has no file-writing expressions. The planner writes worklists and phenotype BEDs inside its task. It collects these files with explicit `glob()` outputs so Terra uploads them before the planner VM exits. Reading a list of filenames with `read_lines()` is not sufficient for this upload step. The command checks file counts, matching batch IDs, and file order against the planner lists. The workflow pairs both file arrays and chromosome indexes with `zip()`, which rejects unequal counts before batch localization. These files remain typed outputs and inputs for the fit tasks.
+
+Use separate task `File` inputs when a command applies `sub()` to escape paths. In Cromwell 85, `sub(struct.member, ...)` can retain the cloud URI even after the file downloads. The batch task uses `sub(pgen, ...)`, `sub(pvar, ...)`, and `sub(psam, ...)` so the local paths reach the command. The unresolved-URI and readable-file checks still run before R or PLINK.
 
 Each task uses named CLI arguments. Optional arguments are added only when their Files are present. The aggregate task writes newline-delimited lists of the already localized companion Files inside its command. Cloud URIs in a table are metadata and cannot cause automatic localization. Required inputs must be supplied as explicit WDL Files. The commands and R scripts check that local input files are readable before computation. They report an unresolved cloud URI as a localization error.
 
@@ -112,4 +114,4 @@ miniwdl check workflows/SusieR2.wdl
 python3 tests/test_pgen_wdl.py .
 ```
 
-The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.
+The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. The WDL CI job also uses the command renderer in the pinned WOMtool 85 JAR to check the batch command with cloud File values and a local-path mapper. This catches the struct-member path error that a test with pre-localized inputs cannot detect. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.

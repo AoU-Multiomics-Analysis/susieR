@@ -29,7 +29,7 @@ GENE_URI_INPUTS = {
 GENE_URI_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in GENE_URI_INPUTS}
 LIST_FLAGS = ('--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files') + tuple(GENE_URI_FLAGS)
 FILE_NAMES = {'pgen_manifest', 'phenotype_bed', 'qtl_results', 'gene_map', 'worklist', 'covariates', 'sample_list',
-              'ancestry', 'variant_list', 'additional_genotypes', 'expected_outcomes'}
+              'ancestry', 'variant_list', 'additional_genotypes', 'expected_outcomes', 'pgen', 'pvar', 'psam'}
 OPTIONAL_FILES = {'gene_map', 'sample_list', 'ancestry', 'variant_list', 'additional_genotypes'}
 
 
@@ -224,11 +224,12 @@ class PgenWdlTests(unittest.TestCase):
 
     def test_manifest_paths_become_files_before_batch_localization(self):
         files = self.manifest_files()
-        self.assertEqual(files.type.item_type.members,
-                         next(decl.type for decl in self.tasks['RunPgenSusieBatch'].inputs
-                              if decl.name == 'pgen_files').members)
+        inputs = {decl.name: decl for decl in self.tasks['RunPgenSusieBatch'].inputs}
+        for name in ('pgen', 'pvar', 'psam'):
+            self.assertIsInstance(inputs[name].type, WDL.Type.File)
         for file_bundle in files.value:
-            self.execute(self.tasks['RunPgenSusieBatch'], overrides={'pgen_files': file_bundle})
+            self.execute(self.tasks['RunPgenSusieBatch'], overrides={
+                name: file_bundle.value[name] for name in ('pgen', 'pvar', 'psam')})
 
     def test_batch_indices_select_matching_typed_chromosome_files(self):
         # Input order differs from genomic order; two batches reuse chromosome 1.
@@ -252,12 +253,12 @@ class PgenWdlTests(unittest.TestCase):
             iteration_env = env.bind(scatter.variable, batch)
             chromosome_index = index.expr.eval(iteration_env, WDL.StdLib.Base('1.0'))
             iteration_env = iteration_env.bind(index.name, chromosome_index)
-            selected = call.inputs['pgen_files'].eval(iteration_env, WDL.StdLib.Base('1.0'))
-            self.assertEqual(selected.value['chromosome'].value, chromosome)
             for ext in ('pgen', 'pvar', 'psam'):
-                self.assertIsInstance(selected.value[ext], WDL.Value.File)
-                self.assertEqual(selected.value[ext].value,
+                selected = call.inputs[ext].eval(iteration_env, WDL.StdLib.Base('1.0'))
+                self.assertIsInstance(selected, WDL.Value.File)
+                self.assertEqual(selected.value,
                                  files.value[(1, 1, 0)[i - 1]].value[ext].value)
+                self.assertIn('gs://bucket/' + chromosome + ' ', selected.value)
             for name, extension in (('worklist', 'tsv'), ('phenotype_bed', 'bed')):
                 selected_file = call.inputs[name].eval(iteration_env, WDL.StdLib.Base('1.0'))
                 self.assertIsInstance(selected_file, WDL.Value.File)
@@ -359,8 +360,10 @@ class PgenWdlTests(unittest.TestCase):
                 chromosome_index = index.expr.eval(iteration, WDL.StdLib.Base('1.0'))
                 self.assertEqual(chromosome_index.value, indices[number - 1])
                 iteration = iteration.bind(index.name, chromosome_index)
-                genotype = call.inputs['pgen_files'].eval(iteration, WDL.StdLib.Base('1.0'))
-                self.assertEqual(genotype.value['chromosome'].value, chromosomes[number - 1])
+                for name in ('pgen', 'pvar', 'psam'):
+                    genotype = call.inputs[name].eval(iteration, WDL.StdLib.Base('1.0'))
+                    self.assertIsInstance(genotype, WDL.Value.File)
+                    self.assertEqual(genotype.value, files.value[indices[number - 1]].value[name].value)
                 for name, extension in (('worklist', 'tsv'), ('phenotype_bed', 'bed')):
                     value = call.inputs[name].eval(iteration, WDL.StdLib.Base('1.0'))
                     self.assertIsInstance(value, WDL.Value.File)
@@ -430,10 +433,7 @@ class PgenWdlTests(unittest.TestCase):
         raw = {}
         for decl in task.inputs:
             name, typ = decl.name, decl.type
-            if name == 'pgen_files':
-                value = {'chromosome': '2', 'pgen': 'gs://bucket/a.pgen',
-                         'pvar': 'gs://bucket/a.pvar', 'psam': 'gs://bucket/a.psam'}
-            elif name in OPTIONAL_FILES and not optional:
+            if name in OPTIONAL_FILES and not optional:
                 value = None
             elif isinstance(typ, WDL.Type.File):
                 value = 'gs://bucket/' + name
@@ -569,9 +569,6 @@ if args[0].endswith('/plan_pgen_susie.R'):
                 self.assertEqual('--memory-debug' in args, optional)
                 self.assertIn('--missing-code=' + localized['missing_code'].value, args)
                 self.assertNotIn('--missing-code', args)
-                for name, value in localized['pgen_files'].value.items():
-                    if name != 'chromosome':
-                        self.assertEqual(args[args.index('--' + name) + 1], value.value)
             else:
                 self.assertEqual(args[0], '/opt/r/scripts/aggregate_pgen_susie.R')
                 for flag, paths in payload['lists'].items():
@@ -631,6 +628,12 @@ if args[0].endswith('/plan_pgen_susie.R'):
         for failure in ('uri', 'missing'):
             with self.subTest(failure=failure):
                 self.execute(self.tasks['RunPgenSusieBatch'], broken=('sample_list', failure))
+
+    def test_genotype_files_reject_unresolved_or_missing_file(self):
+        for name in ('pgen', 'pvar', 'psam'):
+            for failure in ('uri', 'missing'):
+                with self.subTest(file=name, failure=failure):
+                    self.execute(self.tasks['RunPgenSusieBatch'], broken=(name, failure))
 
     def test_planner_rejects_unresolved_or_missing_manifest(self):
         for failure in ('uri', 'missing'):

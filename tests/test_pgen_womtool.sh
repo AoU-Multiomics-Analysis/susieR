@@ -26,3 +26,6 @@ assert inputs["SusieR2.SampleList"].startswith("File?"), "SampleList must be opt
 assert "SusieR2.ChromosomePgens" not in inputs, "The old array input must be replaced by the manifest"
 print("PGEN WDL validation and input metadata checks passed")
 PY
+echo 'CHECK PGEN command localization with Cromwell 85'
+"$java_bin" -Dscala.usejavacp=true -cp "$WOMTOOL_JAR" \
+  scala.tools.nsc.MainGenericRunner "$repo_dir/tests/test_pgen_wom_render.scala" "$repo_dir"

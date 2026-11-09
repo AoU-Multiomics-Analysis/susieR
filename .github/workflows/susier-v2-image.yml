@@ -4,6 +4,12 @@ name: SuSiE PGEN image CI
 # Use workflow_dispatch to test changes to the image recipe or tests themselves.
 on:
   workflow_dispatch:
+    inputs:
+      full_checks:
+        description: "Run the complete regression and legacy parity suites"
+        type: boolean
+        required: false
+        default: false
   push:
     branches: ["main"]
     paths:
@@ -55,6 +61,7 @@ jobs:
         run: |
           python3 -m pip install PyYAML==6.0.2 miniwdl==1.14.2
           python3 tests/test_pgen_image_config.py
+          python3 tests/test_pgen_container_mode.py
           python3 tests/test_pgen_wdl.py
 
   image:
@@ -77,13 +84,19 @@ jobs:
           tags: susier-pgen:smoke-test
           cache-from: type=gha,scope=susier-pgen
           cache-to: type=gha,mode=max,scope=susier-pgen
-      - name: Test installed PLINK batch and legacy parity
+      - name: Test installed PGEN pipeline
+        env:
+          FULL_CHECKS: ${{ github.event_name == 'workflow_dispatch' && inputs.full_checks || false }}
         run: |
           set -euo pipefail
+          test_args=(bash tests/test_pgen_container.sh)
+          if [[ "$FULL_CHECKS" == "true" ]]; then
+            test_args+=(--full)
+          fi
           docker run --rm \
             --volume "$PWD/tests:/repo/tests:ro" \
             --workdir /repo \
-            susier-pgen:smoke-test bash tests/test_pgen_container.sh
+            susier-pgen:smoke-test "${test_args[@]}"
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v4

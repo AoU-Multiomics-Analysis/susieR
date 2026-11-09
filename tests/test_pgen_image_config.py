@@ -32,6 +32,15 @@ def load_yaml(path):
 
 
 class ImageContractTests(unittest.TestCase):
+    def test_complete_regressions_require_explicit_manual_opt_in(self):
+        workflow = load_yaml(WORKFLOW)
+        dispatch = workflow["on"]["workflow_dispatch"]
+        self.assertIsInstance(dispatch, dict)
+        full_checks = dispatch["inputs"]["full_checks"]
+        self.assertEqual(full_checks["type"], "boolean")
+        self.assertEqual(full_checks["default"], "false")
+        self.assertEqual(full_checks["required"], "false")
+
     def test_package_recording_uses_supported_micromamba_json_output(self):
         """Catch the unsupported list --explicit flag that stopped image CI."""
         dockerfile = (IMAGE_DIR / "Dockerfile").read_text().replace("\\\n", " ")

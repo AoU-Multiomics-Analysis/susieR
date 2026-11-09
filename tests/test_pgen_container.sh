@@ -22,6 +22,8 @@ echo 'CHECK installed PGEN tools'
 plink2 --version
 bgzip --version
 tabix --version
+echo 'TEST task CPU detection and thread settings'
+Rscript tests/test_pgen_runtime.R .
 echo 'TEST optional MAC with real PLINK extraction'
 Rscript tests/test_pgen_mac.R .
 echo 'TEST shared PGEN MAC and AN call-rate QC'

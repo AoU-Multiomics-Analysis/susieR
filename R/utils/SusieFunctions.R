@@ -477,7 +477,28 @@ fitSusieModel <- function(X, y, legacy = FALSE,
 
 # Fine-map one phenotype by loading local cis dosages, residualizing expression
 # and genotypes against covariates, then fitting susieR.
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL,timing_callback = NULL){
+  if (!is.null(timing_callback) && !is.function(timing_callback)) {
+    stop("timing_callback must be a function or NULL", call. = FALSE)
+  }
+  timing_event <- function(stage, event) {
+    if (!is.null(timing_callback)) timing_callback(stage, event)
+    invisible(NULL)
+  }
+  timing_stage <- "data_preparation"
+  timing_event(timing_stage, "start")
+  on.exit({
+    if (!is.null(timing_stage)) timing_event(timing_stage, "failed")
+  }, add = TRUE)
+  timed_fit <- function(...) {
+    timing_event("data_preparation", "complete")
+    timing_stage <<- "fine_mapping"
+    timing_event(timing_stage, "start")
+    fitted <- fitSusieModel(...)
+    timing_event(timing_stage, "complete")
+    timing_stage <<- NULL
+    fitted
+  }
   message("Processing phenotype: ", phenotype_id)
   
   # Extract and rank-normalize the target phenotype from the SummarizedExperiment.
@@ -559,7 +580,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
       )
       explained_variants <- reusable_genotype$covariate_explained_variants %>%
         dplyr::filter(variant_id %in% variant_names)
-      fitted <- fitSusieModel(gt_hat, expression_vector, legacy = reusable_genotype$dense,
+      fitted <- timed_fit(gt_hat, expression_vector, legacy = reusable_genotype$dense,
                               covariate_explained_variants = explained_variants)
       fitted$variant_id = variant_names
       return(fitted)
@@ -688,7 +709,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
 
 
   # Fit the SuSiE model on residualized genotypes and expression.
-  fitted <- fitSusieModel(gt_hat, expression_vector, legacy = legacy,
+  fitted <- timed_fit(gt_hat, expression_vector, legacy = legacy,
                           covariate_explained_variants = explained_variants)
   fitted$variant_id = variant_names
   return(fitted)

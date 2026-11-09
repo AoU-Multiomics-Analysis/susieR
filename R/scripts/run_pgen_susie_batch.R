@@ -13,7 +13,7 @@ source_files <- vapply(sys.frames(), function(frame) {
 batch_script_path <- if (any(nzchar(source_files))) tail(source_files[nzchar(source_files)], 1L) else {
   sub("^--file=", "", commandArgs()[grepl("^--file=", commandArgs())][[1L]])
 }
-pipeline_function_files <- c("ImportFunctions.R", "InitFunctions.R", "SusiePerformance.R",
+pipeline_function_files <- c("ImportFunctions.R", "InitFunctions.R", "SusiePerformance.R", "PgenRuntime.R",
                    "MemoryHelpers.R", "SusieFunctions.R", "PgenFunctions.R",
                    "SusieOutputFunctions.R", "PgenGeneFunctions.R",
                    "PgenBatchFunctions.R", "PgenQcFunctions.R")
@@ -112,7 +112,7 @@ readPgenBatchQcReport <- function(path, inputs, mac = 0, pgen_sample_count = NUL
 }
 
 makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version,
-                                  pgen_sample_count = NULL) {
+                                  pgen_sample_count = NULL, threading = NULL) {
   # Cache by local path across roles. Hash scientific inputs and extracted files
   # once per batch, before the gene loop; never hash a chromosome for each gene.
   hashes <- new.env(parent = emptyenv())
@@ -165,7 +165,9 @@ makePgenBatchProvenance <- function(opt, batch_id, batch_files, plink_version,
       base_seed = opt$base_seed,
       seed_algorithm = "susier-gene-outcome-seed-v1:UTF8-byte-length:SHA256-first7hex",
       additional_genotype_scope = "union_of_selected_phenotypes_within_gene",
-      plink_threads = 1L, plink_memory_mb = opt$plink_memory_mb),
+      threading = threading,
+      plink_threads = if (is.null(threading)) 1L else threading$selected_threads,
+      plink_memory_mb = opt$plink_memory_mb),
     source = list(pipeline = pipeline,
       runtime_image = Sys.getenv("SUSIER_RUNTIME_IMAGE", unset = "local"),
       susie_source_sha = Sys.getenv("SUSIER_SUSIER_SOURCE_SHA", unset = "unavailable"),
@@ -232,6 +234,7 @@ makePgenBatchExperiment <- function(data) {
 }
 
 runPgenSusieBatch <- function(opt) {
+  batch_started <- proc.time()[["elapsed"]]
   previous_memory_debug <- options(susier.memory_debug = isTRUE(opt$memory_debug))
   on.exit(options(previous_memory_debug), add = TRUE)
   if (is.null(opt$mac)) opt$mac <- 0
@@ -308,6 +311,7 @@ runPgenSusieBatch <- function(opt) {
   batch_id <- worklist$batch_id[[1L]]
   message("START batch ", batch_id, ": ", dplyr::n_distinct(worklist$gene_id),
           " genes, ", nrow(worklist), " phenotype fits")
+  threading <- configurePgenThreads(if (is.null(opt$threads)) 0L else opt$threads)
   dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
   output_dir <- normalizePath(opt$output_dir, mustWork = TRUE)
   regions_file <- file.path(output_dir, "batch.windows.tsv")
@@ -324,7 +328,8 @@ runPgenSusieBatch <- function(opt) {
                   "--pvar", normalizePath(opt$pvar),
                   "--psam", normalizePath(opt$psam),
                   "--extract", "range", regions_file, "--make-pgen",
-                  "--threads", "1", "--memory", as.character(opt$plink_memory_mb),
+                  "--threads", as.character(threading$selected_threads),
+                  "--memory", as.character(opt$plink_memory_mb),
                   "--out", pgen_prefix)
   if (opt$mac > 0) {
     plink_args <- c(plink_args, "--mac", as.character(opt$mac), "--nonfounders")
@@ -337,7 +342,10 @@ runPgenSusieBatch <- function(opt) {
   }
   message("EXTRACT batch cis windows with PLINK 2 (1-based inclusive ranges)")
   plink_log <- file.path(output_dir, "plink.stdout.log")
+  extraction_started <- proc.time()[["elapsed"]]
   status <- system2(plink, shQuote(plink_args), stdout = plink_log, stderr = plink_log)
+  extraction_seconds <- proc.time()[["elapsed"]] - extraction_started
+  message(sprintf("Batch timing: PLINK extraction = %.3f seconds", extraction_seconds))
   if (!identical(status, 0L)) {
     detail <- paste(tail(readLines(plink_log, warn = FALSE), 30L), collapse = "\n")
     stop("PLINK multi-region extraction failed (", status, "):\n", detail,
@@ -345,6 +353,7 @@ runPgenSusieBatch <- function(opt) {
   }
   batch_files <- paste0(pgen_prefix, c(".pgen", ".pvar", ".psam"))
   requireBatchLocalFiles(batch_files)
+  loading_started <- proc.time()[["elapsed"]]
   # Keep the complete genotype cohort for ancestry MAF. Only the phenotype
   # metadata uses the inferred sample intersection.
   reader <- openPgenReader(batch_files[[1L]], batch_files[[2L]], batch_files[[3L]])
@@ -389,8 +398,11 @@ runPgenSusieBatch <- function(opt) {
          call. = FALSE)
   }
   se <- makePgenBatchExperiment(data)
+  loading_seconds <- proc.time()[["elapsed"]] - loading_started
+  message(sprintf("Batch timing: shared data loading = %.3f seconds", loading_seconds))
+  provenance_started <- proc.time()[["elapsed"]]
   provenance <- makePgenBatchProvenance(opt, batch_id, batch_files, version,
-                                       reader$raw_sample_count)
+                                       reader$raw_sample_count, threading)
   if (!is.null(provenance$genotype_qc)) {
     message("VERIFY shared genotype QC: MAC >= ", provenance$settings$mac,
             ", called fraction >= ", provenance$settings$min_call_rate,
@@ -404,6 +416,13 @@ runPgenSusieBatch <- function(opt) {
     as.character(SummarizedExperiment::colData(se)$genotype_id),
     algo = "sha256", serializeVersion = 2
   )
+  provenance$batch_timing <- list(plink_extraction_seconds = extraction_seconds,
+    shared_data_loading_seconds = loading_seconds,
+    input_verification_seconds = proc.time()[["elapsed"]] - provenance_started,
+    setup_total_seconds = proc.time()[["elapsed"]] - batch_started)
+  message(sprintf("Batch timing: input verification = %.3f seconds; setup total = %.3f seconds",
+    provenance$batch_timing$input_verification_seconds,
+    provenance$batch_timing$setup_total_seconds))
   compact <- purrr::map(unique(worklist$gene_id), function(gene_id) {
     selected <- dplyr::filter(worklist, .data$gene_id == .env$gene_id)
     additional_genotypes <- additionalGenotypesForGene(additional_table, selected$phenotype_id)
@@ -442,7 +461,8 @@ runPgenSusieBatch <- function(opt) {
                     file.path(output_dir, "batch.outcome_index.tsv"), quote = "needed")
   readr::write_tsv(bind_compact("diagnostics"),
                     file.path(output_dir, "batch.covariate_explained_variants.tsv"), quote = "needed")
-  message("COMPLETE batch ", batch_id)
+  message(sprintf("COMPLETE batch %s; total = %.3f seconds", batch_id,
+    proc.time()[["elapsed"]] - batch_started))
   invisible(TRUE)
 }
 
@@ -456,6 +476,8 @@ batch_options <- list(
   batchOption("covariates"), batchOption("sample-list"), batchOption("missing-code"),
   batchOption("output-dir"), batchOption("cis-distance", "integer", 1000000L),
   batchOption("base-seed", "integer", 1L), batchOption("maf", "double", 0),
+  batchOption("threads", "double", 0,
+    help = "Thread limit for PLINK and supported numerical libraries; 0 uses the detected task CPU allowance"),
   batchOption("mac", "double", 0,
     help = "Minimum minor allele count across all input PGEN samples; 0 disables the filter"),
   batchOption("genotype-qc-report",

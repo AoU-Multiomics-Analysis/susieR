@@ -558,7 +558,9 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
                   "cs_min_r2", "cs_size", "low_purity", "has_covariate_explained_variant")
   diagnostic_columns <- c(owner_columns, "molecular_trait_id", "variant", "input_scale", "residual_sd", "residual_sd_ratio")
   indices <- lapply(index_files, pgenReadTextTable,
-                    numeric_columns = c("seed", "credible_set_count"), logical_columns = "converged")
+                    numeric_columns = c("seed", "credible_set_count", "data_loading_seconds",
+                      "data_preparation_seconds", "fine_mapping_seconds", "outcome_total_seconds"),
+                    logical_columns = "converged")
   seen_batches <- character()
   for (i in seq_along(indices)) {
     table <- indices[[i]]
@@ -578,6 +580,14 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
       if (any(!is.finite(table[[column]])) || any(table[[column]] < 0) ||
           any(table[[column]] != floor(table[[column]])) ||
           any(table[[column]] > .Machine$integer.max)) stop("Invalid outcome index ", column, call. = FALSE)
+    }
+    timing_columns <- intersect(c("data_loading_seconds", "data_preparation_seconds",
+                                  "fine_mapping_seconds", "outcome_total_seconds"), names(table))
+    for (column in timing_columns) {
+      value <- table[[column]]
+      if (any(!is.na(value) & (!is.finite(value) | value < 0))) {
+        stop("Invalid outcome index timing: ", column, call. = FALSE)
+      }
     }
     pgenCheckIds(table$gene_key, "Outcome index gene_key")
   }

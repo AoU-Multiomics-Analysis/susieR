@@ -12,41 +12,6 @@
   invisible(TRUE)
 }
 
-# Charge the shared matrix and native per-window matrix temporaries to the
-# cache budget. Ordinary per-fit sample-by-window matrices remain separate.
-planPgenSufficientStatistics <- function(plan) {
-  required <- c("mode", "sample_count", "window_indices", "union_count",
-    "max_window", "block_size", "budget_bytes", "whole_bytes")
-  if (!is.list(plan) || !all(required %in% names(plan)) ||
-      !is.list(plan$window_indices)) {
-    stop("Sufficient-statistics planning requires a genotype cache plan", call. = FALSE)
-  }
-  union_count <- as.double(plan$union_count)
-  max_window <- as.double(plan$max_window)
-  block_size <- as.double(plan$block_size)
-  xtx_bytes <- 8 * union_count^2
-  working_bytes <- max(4 * 8 * block_size^2, 4 * 8 * max_window^2) +
-    8 * (union_count + max_window) * 4
-  estimated_bytes <- plan$whole_bytes + xtx_bytes + working_bytes
-  sizes <- as.double(lengths(plan$window_indices))
-  reason <- if (!identical(plan$mode, "whole")) {
-    "shared sufficient statistics require a whole genotype cache"
-  } else if (sum(sizes > 0) < 2L) {
-    "shared sufficient statistics require at least two nonempty outcome windows"
-  } else if (plan$sample_count < 2 * max_window) {
-    "sample count is less than twice the largest outcome window"
-  } else if (union_count^2 > sum(sizes^2)) {
-    "the union requires more variant pairs than separate outcome windows"
-  } else if (estimated_bytes > plan$budget_bytes +
-             max(1, plan$budget_bytes) * 8 * .Machine$double.eps) {
-    "shared sufficient statistics exceed the cache memory budget"
-  } else NULL
-  list(enabled = is.null(reason),
-    reason = if (is.null(reason)) "shared sufficient statistics meet the automatic rules" else reason,
-    estimated_bytes = estimated_bytes, xtx_bytes = xtx_bytes,
-    working_bytes = working_bytes)
-}
-
 planPgenGenotypeCache <- function(reader, worklist, sample_ids, mode = "auto",
                                   cache_memory_gb = 0, job_memory_gb = 16,
                                   eligible = TRUE, reason = NULL) {
@@ -137,7 +102,6 @@ planPgenGenotypeCache <- function(reader, worklist, sample_ids, mode = "auto",
     preparation_buffer_bytes = buffer_bytes,
     estimated_bytes = switch(selected_mode, whole = whole_bytes,
                              rolling = rolling_bytes, none = 0))
-  plan$sufficient_statistics <- planPgenSufficientStatistics(plan)
   plan
 }
 
@@ -177,9 +141,6 @@ createPgenGenotypeCache <- function(reader, plan, sample_ids, covariates_matrix)
   cache$variants_evicted <- 0
   cache$guard_recomputations <- 0
   cache$peak_resident_bytes <- 0
-  cache$sufficient_statistics <- NULL
-  cache$sufficient_statistics_builds <- 0L
-  cache$sufficient_statistics_hits <- 0L
   cache
 }
 
@@ -300,69 +261,6 @@ getPgenGenotypeCacheWindow <- function(cache, outcome_id) {
     covariate_explained_variants = explained, guard_required = guard)
 }
 
-# Use retained physical columns as the key. Variant names can repeat.
-# No genotype reads or sample-by-union matrix copies are needed here.
-getPgenGenotypeCacheSufficientStatistics <- function(cache, window) {
-  if (!is.environment(cache) || !inherits(cache, "PgenGenotypeCache") || isTRUE(cache$cleared)) {
-    stop("Prepared genotype cache is missing or cleared", call. = FALSE)
-  }
-  .pgenCacheSamples(cache$reader, cache$sample_ids)
-  if (!identical(cache$pgen_path, cache$reader$pgen_path)) {
-    stop("Prepared cache PGEN identity has changed", call. = FALSE)
-  }
-  indices <- window$variant_indices
-  resident <- .pgenCacheResidentIndices(cache)
-  valid_window <- is.list(window) && is.matrix(window$gt_hat) &&
-    is.double(window$gt_hat) && is.integer(indices) && !anyNA(indices) &&
-    !anyDuplicated(indices) && length(indices) == ncol(window$gt_hat) &&
-    identical(rownames(window$gt_hat), cache$sample_ids) &&
-    all(indices %in% resident) &&
-    identical(colnames(window$gt_hat), cache$reader$variants$variant_id[indices]) &&
-    any(vapply(cache$plan$window_indices, function(required) {
-      identical(indices, required[required %in% resident])
-    }, logical(1)))
-  if (!valid_window || !isTRUE(cache$initialized)) {
-    stop("Sufficient-statistics window does not match prepared physical variant indices", call. = FALSE)
-  }
-  if (!isTRUE(cache$plan$sufficient_statistics$enabled) || isTRUE(window$guard_required)) {
-    return(NULL)
-  }
-  if (is.null(cache$sufficient_statistics)) {
-    started <- proc.time()[["elapsed"]]
-    variant_names <- cache$reader$variants$variant_id[resident]
-    gram <- matrix(0, length(resident), length(resident),
-      dimnames = list(variant_names, variant_names))
-    means <- stats::setNames(numeric(length(resident)), variant_names)
-    columns <- lapply(cache$blocks, function(block) match(block$indices, resident))
-    for (i in seq_along(cache$blocks)) {
-      means[columns[[i]]] <- colMeans(cache$blocks[[i]]$gt_hat)
-    }
-    n <- length(cache$sample_ids)
-    for (i in seq_along(cache$blocks)) {
-      left <- columns[[i]]
-      for (j in seq.int(i, length(cache$blocks))) {
-        right <- columns[[j]]
-        tile <- crossprod(cache$blocks[[i]]$gt_hat, cache$blocks[[j]]$gt_hat) -
-          n * tcrossprod(means[left], means[right])
-        gram[left, right] <- tile
-        if (i != j) gram[right, left] <- t(tile)
-      }
-    }
-    cache$sufficient_statistics <- list(XtX = gram, X_colmeans = means,
-      variant_indices = resident, n = n)
-    cache$sufficient_statistics_builds <- cache$sufficient_statistics_builds + 1L
-    message("Built shared genotype sufficient statistics: ", length(resident),
-      " variants; ", format(8 * length(gram), scientific = FALSE, trim = TRUE),
-      " bytes; ", sprintf("%.3f", proc.time()[["elapsed"]] - started), " seconds")
-  } else {
-    cache$sufficient_statistics_hits <- cache$sufficient_statistics_hits + 1L
-  }
-  shared <- cache$sufficient_statistics
-  columns <- match(indices, shared$variant_indices)
-  list(XtX = shared$XtX[columns, columns, drop = FALSE],
-    X_colmeans = shared$X_colmeans[columns], n = shared$n)
-}
-
 pgenGenotypeCacheSummary <- function(cache) {
   if (!is.environment(cache) || !inherits(cache, "PgenGenotypeCache")) {
     stop("Invalid prepared genotype cache", call. = FALSE)
@@ -374,13 +272,7 @@ pgenGenotypeCacheSummary <- function(cache) {
     excluded_variants = length(cache$excluded_indices), resident_variants = resident,
     resident_bytes = 8 * length(cache$sample_ids) * resident,
     peak_resident_bytes = cache$peak_resident_bytes,
-    guard_recomputations = cache$guard_recomputations,
-    sufficient_statistics_enabled = isTRUE(cache$plan$sufficient_statistics$enabled),
-    sufficient_statistics_reason = cache$plan$sufficient_statistics$reason,
-    sufficient_statistics_builds = cache$sufficient_statistics_builds,
-    sufficient_statistics_hits = cache$sufficient_statistics_hits,
-    sufficient_statistics_bytes = if (is.null(cache$sufficient_statistics)) 0 else
-      8 * length(cache$sufficient_statistics$XtX))
+    guard_recomputations = cache$guard_recomputations)
 }
 
 clearPgenGenotypeCache <- function(cache) {
@@ -388,7 +280,6 @@ clearPgenGenotypeCache <- function(cache) {
     stop("Invalid prepared genotype cache", call. = FALSE)
   }
   cache$blocks <- list()
-  cache$sufficient_statistics <- NULL
   cache$cleared <- TRUE
   invisible(NULL)
 }

@@ -77,8 +77,7 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   original_fit_susie_model <- fitSusieModel
   fit_inputs <- NULL
   fitSusieModel <- function(X, y, ...) {
-    fit_inputs <<- list(X = X, y = y,
-      sufficient_statistics = !is.null(list(...)$sufficient_statistics))
+    fit_inputs <<- list(X = X, y = y)
     original_fit_susie_model(X, y, ...)
   }
   fit <- function(id, cov = covariates, cache = NULL, explicit = TRUE,
@@ -156,7 +155,7 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     }
     invisible(TRUE)
   }
-  compare_model_values <- function(actual, reference, exact = FALSE, scientific_only = FALSE) {
+  compare_model_values <- function(actual, reference, exact = FALSE) {
     expect_identical_value(actual$variant_id, reference$variant_id, "fit variant order")
     expect_identical_value(actual$sets$cs, reference$sets$cs, "credible-set memberships")
     expect_identical_value(actual$sets$cs_index, reference$sets$cs_index, "credible-set effects")
@@ -174,15 +173,6 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
                      susieR::susie_get_posterior_sd(reference),
                      scientific_absolute_tolerance, "native posterior SD")
     compare_absolute(actual$z, reference$z, scientific_absolute_tolerance, "marginal z")
-    if (scientific_only) {
-      for (field in c("Xr", "fitted", "intercept")) {
-        compare_absolute(actual[[field]], reference[[field]],
-                         scientific_absolute_tolerance, paste("fit", field))
-      }
-      stopifnot(isTRUE(all.equal(actual$sets, reference$sets, tolerance = 1e-8)),
-                setequal(names(actual), names(reference)))
-      return(invisible(TRUE))
-    }
     # Prior variance is an optimized hyperparameter. Validate it with the same
     # explicit component bound as its exported table, then avoid a second,
     # relative-only check that is tighter on different BLAS implementations.
@@ -194,15 +184,14 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
     invisible(TRUE)
   }
-  compare_fit <- function(actual, reference, exact = FALSE, scientific_only = FALSE) {
+  compare_fit <- function(actual, reference, exact = FALSE) {
     tryCatch({
       for (field in c("X", "y")) {
         compare_absolute(actual$inputs[[field]], reference$inputs[[field]],
                          input_absolute_tolerance, paste("fitter input", field))
       }
       expect_identical_value(actual$rng, reference$rng, "fit RNG state")
-      compare_model_values(actual$result, reference$result, exact = exact,
-                           scientific_only = scientific_only)
+      compare_model_values(actual$result, reference$result, exact = exact)
     }, error = function(error) {
       report_fit_differences(actual, reference)
       stop(conditionMessage(error), call. = FALSE)
@@ -328,34 +317,33 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     changed$V[[1L]] <- changed$V[[1L]] + 1e-6
     expect_error_message(compare_model_values(changed, reference), "V")
   })
-  run_named_test("whole-cache fits share one XtX and preserve native scientific outputs", {
+  run_named_test("overlapping whole-cache windows always use the ordinary fitter", {
     nearby <- worklist[1:2, , drop = FALSE]
     plan <- planPgenGenotypeCache(reader, nearby, selected_samples, mode = "whole",
       cache_memory_gb = 0.1, job_memory_gb = 1)
-    stopifnot(plan$sufficient_statistics$enabled)
     cache <- createPgenGenotypeCache(reader, plan, selected_samples,
       cbind(covariates[selected_samples, , drop = FALSE], 1))
+    original_ordinary_fitter <- runSusieWithFitOptimizations
+    ordinary_fit_calls <- 0L
+    runSusieWithFitOptimizations <- function(...) {
+      ordinary_fit_calls <<- ordinary_fit_calls + 1L
+      original_ordinary_fitter(...)
+    }
     tryCatch({
       for (id in phenotype_ids[1:2]) {
+        previous_calls <- ordinary_fit_calls
         actual <- fit(id, cache = cache)
-        stopifnot(actual$inputs$sufficient_statistics)
-        compare_fit(actual, references[[id]], scientific_only = TRUE)
+        expect_identical_value(ordinary_fit_calls, previous_calls + 1L,
+                               "ordinary fitter calls for each cached outcome")
+        compare_fit(actual, references[[id]])
       }
-      summary <- pgenGenotypeCacheSummary(cache)
-      stopifnot(summary$sufficient_statistics_builds == 1L,
-                summary$sufficient_statistics_hits == 1L)
-    }, finally = clearPgenGenotypeCache(cache))
-    limited <- planPgenGenotypeCache(reader, nearby, selected_samples, mode = "whole",
-      cache_memory_gb = plan$whole_bytes / 1e9, job_memory_gb = 1)
-    stopifnot(!limited$sufficient_statistics$enabled)
-    cache <- createPgenGenotypeCache(reader, limited, selected_samples,
-      cbind(covariates[selected_samples, , drop = FALSE], 1))
-    tryCatch({
-      actual <- fit("left", cache = cache)
-      stopifnot(!actual$inputs$sufficient_statistics,
-                pgenGenotypeCacheSummary(cache)$sufficient_statistics_builds == 0L)
-      compare_fit(actual, references$left)
-    }, finally = clearPgenGenotypeCache(cache))
+      stopifnot(!"sufficient_statistics" %in% ls(cache),
+                !any(vapply(mget(ls(cache), envir = cache, inherits = FALSE), function(value)
+                  is.list(value) && "XtX" %in% names(value), logical(1))))
+    }, finally = {
+      runSusieWithFitOptimizations <- original_ordinary_fitter
+      clearPgenGenotypeCache(cache)
+    })
   })
   run_named_test("cache fit comparison rejects changed fitter inputs", {
     reference <- references[["overlap"]]

@@ -17,7 +17,7 @@ The model, output row scope, WDL interfaces, and existing scientific values must
 ## Review focus
 
 - Verify the value uses the exact final phenotype vector, not raw phenotype or fitted noise SD.
-- Check individual-data and sufficient-statistics fits use the same definition.
+- Check all genotype cache modes retain the same phenotype SD definition.
 - Check empty files, old fits, old Parquets, and mixed old/new aggregation.
 - Ensure one scale per outcome even when full output spans Arrow batches.
 - Ensure new metadata does not change scientific comparisons or output PIPs.

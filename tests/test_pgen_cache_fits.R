@@ -183,7 +183,13 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
                 setequal(names(actual), names(reference)))
       return(invisible(TRUE))
     }
-    comparison <- all.equal(actual, reference, tolerance = fit_tolerance,
+    # Prior variance is an optimized hyperparameter. Validate it with the same
+    # explicit component bound as its exported table, then avoid a second,
+    # relative-only check that is tighter on different BLAS implementations.
+    compare_output_values(tibble::tibble(V = actual$V), tibble::tibble(V = reference$V))
+    comparison_actual <- actual
+    comparison_actual$V <- reference$V
+    comparison <- all.equal(comparison_actual, reference, tolerance = fit_tolerance,
                             check.attributes = TRUE)
     if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
     invisible(TRUE)
@@ -313,6 +319,15 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   })
 
   references <- stats::setNames(lapply(phenotype_ids, fit), phenotype_ids)
+  run_named_test("cache model comparison bounds prior optimizer roundoff", {
+    reference <- references$left$result
+    rounded <- reference
+    rounded$V[[1L]] <- rounded$V[[1L]] + 1.331136e-7
+    compare_model_values(rounded, reference)
+    changed <- reference
+    changed$V[[1L]] <- changed$V[[1L]] + 1e-6
+    expect_error_message(compare_model_values(changed, reference), "V")
+  })
   run_named_test("whole-cache fits share one XtX and preserve native scientific outputs", {
     nearby <- worklist[1:2, , drop = FALSE]
     plan <- planPgenGenotypeCache(reader, nearby, selected_samples, mode = "whole",

@@ -571,6 +571,21 @@ pgenCheckPhenotypeResidualSD <- function(table, label, seen = NULL) {
   table
 }
 
+# The validated outcome index is the source for old files and unknown fit flags.
+pgenCheckFeatureConverged <- function(table, converged, label) {
+  column <- "feature_converged"
+  if (!column %in% names(table)) table[[column]] <- rep(NA, nrow(table))
+  value <- table[[column]]
+  if (!is.logical(value)) {
+    stop(label, " requires logical feature_converged", call. = FALSE)
+  }
+  if (any(!is.na(value) & value != converged)) {
+    stop(label, " feature_converged does not match the outcome index", call. = FALSE)
+  }
+  table[[column]] <- dplyr::coalesce(value, converged)
+  table
+}
+
 aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_files,
                                 index_files, diagnostic_files, output_dir) {
   message("Checking localized batch files and expected outcomes")
@@ -661,8 +676,12 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
         for (column in intersect(c("molecular_trait_id", "cs_id"), names(table))) table[[column]] <- character()
         for (column in intersect(c("low_purity", "has_covariate_explained_variant"), names(table))) table[[column]] <- logical()
       }
-      pgenCheckOwnership(table, own_expected, kind, variant_chromosome = kind == "summary")
+      table_keys <- pgenCheckOwnership(table, own_expected, kind, variant_chromosome = kind == "summary")
       if (kind == "summary") table <- pgenCheckPhenotypeResidualSD(table, "Summary")
+      if (kind != "diagnostics") {
+        owner <- match(table_keys, pgenOwnershipKey(indices[[i]]))
+        table <- pgenCheckFeatureConverged(table, indices[[i]]$converged[owner], kind)
+      }
       text_columns <- intersect(c("molecular_trait_id", "variant", "ref", "alt", "cs_id", "region"), names(table))
       for (column in text_columns) pgenCheckIds(table[[column]], paste(kind, "text schema", column))
       if (nrow(table) && "variant" %in% names(table)) {
@@ -899,14 +918,18 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
         !types[["low_purity"]] %in% if (reader$num_rows) "bool" else c("bool", "string")) {
       stop("Full-SuSiE schema has incompatible column types", call. = FALSE)
     }
-    # Normalize only this optional addition; all other columns retain exact checks.
-    optional <- "phenotype_residual_SD"
-    if (optional %in% names && !types[[optional]] %in% numeric_types) {
+    # Normalize only optional additions; all other columns retain exact checks.
+    if ("phenotype_residual_SD" %in% names && !types[["phenotype_residual_SD"]] %in% numeric_types) {
       stop("Full-SuSiE requires numeric phenotype_residual_SD", call. = FALSE)
     }
-    schema <- arrow::schema(c(schema$fields[names != optional],
-      list(arrow::field(optional, arrow::float64()))))
-    types <- c(types[names(types) != optional], phenotype_residual_SD = "double")
+    if ("feature_converged" %in% names && types[["feature_converged"]] != "bool") {
+      stop("Full-SuSiE requires logical feature_converged", call. = FALSE)
+    }
+    optional <- c("phenotype_residual_SD", "feature_converged")
+    schema <- arrow::schema(c(schema$fields[!names %in% optional],
+      list(arrow::field("phenotype_residual_SD", arrow::float64()),
+           arrow::field("feature_converged", arrow::boolean()))))
+    types <- c(types[!names(types) %in% optional], phenotype_residual_SD = "double", feature_converged = "bool")
     list(schema = schema, types = types, rows = reader$num_rows)
   }
   # Only footer schemas and row counts are retained across genes.
@@ -963,6 +986,7 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
       owner <- match(table$molecular_trait_id, own_index$outcome_id)
       if (anyNA(owner)) stop("Full-SuSiE rows contain foreign gene outcome ownership", call. = FALSE)
       table <- pgenCheckPhenotypeResidualSD(table, "Full-SuSiE", seen_residual_sd)
+      table <- pgenCheckFeatureConverged(table, own_index$converged[owner], "Full-SuSiE")
       for (column in setdiff(text_columns, c("cs_id", "cs_index"))) {
         pgenCheckIds(table[[column]], paste("Full-SuSiE", column))
       }

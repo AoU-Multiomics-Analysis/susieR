@@ -176,6 +176,18 @@ The workflow returns these combined tables:
 
 Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
 
+Credible-set tables and both variant Parquets include the logical field
+`feature_converged`. It records whether that row's molecular-trait fit converged.
+All credible sets from a fit that did not converge have `feature_converged = false`.
+These rows remain in the outputs. Filter on `feature_converged` when an analysis
+requires converged fits. This flag does not describe credible-set purity.
+
+Aggregation takes convergence from the validated outcome index, so it can add
+the flag to older Parquets without another fit. A supplied flag must agree with
+the index. Formatting an old saved fit with no convergence field records a
+missing flag until an outcome index supplies that value. Empty outputs retain a
+logical column. Shared checkpointed-workflow schemas are unchanged.
+
 The `pip` column in primary and full variant tables is the native fitted
 SuSiE variant PIP across effects. It is copied from the saved fit's `pip`
 vector. The `alpha1` through `alpha10` columns in full tables contain the

@@ -17,7 +17,8 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     batch_id = c("batch1", "batch1", "batch2", "batch2"),
     chromosome = "1", gene_id = c("gene A", "gene A", "gene B", "gene C"),
     outcome_id = paste0("outcome", 1:4), phenotype_id = paste0("phenotype", 1:4),
-    status = "CONVERGED", converged = TRUE, credible_set_count = c(1L, 0L, 1L, 0L)
+    status = c("NONCONVERGED", "CONVERGED", "CONVERGED", "NONCONVERGED"),
+    converged = c(FALSE, TRUE, TRUE, FALSE), credible_set_count = c(1L, 0L, 1L, 0L)
   ) |>
     dplyr::mutate(gene_key = vapply(gene_id, key, character(1)))
   index_file <- file.path(root, "outcome index.tsv")
@@ -70,7 +71,19 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     sum(is.na(actual$cs_index)) == 6L,
     identical(actual$X_column_scale_factors, expected$X_column_scale_factors),
     identical(actual$pip, expected$pip),
-    identical(actual$phenotype_residual_SD, c(2, 2, 2, 0, 0, 1.5, 1.5, 1.5)))
+    identical(actual$phenotype_residual_SD, c(2, 2, 2, 0, 0, 1.5, 1.5, 1.5)),
+    identical(actual$feature_converged, c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)))
+
+  # Mixed old and new files use the index, including logical NA from old fits.
+  convergence_tables <- tables
+  convergence_tables[[1L]]$feature_converged <- c(NA, FALSE, FALSE, TRUE, NA)
+  convergence_tables[[3L]]$feature_converged <- logical()
+  write_tables(convergence_tables)
+  aggregate()
+  mixed_convergence <- arrow::read_parquet(output)
+  stopifnot(identical(mixed_convergence$feature_converged, actual$feature_converged),
+    identical(mixed_convergence[names(expected)], expected))
+  write_tables()
 
   # Old files retain an explicit missing scale; mixing old and new does not infer one.
   legacy_tables <- lapply(tables, function(table) dplyr::select(table, -phenotype_residual_SD))
@@ -128,6 +141,18 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     expect_error(aggregate(), pattern)
     write_tables()
   }
+  check_bad_table(dplyr::mutate(tables[[1L]], feature_converged = "FALSE"), "feature_converged|bool|logical")
+  check_bad_table(dplyr::mutate(tables[[1L]], feature_converged = 0), "feature_converged|bool|logical")
+  check_bad_table(dplyr::mutate(tables[[3L]], feature_converged = character()), "feature_converged|bool|logical", 3L)
+  # A conflict in a later record batch must preserve the complete output.
+  previous_convergence_output <- readBin(output, "raw", n = file.info(output)$size)
+  conflicting <- convergence_tables
+  conflicting[[1L]]$feature_converged[[3L]] <- TRUE
+  write_tables(conflicting)
+  expect_error(aggregate(batch_size = 2L), "feature_converged|converged")
+  stopifnot(identical(readBin(output, "raw", n = file.info(output)$size), previous_convergence_output),
+    identical(list.files(dirname(output)), "full_susie.parquet"))
+  write_tables()
   # Scales must be numeric and valid even on empty tables. One outcome can span batches.
   check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = "2"), "phenotype_residual_SD|numeric|schema")
   check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = Inf), "phenotype_residual_SD|finite")
@@ -185,14 +210,15 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
   aggregate()
   empty <- arrow::read_parquet(output)
   stopifnot(nrow(empty) == 0L,
-    identical(names(empty), c(names(empties[[1L]]),
+    identical(names(empty), c(names(empties[[1L]]), "feature_converged",
       "batch_id", "gene_id", "outcome_id", "phenotype_id", "gene_key")),
-    is.double(empty$phenotype_residual_SD))
+    is.double(empty$phenotype_residual_SD), is.logical(empty$feature_converged))
   # Entirely empty legacy files still emit the optional numeric scale column.
   write_tables(lapply(empties, function(table) dplyr::select(table, -phenotype_residual_SD)))
   aggregate()
   empty_legacy <- arrow::read_parquet(output)
-  stopifnot(nrow(empty_legacy) == 0L, is.double(empty_legacy$phenotype_residual_SD))
+  stopifnot(nrow(empty_legacy) == 0L, is.double(empty_legacy$phenotype_residual_SD),
+    is.logical(empty_legacy$feature_converged))
   # An integer optional column is numeric and is normalized without loosening other types.
   mixed_empty <- empties
   mixed_empty[[2L]]$phenotype_residual_SD <- integer()

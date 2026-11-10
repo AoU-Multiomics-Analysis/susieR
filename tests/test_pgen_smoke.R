@@ -274,6 +274,9 @@ run_pgen_smoke <- function() {
             nrow(full) > 0L,
             all(summary$phenotype_residual_SD == fitted$phenotype_residual_SD),
             all(full$phenotype_residual_SD == fitted$phenotype_residual_SD),
+            all(summary$feature_converged == fitted$converged),
+            all(credible_sets$feature_converged == fitted$converged),
+            all(full$feature_converged == fitted$converged),
             all(summary$outcome_id == phenotype_id),
             all(credible_sets$outcome_id == phenotype_id))
   manifests <- list.files(file.path(aggregate_dir, "gene_manifests"), full.names = TRUE)

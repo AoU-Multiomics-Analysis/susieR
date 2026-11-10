@@ -186,6 +186,56 @@ run_pgen_batch_tests <- function(repo_dir) {
             identical(read_tsv("aggregate/outcome_index.tsv")$status, index$status),
             nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1,
             identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, 1.25))
+  # Backfill old files from the index, including retained NONCONVERGED sets.
+  convergence_index <- index %>%
+    mutate(status = if_else(outcome_id == "a", "NONCONVERGED", "CONVERGED"),
+           converged = outcome_id != "a", credible_set_count = 1L) %>%
+    slice(3:1)
+  convergence_summary <- bind_rows(summary,
+    bind_cols(own[2L, ], select(summary, -all_of(names(own)))) %>%
+      mutate(molecular_trait_id = "b", cs_id = "b_1"),
+    bind_cols(own[3L, ], select(summary, -all_of(names(own)))) %>%
+      mutate(molecular_trait_id = "c", cs_id = "c_1"))
+  convergence_cs <- bind_rows(cs,
+    bind_cols(own[2L, ], select(cs, -all_of(names(own)))) %>%
+      mutate(molecular_trait_id = "b", cs_id = "b_1"),
+    bind_cols(own[3L, ], select(cs, -all_of(names(own)))) %>%
+      mutate(molecular_trait_id = "c", cs_id = "c_1"))
+  check_convergence <- function() {
+    actual_summary <- arrow::read_parquet("aggregate/susie.parquet")
+    actual_cs <- arrow::read_parquet("aggregate/credible_sets.parquet")
+    stopifnot(identical(actual_summary$feature_converged, c(FALSE, TRUE, TRUE)),
+      identical(actual_cs$feature_converged, c(FALSE, TRUE, TRUE)),
+      identical(actual_summary[names(convergence_summary)], convergence_summary),
+      identical(actual_cs[names(convergence_cs)], convergence_cs))
+  }
+  emit(idx = convergence_index, sum = convergence_summary, sets = convergence_cs)
+  aggregate()
+  check_convergence()
+  # Old and new files can be combined. Logical NA uses the known index value.
+  emit(idx = convergence_index,
+    sum = mutate(convergence_summary, feature_converged = c(FALSE, TRUE, NA)),
+    sets = mutate(convergence_cs, feature_converged = c(NA, TRUE, TRUE)))
+  arrow::write_parquet(filter(convergence_summary, batch_id == "batch_000001"), "1 summary.parquet")
+  arrow::write_parquet(filter(convergence_cs, batch_id == "batch_000002"), "2 cs.parquet")
+  aggregate()
+  check_convergence()
+  for (kind in c("summary", "sets")) {
+    for (invalid_flag in list(TRUE, "FALSE", 0)) {
+      arguments <- list(idx = convergence_index, sum = convergence_summary, sets = convergence_cs)
+      arguments[[if (kind == "summary") "sum" else "sets"]] <-
+        mutate(arguments[[if (kind == "summary") "sum" else "sets"]], feature_converged = invalid_flag)
+      do.call(emit, arguments)
+      error(aggregate(), "feature_converged|logical|boolean")
+    }
+  }
+  emit()
+  for (kind in c("summary", "cs")) {
+    empty <- if (kind == "summary") summary[FALSE, ] else cs[FALSE, ]
+    arrow::write_parquet(mutate(empty, feature_converged = character()), paste0("2 ", kind, ".parquet"))
+    error(aggregate(), "feature_converged|logical|boolean")
+    emit()
+  }
   # Missing legacy metadata stays missing, including when all files are old.
   legacy_summary <- select(summary, -phenotype_residual_SD)
   emit(sum = legacy_summary)
@@ -335,7 +385,9 @@ run_pgen_batch_tests <- function(repo_dir) {
   aggregate()
   stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 0L,
             nrow(read_tsv("aggregate/outcome_index.tsv")) == 3L,
-            is.double(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD))
+            is.double(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD),
+            is.logical(arrow::read_parquet("aggregate/susie.parquet")$feature_converged),
+            is.logical(arrow::read_parquet("aggregate/credible_sets.parquet")$feature_converged))
   emit(idx = zero_index, sum = select(summary[FALSE, ], -phenotype_residual_SD),
        sets = empty_cs, diag = diagnostic[FALSE, ])
   aggregate()

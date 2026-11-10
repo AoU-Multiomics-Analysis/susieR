@@ -515,10 +515,14 @@ run_pgen_gene_tests <- function(repo_dir) {
     results <- list(old = fit)
     tables <- formatSusieOutputs(results, tibble(phenotype_id = "old", region = "chr1_-100_300"))
     stopifnot(identical(tables$in_cs_variant_df,
-                        InitEmptyInCSVariantDf(TRUE, include_phenotype_residual_sd = TRUE)),
+                        mutate(InitEmptyInCSVariantDf(TRUE, include_phenotype_residual_sd = TRUE),
+                               feature_converged = logical())),
               identical(tables$lbf_df, InitEmptyLbfDf()),
-              identical(tables$variant_df, InitEmptyVariantDf(include_phenotype_residual_sd = TRUE)),
-              identical(tables$cs_df, InitEmptyCS()), nrow(tables$covariate_explained_variants) == 0L)
+              identical(tables$variant_df,
+                        mutate(InitEmptyVariantDf(include_phenotype_residual_sd = TRUE),
+                               feature_converged = logical())),
+              identical(tables$cs_df, mutate(InitEmptyCS(), feature_converged = logical())),
+              nrow(tables$covariate_explained_variants) == 0L)
     files <- writeSusieOutputs(results, tables, file.path(temp, "empty"))
     stopifnot(identical(readRDS(files[["rds"]]), results), all(file.exists(files)))
     empty <- formatSusieOutputs(list(), tibble(phenotype_id = character(), region = character()))

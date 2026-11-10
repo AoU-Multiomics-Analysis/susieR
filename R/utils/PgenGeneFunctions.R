@@ -106,6 +106,9 @@ finemapPreparedPgenPhenotype <- function(phenotype_id, se, reader, covariates,
     return(NULL)
   }
   if (!length(window$variant_names)) stop("No variant with alt alleles", call. = FALSE)
+  sufficient_statistics <- if (.susieSufficientStatsSourceSupported(asNamespace("susieR"))) {
+    getPgenGenotypeCacheSufficientStatistics(cache, window)
+  } else NULL
   message("Using ", cache$mode, " covariate-adjusted genotype cache for ", phenotype_id,
           ": ", length(window$variant_names), " variants")
   reportVariantDirectionCounts(window$variant_names, metadata,
@@ -115,7 +118,8 @@ finemapPreparedPgenPhenotype <- function(phenotype_id, se, reader, covariates,
   timing_stage <- "fine_mapping"
   timing_event(timing_stage, "start")
   fitted <- fitSusieModel(window$gt_hat, expression_vector, legacy = FALSE,
-    covariate_explained_variants = window$covariate_explained_variants)
+    covariate_explained_variants = window$covariate_explained_variants,
+    sufficient_statistics = sufficient_statistics)
   timing_event(timing_stage, "complete")
   timing_stage <- NULL
   fitted$variant_id <- window$variant_names

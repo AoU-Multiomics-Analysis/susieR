@@ -455,14 +455,19 @@ MergeAdditionalGenotypes <- function(GenotypeMatrix, AdditionalGenotypes) {
 
 # Keep the original model settings and calculate marginal scores after fitting.
 fitSusieModel <- function(X, y, legacy = FALSE,
-                          covariate_explained_variants = emptyCovariateExplainedVariants()) {
+                          covariate_explained_variants = emptyCovariateExplainedVariants(),
+                          sufficient_statistics = NULL) {
   message("Fitting SuSiE model")
   postprocess <- if (legacy) NULL else function(fitted, stats) {
     message("Calculating marginal z-scores")
     fitted$z <- computeMarginalZScores(X, y, .x_stats = stats)
     fitted
   }
-  fitted <- runSusieWithFitOptimizations(X, y,
+  fitted <- if (!legacy && !is.null(sufficient_statistics)) {
+    runSusieWithSufficientStatistics(X, y, sufficient_statistics)
+  } else NULL
+  if (is.null(fitted)) {
+    fitted <- runSusieWithFitOptimizations(X, y,
                           L = 10,
                           estimate_residual_variance = TRUE,
                           estimate_prior_variance = TRUE,
@@ -471,6 +476,12 @@ fitSusieModel <- function(X, y, legacy = FALSE,
                           compute_univariate_zscore = legacy,
                           min_abs_corr = 0.5,
                           .postprocess = postprocess)
+  } else {
+    x_stats <- list(X = X, n = nrow(X), p = ncol(X), finite = TRUE,
+      x_mean = as.double(sufficient_statistics$X_colmeans),
+      x_sd = as.double(sqrt(diag(sufficient_statistics$XtX) / (nrow(X) - 1L))))
+    fitted <- postprocess(fitted, x_stats)
+  }
   fitted$covariate_explained_variants <- covariate_explained_variants
   fitted
 }

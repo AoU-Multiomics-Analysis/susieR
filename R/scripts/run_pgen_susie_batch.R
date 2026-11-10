@@ -300,8 +300,8 @@ runPgenSusieBatch <- function(opt) {
   }
   worklist <- readPgenPreparationWorklist(opt$worklist, opt$cis_distance)
   batch_id <- worklist$batch_id[[1L]]
-  message("START batch ", batch_id, ": ", dplyr::n_distinct(worklist$gene_id),
-          " genes, ", nrow(worklist), " phenotype fits")
+  message("[BATCH] START ", batch_id, "; genes=", dplyr::n_distinct(worklist$gene_id),
+          "; outcomes=", nrow(worklist))
   threading <- configurePgenThreads(if (is.null(opt$threads)) 0L else opt$threads)
   dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
   output_dir <- normalizePath(opt$output_dir, mustWork = TRUE)
@@ -309,8 +309,7 @@ runPgenSusieBatch <- function(opt) {
     batch_files <- unlist(opt[c("pgen", "pvar", "psam")], use.names = FALSE)
     version <- NULL
     extraction_seconds <- 0
-    message("USE prepared batch shard; no PLINK execution")
-    message("Batch timing: PLINK extraction = 0 seconds; shard prepared upstream")
+    message("[INPUT] USE prepared batch shard; no PLINK execution; extraction=0.000 s")
   } else {
     regions_file <- file.path(output_dir, "batch.windows.tsv")
     writePgenBatchRegions(worklist, regions_file)
@@ -321,7 +320,7 @@ runPgenSusieBatch <- function(opt) {
       stop("PLINK 2 executable is not available: ", opt$plink2, call. = FALSE)
     }
     version <- system2(plink, "--version", stdout = TRUE, stderr = TRUE)
-    message("PLINK version: ", paste(version, collapse = " "))
+    message("[INPUT] PLINK version: ", paste(version, collapse = " "))
     plink_args <- c("--pgen", normalizePath(opt$pgen),
                     "--pvar", normalizePath(opt$pvar),
                     "--psam", normalizePath(opt$psam),
@@ -331,19 +330,19 @@ runPgenSusieBatch <- function(opt) {
                     "--out", pgen_prefix)
     if (opt$mac > 0) {
       plink_args <- c(plink_args, "--mac", as.character(opt$mac), "--nonfounders")
-      message("FILTER batch variants: MAC >= ", opt$mac,
+      message("[INPUT] MAC filter: minimum=", opt$mac,
               " across all input PGEN samples, including nonfounders")
     } else if (!is.null(opt$genotype_qc_report)) {
-      message("USE shared genotype QC; no repeated batch MAC filter")
+      message("[INPUT] Shared genotype QC; no repeated batch MAC filter")
     } else {
-      message("MAC filter disabled (MAC = 0)")
+      message("[INPUT] MAC filter disabled (MAC=0)")
     }
-    message("EXTRACT batch cis windows with PLINK 2 (1-based inclusive ranges)")
+    message("[INPUT] Extract batch cis windows with PLINK 2 (1-based inclusive ranges)")
     plink_log <- file.path(output_dir, "plink.stdout.log")
     extraction_started <- proc.time()[["elapsed"]]
     status <- system2(plink, shQuote(plink_args), stdout = plink_log, stderr = plink_log)
     extraction_seconds <- proc.time()[["elapsed"]] - extraction_started
-    message(sprintf("Batch timing: PLINK extraction = %.3f seconds", extraction_seconds))
+    message(sprintf("[INPUT] PLINK extraction complete; elapsed=%.3f s", extraction_seconds))
     if (!identical(status, 0L)) {
       detail <- paste(tail(readLines(plink_log, warn = FALSE), 30L), collapse = "\n")
       stop("PLINK multi-region extraction failed (", status, "):\n", detail,
@@ -357,8 +356,8 @@ runPgenSusieBatch <- function(opt) {
   # metadata uses the inferred sample intersection.
   reader <- openPgenReader(batch_files[[1L]], batch_files[[2L]], batch_files[[3L]])
   on.exit(closePgenReader(reader), add = TRUE)
-  message("OPEN batch PGEN: ", reader$raw_sample_count, " samples, ",
-          nrow(reader$variants), " variants")
+  message("[INPUT] PGEN samples=", reader$raw_sample_count,
+          "; variants=", nrow(reader$variants))
   reader_seconds <- proc.time()[["elapsed"]] - loading_started
   provenance_started <- proc.time()[["elapsed"]]
   provenance <- makePgenBatchProvenance(opt, batch_id, batch_files, version,
@@ -366,7 +365,7 @@ runPgenSusieBatch <- function(opt) {
     reader = reader, worklist = worklist)
   if (!is.null(provenance$prepared_batch)) {
     provenance$plink_version <- provenance$prepared_batch$plink_version
-    message("VERIFY prepared shard, exact worklist, cis windows and full-cohort sample order")
+    message("[INPUT] Verified prepared shard, worklist, cis windows and full-cohort sample order")
   }
   provenance_seconds <- proc.time()[["elapsed"]] - provenance_started
   loading_started <- proc.time()[["elapsed"]]
@@ -386,9 +385,9 @@ runPgenSusieBatch <- function(opt) {
   if (is.null(opt$sample_list)) {
     legacy_options$genotype_sample_ids <- reader$sample_ids
   }
-  data <- LoadData(legacy_options)
+  data <- suppressPackageStartupMessages(LoadData(legacy_options))
   additional_table <- if (is.null(opt$additional_genotypes)) NULL else
-    ImportAdditionalGenotypes(opt$additional_genotypes)
+    suppressPackageStartupMessages(ImportAdditionalGenotypes(opt$additional_genotypes))
   selected_ids <- as.character(data$phenotype_list$phenotype_id)
   if (!setequal(selected_ids, worklist$phenotype_id)) {
     stop("Batch worklist does not match the phenotypes selected by the current loader",
@@ -409,12 +408,13 @@ runPgenSusieBatch <- function(opt) {
   }
   se <- makePgenBatchExperiment(data)
   loading_seconds <- reader_seconds + proc.time()[["elapsed"]] - loading_started
-  message(sprintf("Batch timing: shared data loading = %.3f seconds", loading_seconds))
+  message(sprintf("[INPUT] Shared data loaded; samples=%d; outcomes=%d; elapsed=%.3f s",
+    ncol(se), nrow(se), loading_seconds))
   provenance_started <- proc.time()[["elapsed"]]
   if (!is.null(provenance$genotype_qc)) {
-    message("VERIFY shared genotype QC: MAC >= ", provenance$settings$mac,
-            ", called fraction >= ", provenance$settings$min_call_rate,
-            "; prepared input hashes and full-cohort sample count match")
+    message("[INPUT] Shared genotype QC verified; MAC>=", provenance$settings$mac,
+            "; called fraction>=", provenance$settings$min_call_rate,
+            "; hashes and full-cohort sample count match")
   }
   provenance$settings$sample_selection <- if (is.null(opt$sample_list))
     "genotype_phenotype_intersection" else "provided_list"
@@ -440,12 +440,11 @@ runPgenSusieBatch <- function(opt) {
   cache_selection <- cache_plan[setdiff(names(cache_plan), c("window_indices", "union_indices", "sample_ids"))]
   cache_selection$covariates_sha256 <- digest::digest(cache_design, algo = "sha256", serializeVersion = 2)
   provenance$settings$genotype_cache <- cache_selection
-  message("GENOTYPE CACHE: ", cache_plan$mode, "; ", cache_plan$reason,
-          "; budget_bytes=", format(cache_plan$budget_bytes, scientific = FALSE),
-          "; estimated_bytes=", format(cache_plan$estimated_bytes, scientific = FALSE),
-          "; whole_saved_fraction=", round(cache_plan$whole_saved_fraction, 3),
-          "; rolling_saved_fraction=", round(cache_plan$rolling_saved_fraction, 3))
-  message("SuSiE fitting method: individual data for all genotype cache modes")
+  message(sprintf("[CACHE] mode=%s; budget=%.3f GB; estimated=%.3f GB; read savings: whole=%.1f%%; rolling=%.1f%%",
+    cache_plan$mode, cache_plan$budget_bytes / 1e9, cache_plan$estimated_bytes / 1e9,
+    100 * cache_plan$whole_saved_fraction, 100 * cache_plan$rolling_saved_fraction))
+  message("[CACHE] Reason: ", cache_plan$reason)
+  message("[BATCH] SuSiE method: individual data for all genotype cache modes")
   genotype_cache <- if (cache_plan$mode == "none") NULL else
     createPgenGenotypeCache(reader, cache_plan, analysis_samples, cache_design)
   on.exit(if (!is.null(genotype_cache)) clearPgenGenotypeCache(genotype_cache), add = TRUE)
@@ -453,7 +452,7 @@ runPgenSusieBatch <- function(opt) {
     shared_data_loading_seconds = loading_seconds,
     input_verification_seconds = provenance_seconds + proc.time()[["elapsed"]] - provenance_started,
     setup_total_seconds = proc.time()[["elapsed"]] - batch_started)
-  message(sprintf("Batch timing: input verification = %.3f seconds; setup total = %.3f seconds",
+  message(sprintf("[BATCH] Setup complete; verification=%.3f s; total=%.3f s",
     provenance$batch_timing$input_verification_seconds,
     provenance$batch_timing$setup_total_seconds))
   compact <- purrr::map(unique(execution_worklist$gene_id), function(gene_id) {
@@ -476,7 +475,6 @@ runPgenSusieBatch <- function(opt) {
     result$index <- dplyr::mutate(
       result$index, batch_id = batch_id, chromosome = worklist$chromosome[[1L]]
     )
-    message("COMPLETE gene ", gene_id)
     result
   })
   # Old empty credible-set schemas have numeric ID columns. Empty rows must not
@@ -490,7 +488,8 @@ runPgenSusieBatch <- function(opt) {
                         file.path(output_dir, "batch.susie.parquet"))
   arrow::write_parquet(bind_compact("credible_sets"),
                         file.path(output_dir, "batch.credible_sets.parquet"))
-  readr::write_tsv(bind_compact("index"),
+  batch_index <- bind_compact("index")
+  readr::write_tsv(batch_index,
                     file.path(output_dir, "batch.outcome_index.tsv"), quote = "needed")
   readr::write_tsv(bind_compact("diagnostics"),
                     file.path(output_dir, "batch.covariate_explained_variants.tsv"), quote = "needed")
@@ -500,9 +499,17 @@ runPgenSusieBatch <- function(opt) {
     selection = cache_selection, runtime = cache_runtime),
     file.path(output_dir, "batch.genotype_cache.json"), auto_unbox = TRUE,
     pretty = TRUE, digits = NA, null = "null")
-  message("COMPLETE genotype cache: ", jsonlite::toJSON(cache_runtime, auto_unbox = TRUE))
-  message(sprintf("COMPLETE batch %s; total = %.3f seconds", batch_id,
-    proc.time()[["elapsed"]] - batch_started))
+  if (identical(cache_runtime$mode, "none")) {
+    message("[CACHE] COMPLETE mode=none")
+  } else {
+    message(sprintf("[CACHE] COMPLETE mode=%s; read=%.0f; prepared=%.0f; hits=%.0f; peak=%.3f GB",
+      cache_runtime$mode, cache_runtime$variants_read, cache_runtime$variants_prepared,
+      cache_runtime$cache_hits, cache_runtime$peak_resident_bytes / 1e9))
+  }
+  message(sprintf("[BATCH] COMPLETE %s; genes=%d; outcomes=%d; converged=%d; nonconverged=%d; total=%.3f s",
+    batch_id, length(compact), nrow(batch_index), sum(batch_index$status == "CONVERGED"),
+    sum(batch_index$status == "NONCONVERGED"), proc.time()[["elapsed"]] - batch_started))
+  message("[BATCH] Outputs: ", output_dir)
   invisible(TRUE)
 }
 

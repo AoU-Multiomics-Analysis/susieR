@@ -121,7 +121,30 @@ Select an image digest through `DockerImage` when a fixed image is required. `Qc
 
 CPU detection does not request a larger VM or bypass a task CPU limit. Set `Cpu` higher when the task needs more allocated CPU capacity. Multithreaded numerical libraries can change the last floating-point bits. Set `Threads = 1` for the previous thread setting.
 
-Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` to enable object-size reports and two extra garbage collections per fit. For a local PGEN batch, add `--memory-debug`. The legacy `susie.R` command accepts `--memory_debug true`. Direct R callers can use `options(susier.memory_debug = TRUE)`. The default keeps progress and error logs, variant diagnostics, and the three garbage collections after large matrices are removed. This setting does not change model calculations. A batch restores the caller's R option when it returns or fails.
+Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` to enable object-size reports and two extra garbage collections per fit. For a local PGEN batch, add `--memory-debug`. The legacy `susie.R` command accepts `--memory_debug true`. Direct R callers can use `options(susier.memory_debug = TRUE)`. The default keeps progress and error logs, variant diagnostics, and the three garbage collections after large matrices are removed. This setting does not change model calculations. A batch restores the caller's R option when it returns or fails. Detailed fit reports are written to the gene log.
+
+The main PGEN task log uses short batch, input, resource, cache, gene, and fit
+records. It shows the active outcome and its result, including convergence,
+credible-set count, elapsed time, stage timings, and warning count. The final
+batch record reports completed and nonconverged outcomes. Repeated native hints,
+iteration tables, seeds, variant-position reports, and detailed stage events go
+to the existing per-gene `.log` file. The gene heading gives its local path;
+chromosome gene manifests provide its completed `log_uri`.
+
+For example, a completed feature appears as:
+
+```text
+[GENE] geneA; fits=1; log=batch/genes/gene-key/gene-key.log
+[FIT 1/1] START traitA
+[FIT 1/1] CONVERGED traitA; cs=2; p=2500; iter=8; load=0.1 s; prep=0.4 s; fit=12.3 s; total=12.9 s; warnings=0
+```
+
+Warnings retain their normal R behavior and are also saved in the gene log.
+Errors keep the gene and outcome context. Output capture restores the caller's
+streams on success or failure, and the log is closed before its artifact hash
+is recorded. SuSiE still runs with its original verbose setting; the cleanup
+changes where fit output is written. The workflow has not been run on Terra
+with this logging change.
 
 The planner sorts genes by chromosome and position. It derives each feature position from `floor((BED start + BED end) / 2)`. Cis windows use inclusive coordinates, with the query start clamped to 1. PLINK uses `--extract range` for these 1-based regions. Disjoint windows retain their gaps. Extraction retains the complete genotype sample cohort. Ancestry MAF filtering therefore runs before the phenotype sample subset. The fit keeps the existing phenotype missing-value behavior.
 
@@ -137,7 +160,7 @@ Gene provenance binds the shared QC report, source file records, exact worklist,
 
 Seeds depend on the base seed, original gene ID, and original outcome ID. They do not depend on batch size, input order, or output paths. Changing batch size preserves the seed for each outcome. Each RDS contains a named list of that gene's outcome fits.
 
-The fitting stage reuses identical matrix-vector products, expected residual-error values, and raw column standard deviations within one fit. It also uses `matrixStats::colVars()` for SuSiE's constant-column warning check. The model settings, optimizer, convergence checks, and iteration logs are unchanged. Each fit uses private copies of the audited SuSiE functions; the installed namespace is unchanged. Cached input references are cleared after success or failure. Unrecognized package sources, unsupported matrix types, and unsupported model modes use the original SuSiE path. Source guards match the pinned image source; local source checks do not constitute an image or Terra execution test.
+The fitting stage reuses identical matrix-vector products, expected residual-error values, and raw column standard deviations within one fit. It also uses `matrixStats::colVars()` for SuSiE's constant-column warning check. The model settings, optimizer, and convergence checks are unchanged. Native iteration output is retained in the gene log. Each fit uses private copies of the audited SuSiE functions; the installed namespace is unchanged. Cached input references are cleared after success or failure. Unrecognized package sources, unsupported matrix types, and unsupported model modes use the original SuSiE path. Source guards match the pinned image source; local source checks do not constitute an image or Terra execution test.
 
 Post-fit marginal scores reuse the same raw input means, standard deviations, and finite-value validation when the complete input matrix matches. Existing numerical fallback rules remain in place. These statistics stay local to the fit and are excluded from saved models. Each PGEN outcome's extracted tables are shared by its credible-set count and final output formatting; scientific output tables keep their existing schemas and ordering.
 

@@ -131,11 +131,11 @@ configurePgenThreads <- function(threads = 0L) {
     data_table_threads = as.integer(data.table::getDTthreads()),
     arrow_threads = as.integer(arrow::cpu_count()),
     cpu_constraints = as.list(constraints), blas_library = blas_library)
-  message("CPU capacity: ", paste(names(constraints), constraints, sep = "=", collapse = "; "))
-  message("CPU threads: requested=", threads, "; available=", available,
-          "; selected=", selected, "; BLAS=", result$blas_threads,
+  message("[RESOURCES] CPU threads: requested=", threads,
+          if (threads == 0) " (auto)" else "", "; available=", available,
+          "; selected=", selected)
+  message("[RESOURCES] Active threads: BLAS=", result$blas_threads,
           "; OpenMP=", result$openmp_threads, "; data.table=", result$data_table_threads,
           "; Arrow=", result$arrow_threads, "; genes run sequentially")
-  message("CPU BLAS library: ", blas_library)
   result
 }

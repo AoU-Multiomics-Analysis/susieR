@@ -206,23 +206,89 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     actual_tables <- if (is.data.frame(actual)) list(actual) else actual
     reference_tables <- if (is.data.frame(reference)) list(reference) else reference
     expect_identical_value(names(actual), names(reference), "output names")
+    expect_identical_value(attributes(actual), attributes(reference), "output attributes")
+    expect_identical_value(length(actual_tables), length(reference_tables), "output table count")
+    key_columns <- c("molecular_trait_id", "phenotype_id", "outcome_id", "gene_id",
+      "variant", "variant_id", "chromosome", "position", "pos", "ref", "alt",
+      "cs_id", "cs_index", "region", "cs_size", "sample_id", "sample_ids",
+      "sample_index", "sample_indices", "variant_index", "variant_indices", "sample_count")
     for (i in seq_along(reference_tables)) {
-      scientific_columns <- intersect(c("pip", "posterior_mean", "posterior_sd"),
-                                      names(reference_tables[[i]]))
+      actual_table <- actual_tables[[i]]
+      reference_table <- reference_tables[[i]]
+      table_name <- if (is.null(names(reference_tables))) as.character(i) else
+        names(reference_tables)[[i]]
+      label <- paste("output", table_name)
+      expect_identical_value(attributes(actual_table), attributes(reference_table),
+                             paste(label, "table attributes"))
+      scientific_columns <- intersect(c("pip", "posterior_mean", "posterior_sd", "z"),
+                                      names(reference_table))
       for (field in scientific_columns) {
-        compare_absolute(actual_tables[[i]][[field]], reference_tables[[i]][[field]],
-                         scientific_absolute_tolerance, paste("output", field))
+        compare_absolute(actual_table[[field]], reference_table[[field]],
+                         scientific_absolute_tolerance, paste(label, field))
+      }
+      for (field in names(reference_table)) {
+        a <- actual_table[[field]]
+        b <- reference_table[[field]]
+        column_label <- paste(label, field)
+        expect_identical_value(typeof(a), typeof(b), paste(column_label, "type"))
+        expect_identical_value(attributes(a), attributes(b),
+                               paste(column_label, "attributes"))
+        if (!is.numeric(b) || field %in% key_columns ||
+            grepl("(^|_)(id|ids|index|indices)$", field)) {
+          expect_identical_value(a, b, column_label)
+          next
+        }
+        expect_identical_value(is.na(a), is.na(b), paste(column_label, "NA mask"))
+        expect_identical_value(is.nan(a), is.nan(b), paste(column_label, "NaN mask"))
+        expect_identical_value(is.infinite(a), is.infinite(b),
+                               paste(column_label, "infinite mask"))
+        expect_identical_value(a[is.infinite(a)], b[is.infinite(b)],
+                               paste(column_label, "infinite values"))
+        finite <- is.finite(b)
+        difference <- abs(a[finite] - b[finite])
+        allowed <- scientific_absolute_tolerance + fit_tolerance * abs(b[finite])
+        if (any(difference > allowed)) {
+          stop(column_label, " max absolute error ",
+               sprintf("%.17g", max(difference)),
+               " exceeds the absolute and relative bound", call. = FALSE)
+        }
       }
     }
-    comparison <- all.equal(actual, reference, tolerance = fit_tolerance,
-                            check.attributes = TRUE)
-    if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
     invisible(TRUE)
   }
   contains_environment <- function(value) {
     is.environment(value) ||
       (is.list(value) && any(vapply(value, contains_environment, logical(1))))
   }
+  run_named_test("output comparison accepts negligible near-zero component roundoff", {
+    reference <- list(lbf_df = tibble::tibble(lbf_variable3 = 1e-4))
+    actual <- list(lbf_df = tibble::tibble(lbf_variable3 = 1e-4 + 5e-11))
+    compare_output_values(actual, reference)
+  })
+  run_named_test("output comparison rejects material near-zero component changes", {
+    for (field in c("lbf_variable3", "mu_3")) {
+      reference <- list(component = tibble::as_tibble(stats::setNames(list(0), field)))
+      actual <- list(component = tibble::as_tibble(stats::setNames(list(1e-6), field)))
+      expect_error_message(compare_output_values(actual, reference), field)
+    }
+  })
+  run_named_test("output comparison preserves scientific absolute bounds", {
+    for (field in c("pip", "posterior_mean", "posterior_sd", "z")) {
+      reference <- list(science = tibble::as_tibble(stats::setNames(list(.9), field)))
+      actual <- list(science = tibble::as_tibble(stats::setNames(list(.9 + 5e-8), field)))
+      expect_error_message(compare_output_values(actual, reference), field)
+    }
+  })
+  run_named_test("output comparison requires exact output keys", {
+    reference <- list(variant_df = tibble::tibble(variant = "v1", position = 1e8,
+                                                 cs_index = 1))
+    for (field in names(reference$variant_df)) {
+      actual <- reference
+      actual$variant_df[[field]][[1L]] <- if (field == "variant") "v2" else
+        reference$variant_df[[field]][[1L]] + 1
+      expect_error_message(compare_output_values(actual, reference), field)
+    }
+  })
   run_named_test("cached fits report complete loading, preparation and fitting stages", {
     cache <- make_cache("whole")
     events <- character()

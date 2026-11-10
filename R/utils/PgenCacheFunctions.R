@@ -233,7 +233,14 @@ getPgenGenotypeCacheWindow <- function(cache, outcome_id) {
     .pgenCacheEvict(cache, required)
     # Collect the old blocks after the eviction frame has released them and
     # before incoming variants allocate new genotype and adjustment matrices.
-    if (cache$variants_evicted > evicted_before) invisible(gc())
+    if (cache$variants_evicted > evicted_before) {
+      message("GENOTYPE CACHE rolling eviction: ", cache$variants_evicted - evicted_before,
+        " variants removed; ", length(.pgenCacheResidentIndices(cache)), " retained")
+      invisible(gc())
+      if (exists("pgenMemoryLogLine", mode = "function")) {
+        message(pgenMemoryLogLine("rolling_cache_after_eviction_before_read"))
+      }
+    }
     missing <- setdiff(required, c(.pgenCacheResidentIndices(cache), cache$excluded_indices))
     .pgenCachePrepare(cache, missing)
     cache$initialized <- TRUE

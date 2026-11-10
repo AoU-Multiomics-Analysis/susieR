@@ -1,5 +1,8 @@
 # Whole-cache sufficient statistics
 
+Historical design: superseded on 2026-11-09 at the user's request. The active
+pipeline uses individual-data SuSiE in every cache mode and does not reuse XtX.
+
 Use the shared sufficient-statistics approach selected after the three-trait synthetic benchmark. Enable it automatically for eligible whole-batch PGEN caches. The cache must keep one sample order and covariate design. Do not change scientific model settings or output scales.
 
 Considered approaches: calculate a new cross-product for every trait; share one cross-product for a whole batch; or maintain cross-products as a rolling window changes. Use the shared whole-batch approach. It amortizes construction and has a clear cache lifetime. Keep rolling and uncached fitting on the current individual-data path.

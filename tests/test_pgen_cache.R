@@ -83,12 +83,6 @@ run_pgen_cache_tests <- function(repo_dir) {
     expect_error_message(planPgenGenotypeCache(reader, worklist, selected,
       eligible = FALSE, mode = "whole", reason = "additional genotypes"), "additional genotypes")
   })
-  run_named_test("cache plans report why sufficient statistics are disabled", {
-    plan <- planPgenGenotypeCache(reader, worklist, selected, mode = "whole")
-    stopifnot(is.list(plan$sufficient_statistics),
-              !plan$sufficient_statistics$enabled,
-              grepl("sample", plan$sufficient_statistics$reason))
-  })
   reference <- function(indices, input_design = design) {
     mat <- calls[indices, selected, drop = FALSE]
     keep <- rowSums(!is.na(mat)) > 0L
@@ -222,108 +216,6 @@ run_pgen_cache_tests <- function(repo_dir) {
     # A disjoint/new portion was prepared with the union and needs no new reads.
     observed <- observe_reads(getPgenGenotypeCacheWindow(cache, "right"))
     stopifnot(length(observed$indices) == 0L)
-  })
-  ss_files <- file.path(directory, c("statistics.pgen", "statistics.pvar", "statistics.psam"))
-  ss_samples <- paste0("n", seq_len(80L))
-  ss_selected <- rev(ss_samples)
-  set.seed(195L)
-  ss_calls <- matrix(as.double(rbinom(40L * 80L, 2L, .3)), nrow = 40L,
-    dimnames = list(NULL, ss_samples))
-  ss_calls[2L, 7L] <- NA_real_
-  ss_calls[12L, ] <- NA_real_
-  ss_calls[18L, ] <- 0
-  ss_writer <- pgenlibr::NewPgenWriter(ss_files[[1L]], 80L, 40L, nonref_flags = FALSE)
-  tryCatch({
-    for (i in seq_len(40L)) pgenlibr::AppendBiallelic(ss_writer, ss_calls[i, ])
-  }, finally = pgenlibr::ClosePgenWriter(ss_writer))
-  ss_positions <- seq_len(40L)
-  ss_positions[[30L]] <- 29L
-  writeLines(c("#CHROM\tPOS\tID\tREF\tALT", paste("1", ss_positions,
-    paste0("v", seq_len(40L)), "A", "G", sep = "\t")), ss_files[[2L]])
-  writeLines(c("#IID", ss_samples), ss_files[[3L]])
-  ss_reader <- do.call(openPgenReader, as.list(ss_files))
-  on.exit(closePgenReader(ss_reader), add = TRUE)
-  ss_worklist <- data.frame(outcome_id = c("left", "right"), chromosome = "1",
-    window_start = c(1L, 11L), window_end = c(30L, 40L))
-  ss_design <- cbind(pc = rnorm(80L), intercept = 1)
-  rownames(ss_design) <- ss_selected
-  ss_plan <- planPgenGenotypeCache(ss_reader, ss_worklist, ss_selected, mode = "whole")
-  run_named_test("sufficient statistics require overlap, sample count and peak memory", {
-    stopifnot(ss_plan$sufficient_statistics$enabled,
-              ss_plan$sufficient_statistics$estimated_bytes == 146240,
-              ss_plan$sufficient_statistics$xtx_bytes == 12800,
-              ss_plan$sufficient_statistics$working_bytes == 31040)
-    # These limits include the resident cache, the shared Gram matrix, and
-    # the largest native per-window matrix temporaries.
-    boundary <- ss_plan
-    boundary$budget_bytes <- 146240
-    stopifnot(planPgenSufficientStatistics(boundary)$enabled)
-    boundary$budget_bytes <- 146239
-    stopifnot(!planPgenSufficientStatistics(boundary)$enabled)
-    for (mode in c("rolling", "none")) {
-      changed <- ss_plan
-      changed$mode <- mode
-      stopifnot(!planPgenSufficientStatistics(changed)$enabled)
-    }
-    changed <- ss_plan
-    changed$sample_count <- 59L
-    stopifnot(!planPgenSufficientStatistics(changed)$enabled)
-    changed <- ss_plan
-    changed$window_indices$right <- integer()
-    stopifnot(!planPgenSufficientStatistics(changed)$enabled)
-    changed <- ss_plan
-    changed$max_window <- 10L
-    changed$window_indices <- split(seq_len(40L), rep(seq_len(4L), each = 10L))
-    stopifnot(!planPgenSufficientStatistics(changed)$enabled)
-  })
-  run_named_test("shared statistics match centered window crossproducts without extra reads", {
-    cache <- createPgenGenotypeCache(ss_reader, ss_plan, ss_selected, ss_design)
-    on.exit(clearPgenGenotypeCache(cache), add = TRUE)
-    stopifnot(is.null(cache$sufficient_statistics))
-    windows <- lapply(c("left", "right"), function(id) getPgenGenotypeCacheWindow(cache, id))
-    observed <- observe_reads(lapply(windows, function(window)
-      getPgenGenotypeCacheSufficientStatistics(cache, window)))
-    stopifnot(length(observed$indices) == 0L)
-    for (i in seq_along(windows)) {
-      X <- windows[[i]]$gt_hat
-      centered <- sweep(X, 2L, colMeans(X), "-")
-      actual <- observed$value[[i]]
-      stopifnot(isTRUE(all.equal(actual$XtX, crossprod(centered), tolerance = 1e-13)),
-                isTRUE(all.equal(actual$X_colmeans, colMeans(X), tolerance = 1e-13)),
-                identical(actual$n, 80L),
-                identical(dimnames(actual$XtX), list(colnames(X), colnames(X))))
-    }
-    stopifnot(sum(colnames(windows[[1L]]$gt_hat) == "chr1_29_A_G") == 2L)
-    summary <- pgenGenotypeCacheSummary(cache)
-    stopifnot(summary$sufficient_statistics_enabled,
-              summary$sufficient_statistics_builds == 1L,
-              summary$sufficient_statistics_hits == 1L,
-              summary$sufficient_statistics_bytes == 8 * 38^2,
-              summary$variants_read == 40L)
-    clearPgenGenotypeCache(cache)
-    stopifnot(is.null(cache$sufficient_statistics),
-              pgenGenotypeCacheSummary(cache)$sufficient_statistics_bytes == 0)
-    expect_error_message(getPgenGenotypeCacheSufficientStatistics(cache, windows[[1L]]), "cleared")
-  })
-  run_named_test("shared statistics reject changed cache inputs and physical window indices", {
-    cache <- createPgenGenotypeCache(ss_reader, ss_plan, ss_selected, ss_design)
-    on.exit(clearPgenGenotypeCache(cache), add = TRUE)
-    window <- getPgenGenotypeCacheWindow(cache, "left")
-    changed <- window
-    changed$variant_indices[[1L]] <- 40L
-    expect_error_message(getPgenGenotypeCacheSufficientStatistics(cache, changed), "physical")
-    original_path <- ss_reader$pgen_path
-    ss_reader$pgen_path <- paste0(original_path, ".changed")
-    tryCatch({
-      expect_error_message(getPgenGenotypeCacheSufficientStatistics(cache, window), "identity")
-    }, finally = ss_reader$pgen_path <- original_path)
-    window$guard_required <- TRUE
-    stopifnot(is.null(getPgenGenotypeCacheSufficientStatistics(cache, window)),
-              is.null(cache$sufficient_statistics))
-    cache$plan$sufficient_statistics$enabled <- FALSE
-    window$guard_required <- FALSE
-    stopifnot(is.null(getPgenGenotypeCacheSufficientStatistics(cache, window)),
-              is.null(cache$sufficient_statistics))
   })
   message("All prepared PGEN cache tests passed.")
   invisible(TRUE)

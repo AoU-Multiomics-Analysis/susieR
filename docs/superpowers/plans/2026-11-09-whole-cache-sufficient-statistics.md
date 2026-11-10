@@ -1,5 +1,8 @@
 # Whole-cache sufficient statistics implementation plan
 
+Historical plan: superseded on 2026-11-09 at the user's request. The active
+pipeline uses individual-data SuSiE in every cache mode and does not reuse XtX.
+
 > **For agentic workers:** Use the existing isolated worktree and implement each part with a failing targeted test first. Root owns the fitter and integration. Separate agents own cache storage and fitter tests.
 
 **Goal:** Automatically reuse one XtX for eligible whole-batch PGEN fits.

@@ -64,19 +64,10 @@ controlled comparisons. Forced caching must fit its memory limit. Automatic
 mode uses no caching with active ancestry MAF, a variant list, or additional
 genotypes; forced caching rejects these preparation paths.
 
-Eligible whole caches also share one centered, unscaled genotype cross-product
-(`XtX`) across outcomes. Each fit selects its window from this matrix and uses
-`susie_ss()`. This requires at least two nonempty windows, at least twice as many
-samples as variants in the largest window, and enough overlap to keep the batch
-cross-product smaller than separate window cross-products. The shared matrix and
-temporary matrices must also fit the cache budget. Whole caching alone does not
-enable this path. Rolling and uncached fits use the individual-data fitter.
-
-The SS path keeps the current model settings, marginal scores, posterior effect
-scales, and native credible-set purity sampling. Numerical safeguards and an
-unsupported SuSiE implementation select the individual-data fitter. Logs report
-the eligibility reason, cross-product construction time, and fit method. The
-cache report includes the construction count, reuse count, and matrix bytes.
+All cache modes use the individual-data SuSiE fitter. Whole and rolling caches
+reuse prepared genotype columns; they do not build a shared genotype
+cross-product or select a different fitting method. Each outcome retains its
+own phenotype residualization and SuSiE fit.
 
 Cached fits preserve the existing numerical safeguard for a genotype or
 phenotype almost fully explained by covariates. Such a feature uses the existing
@@ -251,7 +242,7 @@ The full and credible-set summary Parquets record `phenotype_residual_SD` on
 each variant row. This is the sample SD of the final residual phenotype vector
 passed to SuSiE, after the pipeline's normalization, sample selection, and
 covariate adjustment. The saved fit also contains this value. The individual-data
-and sufficient-statistics paths use the same definition. This metadata does not
+path uses this definition in every genotype cache mode. This metadata does not
 change model settings, effects, PIPs, or credible sets.
 
 For effects in phenotype residual SDs per additional ALT copy, divide both

@@ -64,21 +64,6 @@ run_susie_phenotype_residual_sd_tests <- function(repo_dir = ".") {
     fits[[if (legacy) "legacy" else "individual"]] <- actual$fit
   }
 
-  stopifnot("The pinned source must enable the real sufficient-statistics fit" =
-              helpers$.susieSufficientStatsSourceSupported(asNamespace("susieR")))
-  statistics <- susieR::compute_suff_stat(X, drop(y))[c("XtX", "X_colmeans", "n")]
-  ss <- capture_fit(function() helpers$fitSusieModel(X, y,
-    sufficient_statistics = statistics))
-  stopifnot("The sufficient-statistics fit must save the same phenotype SD" =
-              same_sd(ss$fit$phenotype_residual_SD),
-            "Both fitting paths must retain the same PIPs" =
-              isTRUE(all.equal(ss$fit$pip, fits$individual$pip, tolerance = 1e-8)),
-            "Both fitting paths must retain the same credible sets" =
-              identical(ss$fit$sets$cs, fits$individual$sets$cs),
-            "The sufficient-statistics path must preserve RNG state" =
-              identical(ss$rng, capture_fit(function() native_fit())$rng))
-  fits$statistics <- ss$fit
-
   output_dir <- tempfile("susier-phenotype-sd-")
   dir.create(output_dir)
   on.exit(unlink(output_dir, recursive = TRUE), add = TRUE)

@@ -6,7 +6,7 @@ Compute the sample SD of the exact residual phenotype vector passed to `fitSusie
 
 ## Approaches
 
-The conversation selected exporting the scale rather than refitting or changing effect units. Computing it at the fit boundary gives both individual-data and sufficient-statistics paths the same definition. Recovering it from model error variance is invalid. Older saved fits and Parquets use a numeric missing value; aggregation must not invent a scale.
+The conversation selected exporting the scale rather than refitting or changing effect units. Compute it at the common fit boundary in every genotype cache mode. Recovering it from model error variance is invalid. Older saved fits and Parquets use a numeric missing value; aggregation must not invent a scale.
 
 ## Constraints
 

@@ -122,6 +122,9 @@ run_pgen_smoke <- function() {
   shards <- paste0(file.path(prepare_dir, "batches", work$batch_id[[1L]]), c(".pgen", ".pvar", ".psam"))
   preparation_report <- file.path(prepare_dir, "batches", paste0(work$batch_id[[1L]], ".preparation.json"))
   stopifnot(all(file.exists(shards)), file.exists(preparation_report))
+  memory_requests <- jsonlite::read_json(file.path(prepare_dir, "batch_memory_gb.json"),
+                                        simplifyVector = TRUE)
+  stopifnot(length(memory_requests) == 1L, memory_requests[[1L]] >= 8L)
   batch_dir <- file.path(directory, "batch")
   batch_args <- c(
     "--pgen", shards[[1L]], "--pvar", shards[[2L]], "--psam", shards[[3L]],
@@ -131,13 +134,23 @@ run_pgen_smoke <- function() {
     "--qtl-results", qtl, "--covariates", covariates, "--cis-distance", "100",
     "--base-seed", "82", "--plink2", file.path(directory, "does-not-exist-plink"), "--missing-code=NA",
     "--genotype-cache-mode", "none", "--genotype-cache-memory-gb", "0",
-    "--job-memory-gb", "16", "--threads", "2",
+    "--job-memory-gb", as.character(memory_requests[[1L]]), "--threads", "2",
     "--output-dir", batch_dir
   )
   invoke("run_pgen_susie_batch.R", c(batch_args, "--pgen", "gs://bucket/input.pgen"),
          "unlocalized_input", "localization error")
   # No sample-list argument: use the genotype/phenotype intersection in PSAM order.
   batch_output <- invoke("run_pgen_susie_batch.R", batch_args, "batch")
+  check_cleanup <- function(output) {
+    before <- grep("before_gene_cleanup", output, fixed = TRUE)
+    after <- grep("after_gene_cleanup", output, fixed = TRUE)
+    complete <- grep(paste0("COMPLETE gene ", gene_id), output, fixed = TRUE)
+    stopifnot(length(before) == 1L, length(after) == 1L, length(complete) == 1L,
+      before < after, after < complete,
+      any(grepl("data_loading:start", output, fixed = TRUE)),
+      any(grepl("fine_mapping:complete", output, fixed = TRUE)))
+  }
+  check_cleanup(batch_output)
   extracted_files <- shards
   stopifnot(!file.exists(file.path(batch_dir, "batch.genotypes.pgen")),
     !file.exists(file.path(batch_dir, "plink.stdout.log")))
@@ -171,7 +184,8 @@ run_pgen_smoke <- function() {
     mode_args <- batch_args
     mode_args[match("--genotype-cache-mode", mode_args) + 1L] <- mode
     mode_args[match("--output-dir", mode_args) + 1L] <- mode_dir
-    invoke("run_pgen_susie_batch.R", mode_args, paste0("batch-", mode))
+    mode_output <- invoke("run_pgen_susie_batch.R", mode_args, paste0("batch-", mode))
+    check_cleanup(mode_output)
     cache_report <- jsonlite::read_json(file.path(mode_dir, "batch.genotype_cache.json"),
                                        simplifyVector = TRUE)
     expected_mode <- if (mode == "auto") "none" else mode # One fit has no repeated reads.

@@ -7,6 +7,8 @@ scripts_dir <- Sys.getenv("SUSIER_SCRIPTS_PATH", file.path(repo_dir, "R", "scrip
 source(file.path(repo_dir, "tests", "test_helpers.R"))
 source(file.path(scripts_dir, "run_pgen_susie_batch.R"))
 source(file.path(functions_dir, "PgenPreparationFunctions.R"))
+memory_source <- file.path(functions_dir, "PgenMemoryFunctions.R")
+if (file.exists(memory_source)) source(memory_source)
 run_preparation_tests <- function() {
   directory <- tempfile("pgen preparation 'quoted' $literal ")
   dir.create(directory)
@@ -61,7 +63,44 @@ run_preparation_tests <- function() {
   expect_error_message(stop(stale_error), "output_dir must be empty")
   stopifnot(calls == 0L,
     identical(list.files(stale$output_dir), "previous.txt"))
+  run_named_test("invalid memory settings fail before shared QC", {
+    for (value in c(-1, .5, Inf, NA_real_)) {
+      invalid <- opt
+      invalid$batch_memory_gb <- value
+      expect_error_message(preparePgenBatches(invalid), "memory")
+    }
+    invalid <- opt
+    invalid$has_additional_genotypes <- TRUE
+    expect_error_message(preparePgenBatches(invalid), "fixed --batch-memory-gb")
+    stopifnot(calls == 0L)
+  })
   result <- preparePgenBatches(opt)
+  run_named_test("preparation returns memory requests aligned with sorted cloud shards", {
+    stopifnot(!is.null(result$memory_gb_file), file.exists(result$memory_gb_file),
+      file.exists(result$memory_report))
+    requests <- jsonlite::read_json(result$memory_gb_file, simplifyVector = TRUE)
+    memory <- readr::read_tsv(result$memory_report, show_col_types = FALSE)
+    stopifnot(length(requests) == 4L, all(requests > 8L),
+      identical(memory$batch_id, c("batch_000003", "batch_000008", "batch_000009", "batch_000010")),
+      identical(as.integer(memory$memory_gb), requests),
+      identical(as.integer(memory$max_window_variants), c(3L, 1L, 3L, 1L)),
+      all(memory$sample_count == 6L))
+    report <- jsonlite::read_json(result$reports[[1L]], simplifyVector = TRUE)
+    stopifnot(report$memory$memory_gb == requests[[1L]],
+      report$memory$union_variants == 6L)
+    reversed <- opt
+    reversed$mac <- 0
+    reversed$min_call_rate <- 0
+    reversed$batch_memory_gb <- 31L
+    reversed$output_dir <- file.path(directory, "reversed")
+    reversed$worklists_file <- file.path(directory, "reversed-worklists.txt")
+    writeLines(rev(worklists), reversed$worklists_file)
+    reverse_result <- preparePgenBatches(reversed)
+    reverse_memory <- readr::read_tsv(reverse_result$memory_report, show_col_types = FALSE)
+    stopifnot(identical(reverse_memory$batch_id, memory$batch_id),
+      identical(as.integer(reverse_memory$max_window_variants), c(3L, 1L, 3L, 1L)),
+      identical(jsonlite::read_json(reverse_result$memory_gb_file, simplifyVector = TRUE), rep(31L, 4L)))
+  })
   run_named_test("one shared QC and one native shard per planned batch", {
     stopifnot(calls == 1L, length(result$pgen) == 4L,
       identical(basename(result$pgen), paste0(c("batch_000003", "batch_000008", "batch_000009", "batch_000010"), ".pgen")))
@@ -155,7 +194,12 @@ run_preparation_tests <- function() {
     expect_error_message(readPgenPreparedBatchReport(options, worklist, reader), "Shared QC report")
     altered <- report; altered$shared_qc$report$sample_count <- 5L; save_report(altered)
     expect_error_message(readPgenPreparedBatchReport(options, worklist, reader), "sample_count")
-    for (field in names(report)) {
+    # Memory is optional resource metadata. Older prepared shards remain valid.
+    without_memory <- report
+    without_memory$memory <- NULL
+    save_report(without_memory)
+    readPgenPreparedBatchReport(options, worklist, reader)
+    for (field in setdiff(names(report), "memory")) {
       altered <- report; altered[[field]] <- NULL; save_report(altered)
       expect_error_message(readPgenPreparedBatchReport(options, worklist, reader), "Invalid prepared batch report")
     }

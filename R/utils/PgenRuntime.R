@@ -5,6 +5,56 @@
            error = function(error) character())
 }
 
+# Process RSS and cgroup counters complement R's live-heap measurements. This
+# observer does not collect garbage or change random-number or runtime settings.
+pgenMemoryLogLine <- function(context, proc_status_path = "/proc/self/status",
+                               cgroup_root = "/sys/fs/cgroup") {
+  context <- tryCatch({
+    if (!is.character(context) || length(context) != 1L || is.na(context)) "unknown" else
+      gsub("[[:cntrl:]]", " ", context)
+  }, error = function(error) "unknown")
+  fields <- c(VmRSS_kB = "NA", VmHWM_kB = "NA",
+    cgroup_memory_current_bytes = "NA", cgroup_memory_peak_bytes = "NA",
+    cgroup_memory_max_bytes = "NA", cgroup_oom = "NA", cgroup_oom_kill = "NA")
+  read_small <- function(path) {
+    tryCatch(suppressWarnings(readLines(path, n = 128L, warn = FALSE)),
+             error = function(error) character())
+  }
+  counter <- function(value, allow_max = FALSE) {
+    if (length(value) != 1L || is.na(value)) return("NA")
+    value <- trimws(value)
+    if (allow_max && identical(value, "max")) return(value)
+    if (!grepl("^[0-9]+$", value) ||
+        !is.finite(suppressWarnings(as.numeric(value)))) return("NA")
+    # Keep decimal text so large counters do not lose integer precision.
+    value
+  }
+  fields <- tryCatch({
+    status <- read_small(proc_status_path)
+    for (key in c("VmRSS", "VmHWM")) {
+      pattern <- paste0("^", key, ":[[:space:]]*([0-9]+)[[:space:]]+kB[[:space:]]*$")
+      matched <- status[grepl(pattern, status)]
+      fields[[paste0(key, "_kB")]] <- if (length(matched) == 1L)
+        counter(sub(pattern, "\\1", matched)) else "NA"
+    }
+    for (key in c("current", "peak", "max")) {
+      fields[[paste0("cgroup_memory_", key, "_bytes")]] <-
+        counter(read_small(file.path(cgroup_root, paste0("memory.", key))), key == "max")
+    }
+    events <- strsplit(trimws(read_small(file.path(cgroup_root, "memory.events"))),
+                       "[[:space:]]+")
+    for (key in c("oom", "oom_kill")) {
+      matches <- events[vapply(events, function(value)
+        length(value) == 2L && identical(value[[1L]], key), logical(1))]
+      fields[[paste0("cgroup_", key)]] <- if (length(matches) == 1L)
+        counter(matches[[1L]][[2L]]) else "NA"
+    }
+    fields
+  }, error = function(error) fields)
+  paste0("MEMORY context=", context, "; ",
+         paste(names(fields), fields, sep = "=", collapse = "; "))
+}
+
 .pgenAncestorCpuQuotas <- function(directory, root, version = c("v2", "v1")) {
   version <- match.arg(version)
   root <- normalizePath(root, mustWork = FALSE)

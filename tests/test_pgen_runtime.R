@@ -13,6 +13,57 @@ run_pgen_runtime_tests <- function() {
   directory <- tempfile("pgen runtime '")
   dir.create(directory)
   on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  run_named_test("memory diagnostics report process and cgroup peaks without changing RNG", {
+    memory_root <- file.path(directory, "memory cgroup")
+    dir.create(memory_root)
+    status <- file.path(directory, "memory status")
+    writeLines(c("Name:\tR", "VmRSS:\t123456 kB", "VmHWM:\t234567 kB"), status)
+    writeLines("10000000000", file.path(memory_root, "memory.current"))
+    writeLines("12000000000", file.path(memory_root, "memory.peak"))
+    writeLines("17179869184", file.path(memory_root, "memory.max"))
+    writeLines(c("low 0", "oom 3", "oom_kill 2"), file.path(memory_root, "memory.events"))
+    set.seed(71L)
+    before <- .Random.seed
+    line <- pgenMemoryLogLine("gene start", status, memory_root)
+    stopifnot(is.character(line), length(line) == 1L, !grepl("[\r\n]", line),
+      grepl("context=gene start", line, fixed = TRUE),
+      grepl("VmRSS_kB=123456", line, fixed = TRUE),
+      grepl("VmHWM_kB=234567", line, fixed = TRUE),
+      grepl("cgroup_memory_current_bytes=10000000000", line, fixed = TRUE),
+      grepl("cgroup_memory_peak_bytes=12000000000", line, fixed = TRUE),
+      grepl("cgroup_memory_max_bytes=17179869184", line, fixed = TRUE),
+      grepl("cgroup_oom=3", line, fixed = TRUE),
+      grepl("cgroup_oom_kill=2", line, fixed = TRUE), identical(.Random.seed, before))
+    writeLines("max", file.path(memory_root, "memory.max"))
+    writeLines(c("oom 9007199254740993", "oom_kill 0"), file.path(memory_root, "memory.events"))
+    line <- pgenMemoryLogLine("gene end", status, memory_root)
+    stopifnot(grepl("cgroup_memory_max_bytes=max", line, fixed = TRUE),
+      grepl("cgroup_oom=9007199254740993", line, fixed = TRUE), identical(.Random.seed, before))
+  })
+  run_named_test("missing and malformed memory statistics remain nonfatal and private", {
+    memory_root <- file.path(directory, "invalid memory cgroup")
+    dir.create(memory_root)
+    status <- file.path(directory, "invalid memory status")
+    writeLines(c("VmRSS:\tsecret-value kB", "VmHWM:\t-10 kB"), status)
+    writeLines("Inf", file.path(memory_root, "memory.current"))
+    writeLines("100 secret-value", file.path(memory_root, "memory.peak"))
+    writeLines("secret-value", file.path(memory_root, "memory.max"))
+    writeLines(c("oom secret-value", "oom_kill -1"), file.path(memory_root, "memory.events"))
+    before <- .Random.seed
+    for (paths in list(c(status, memory_root),
+                       c(file.path(directory, "absent status"), file.path(directory, "absent cgroup")))) {
+      line <- pgenMemoryLogLine("gene\nstart", paths[[1L]], paths[[2L]])
+      stopifnot(length(line) == 1L, !grepl("[\r\n]", line),
+        !grepl("secret-value", line, fixed = TRUE),
+        grepl("VmRSS_kB=NA", line, fixed = TRUE),
+        grepl("VmHWM_kB=NA", line, fixed = TRUE),
+        grepl("cgroup_memory_current_bytes=NA", line, fixed = TRUE),
+        grepl("cgroup_memory_peak_bytes=NA", line, fixed = TRUE),
+        grepl("cgroup_memory_max_bytes=NA", line, fixed = TRUE),
+        grepl("cgroup_oom=NA", line, fixed = TRUE),
+        grepl("cgroup_oom_kill=NA", line, fixed = TRUE), identical(.Random.seed, before))
+    }
+  })
   run_named_test("invalid thread requests fail before runtime changes", {
     for (request in list(-1, 1.5, NA_real_, Inf, "2", c(1, 2), NULL)) {
       expect_error_message(configurePgenThreads(request), "threads must be")

@@ -77,7 +77,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
         result, calls = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-        self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
+        self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_memory.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
                                   "tests/test_pgen_preparation.R",
                                   "tests/run_pgen_reader_tests.R",
                                   "tests/run_pgen_cache_tests.R", "tests/test_pgen_smoke.R"])
@@ -90,6 +90,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
         self.assertEqual(scripts.count("tests/test_pgen_mac.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_runtime.R"), 1)
+        self.assertEqual(scripts.count("tests/test_pgen_memory.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_qc.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_preparation.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_smoke.R"), 1)
@@ -113,7 +114,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
                 self.assertEqual(result.returncode, 43, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R"])
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_memory.R", "tests/test_pgen_mac.R"])
 
     def test_unknown_or_extra_arguments_fail_before_running_tools(self):
         for arguments in (["--ful"], ["--full", "extra"], [""]):
@@ -130,7 +131,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
                 self.assertEqual(result.returncode, 44, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R"])
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_memory.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R"])
 
     def test_workflow_passes_full_flag_only_when_selected(self):
         workflow = yaml.load(
@@ -169,7 +170,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
                 self.assertEqual(result.returncode, 45, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_memory.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
                                           "tests/test_pgen_preparation.R"])
 
     def test_native_imputation_failure_stops_smoke_in_both_modes(self):
@@ -179,7 +180,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
                 self.assertEqual(result.returncode, 46, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_memory.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
                                           "tests/test_pgen_preparation.R",
                                           "tests/run_pgen_reader_tests.R"])
 
@@ -190,7 +191,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
                 self.assertEqual(result.returncode, 47, result.stderr)
                 scripts = [call[1] for call in calls
                            if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
-                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
+                self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_memory.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
                                           "tests/test_pgen_preparation.R",
                                           "tests/run_pgen_reader_tests.R",
                                           "tests/run_pgen_cache_tests.R"])

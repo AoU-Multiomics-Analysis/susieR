@@ -14,6 +14,28 @@ suppressPackageStartupMessages(library(stringr))
 source(file.path(scripts_dir, "run_pgen_susie_batch.R"))
 source(file.path(repo_dir, "tests", "test_pgen_batch_inputs.R"))
 
+writePgenPipelineTabixReferences <- function(directory, hardcalls, positions, refs, alts,
+                                             missing_code) {
+  # Native PGEN imputation removes all-missing rows. Its nonzero filter then
+  # removes zero-alt rows. Match that variant set before comparing full fits.
+  # Keep the unfiltered file for the separate legacy additional-feature path.
+  eligible <- rowSums(hardcalls, na.rm = TRUE) > 0
+  doses <- hardcalls
+  if (missing_code == "-1") doses[is.na(doses)] <- -1
+  write_reference <- function(keep, label) {
+    path <- file.path(directory, paste0(label, "_", missing_code, ".tsv"))
+    readr::write_tsv(dplyr::bind_cols(
+      tibble::tibble(CHROM = "1", POS = positions[keep], REF = refs[keep], ALT = alts[keep]),
+      tibble::as_tibble(doses[keep, , drop = FALSE])), path, na = "NA")
+    bgz <- paste0(path, ".bgz")
+    Rsamtools::bgzip(path, bgz, overwrite = TRUE)
+    Rsamtools::indexTabix(bgz, seq = 1L, start = 2L, end = 2L, skip = 1L)
+    bgz
+  }
+  list(raw = write_reference(rep(TRUE, nrow(hardcalls)), "reference"),
+       native = write_reference(eligible, "native_reference"))
+}
+
 run_pipeline_checks <- function() {
   previous_options <- options(warning.length = 8170)
   on.exit(options(previous_options), add = TRUE)
@@ -295,17 +317,17 @@ run_pipeline_checks <- function() {
       character(1))
     stopifnot(identical(inferred_hashes, explicit_hashes))
   }
-  # Reference the current real Tabix loader with the same values and fit seeds.
+  excluded_native_ids <- c("chr1_1000_A_G", "chr1_1005_A_G")
+  stopifnot(setequal(variant_ids[rowSums(hardcalls, na.rm = TRUE) == 0], excluded_native_ids))
+  for (fits in list(first$fits, first_minus$fits, additional_pair$fits)) {
+    stopifnot(!any(excluded_native_ids %in% unlist(lapply(fits, `[[`, "variant_id"))))
+  }
+  # Compare native PGEN fits with the same eligible variants in real Tabix.
+  # The -1 sentinel must not reintroduce zero-alt or entirely missing rows.
   for (missing_code in c("NA", "-1")) {
-    doses <- hardcalls
-    if (missing_code == "-1") doses[is.na(doses)] <- -1
-    dosage_tsv <- file.path(directory, paste0("reference_", missing_code, ".tsv"))
-    readr::write_tsv(dplyr::bind_cols(
-      tibble::tibble(CHROM = "1", POS = positions, REF = refs, ALT = alts),
-      tibble::as_tibble(doses)), dosage_tsv, na = "NA")
-    dosage_bgz <- paste0(dosage_tsv, ".bgz")
-    Rsamtools::bgzip(dosage_tsv, dosage_bgz, overwrite = TRUE)
-    Rsamtools::indexTabix(dosage_bgz, seq = 1L, start = 2L, end = 2L, skip = 1L)
+    references <- writePgenPipelineTabixReferences(directory, hardcalls, positions,
+      refs, alts, missing_code)
+    dosage_bgz <- references$raw
     data <- LoadData(list(expression_matrix = phenotype_bed, phenotype_list = qtl,
       covariates = covariates, genotype_matrix = dosage_bgz, sample_meta = sample_list,
       cisdistance = 100, out_prefix = "reference", MAF = 0))
@@ -318,7 +340,7 @@ run_pipeline_checks <- function() {
     for (id in phenotype_ids) {
       gene_id <- readr::read_tsv(gene_map, show_col_types = FALSE)$gene_id[match(id, phenotype_ids)]
       reference <- .pgenGeneWithSeed(geneOutcomeSeed(82L, gene_id, id),
-        finemapPhenotype(id, se, dosage_bgz, data$covariates_matrix, 100))
+        finemapPhenotype(id, se, references$native, data$covariates_matrix, 100))
       stopifnot(identical(reference, expected_fits[[id]]))
       if (missing_code == "NA") {
         # Recreate the old per-gene task: its BED contains every selected outcome

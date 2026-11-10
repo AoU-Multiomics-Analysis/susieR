@@ -54,6 +54,8 @@ object PgenWomRender extends App {
         case WomBooleanType => WomBoolean(includeOptional)
         case WomIntegerType => WomInteger(if (name == "memory_gb") 24 else if (name == "mac") {
           if (includeOptional) 5 else 0
+        } else if (name == "batch_memory_gb") {
+          if (includeOptional) 32 else 0
         } else 1)
         case WomFloatType => WomFloat(if (name == "min_call_rate") 0.95
           else if (name == "cache_memory_gb") 3.25 else 0.0)
@@ -85,7 +87,7 @@ object PgenWomRender extends App {
       val bin = Files.createDirectory(cwd.resolve("bin"))
       val stub = bin.resolve("Rscript")
       Files.writeString(stub, """#!/usr/bin/env python3
-import os, pathlib, sys
+import json, os, pathlib, sys
 pathlib.Path('capture.args').write_bytes(b''.join(os.fsencode(arg) + b'\0' for arg in sys.argv[1:]))
 if sys.argv[1].endswith('/prepare_pgen_susie.R'):
     output = pathlib.Path(sys.argv[sys.argv.index('--output-dir') + 1])
@@ -97,6 +99,8 @@ if sys.argv[1].endswith('/prepare_pgen_susie.R'):
         for extension in ('pgen', 'pvar', 'psam', 'preparation.json'):
             (batches / ('batch_%06d.' % number + extension)).write_text('fixture\n')
     (output / 'batch_worklists.txt').write_text('\n'.join(worklists) + '\n')
+    (output / 'batch_memory_gb.json').write_text(json.dumps([24] * len(worklists)))
+    (output / 'batch_memory.tsv').write_text('batch_id\tmemory_gb\n')
     qc = output / 'qc'
     qc.mkdir()
     for name in ('filtered.pgen', 'filtered.pvar', 'filtered.psam', 'variant_qc.tsv.gz', 'qc.json'):
@@ -148,6 +152,19 @@ if sys.argv[1].endswith('/prepare_pgen_susie.R'):
       } else {
         assert(actual.find(_.startsWith("--min-call-rate=")).get.split("=", 2)(1).toDouble == 0.95,
           "Call-rate threshold did not reach the QC CLI")
+        val batchMemoryIndex = actual.indexOf("--batch-memory-gb")
+        assert(batchMemoryIndex >= 0 && actual(batchMemoryIndex + 1).toInt == (if (includeOptional) 32 else 0),
+          "Automatic/fixed batch memory did not reach the preparation CLI")
+        val modeIndex = actual.indexOf("--genotype-cache-mode")
+        assert(modeIndex >= 0 && actual(modeIndex + 1) == inputs.find(_._1.name == "genotype_cache_mode").get._2.valueString,
+          "Preparation cache mode was not safely quoted")
+        val cacheMemoryIndex = actual.indexOf("--genotype-cache-memory-gb")
+        assert(cacheMemoryIndex >= 0 && actual(cacheMemoryIndex + 1).toDouble == 3.25,
+          "Cache memory did not reach the preparation CLI")
+        assert(actual.contains("--cache-ineligible") == !includeOptional,
+          "Cache eligibility did not reach the preparation CLI")
+        assert(actual.contains("--has-additional-genotypes") == includeOptional,
+          "Additional-genotype presence did not reach the preparation CLI")
       }
       assert(actual.contains(if (includeOptional) "--mac=5" else "--mac=0"),
         "MAC threshold did not reach the batch CLI")

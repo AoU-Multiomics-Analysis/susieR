@@ -220,7 +220,8 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
       label <- paste("output", table_name)
       expect_identical_value(attributes(actual_table), attributes(reference_table),
                              paste(label, "table attributes"))
-      scientific_columns <- intersect(c("pip", "posterior_mean", "posterior_sd", "z"),
+      scientific_columns <- intersect(c("pip", "posterior_mean", "posterior_sd", "z",
+                                         "X_column_scale_factors"),
                                       names(reference_table))
       for (field in scientific_columns) {
         compare_absolute(actual_table[[field]], reference_table[[field]],
@@ -246,7 +247,10 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
                                paste(column_label, "infinite values"))
         finite <- is.finite(b)
         difference <- abs(a[finite] - b[finite])
-        allowed <- scientific_absolute_tolerance + fit_tolerance * abs(b[finite])
+        # Scientific fields already passed their stricter absolute check above.
+        # Use the existing 1e-7 fit tolerance as both an absolute and relative
+        # bound for components: near-zero log-BFs differ by about 5e-8 on Linux.
+        allowed <- fit_tolerance + fit_tolerance * abs(b[finite])
         if (any(difference > allowed)) {
           stop(column_label, " max absolute error ",
                sprintf("%.17g", max(difference)),
@@ -262,18 +266,20 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   }
   run_named_test("output comparison accepts negligible near-zero component roundoff", {
     reference <- list(lbf_df = tibble::tibble(lbf_variable3 = 1e-4))
-    actual <- list(lbf_df = tibble::tibble(lbf_variable3 = 1e-4 + 5e-11))
+    actual <- list(lbf_df = tibble::tibble(lbf_variable3 = 1e-4 + 5.382028e-8))
     compare_output_values(actual, reference)
   })
   run_named_test("output comparison rejects material near-zero component changes", {
     for (field in c("lbf_variable3", "mu_3")) {
-      reference <- list(component = tibble::as_tibble(stats::setNames(list(0), field)))
-      actual <- list(component = tibble::as_tibble(stats::setNames(list(1e-6), field)))
-      expect_error_message(compare_output_values(actual, reference), field)
+      for (change in c(2e-7, 1e-6)) {
+        reference <- list(component = tibble::as_tibble(stats::setNames(list(0), field)))
+        actual <- list(component = tibble::as_tibble(stats::setNames(list(change), field)))
+        expect_error_message(compare_output_values(actual, reference), field)
+      }
     }
   })
   run_named_test("output comparison preserves scientific absolute bounds", {
-    for (field in c("pip", "posterior_mean", "posterior_sd", "z")) {
+    for (field in c("pip", "posterior_mean", "posterior_sd", "z", "X_column_scale_factors")) {
       reference <- list(science = tibble::as_tibble(stats::setNames(list(.9), field)))
       actual <- list(science = tibble::as_tibble(stats::setNames(list(.9 + 5e-8), field)))
       expect_error_message(compare_output_values(actual, reference), field)

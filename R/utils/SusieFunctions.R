@@ -795,8 +795,10 @@ extractResults <- function(susie_object){
   
   lbf_variable_mat = t(susie_object$lbf_variable)
   colnames(lbf_variable_mat) = paste0("lbf_variable", seq_len(ncol(lbf_variable_mat)))
+  # Preserve the native variant PIP, including the fit's own prior threshold.
+  # A credible-set assignment does not restrict the effects used in this PIP.
   posterior_df = dplyr::tibble(variant_id = rownames(alpha_mat), 
-                               #pip = susie_object$pip,
+                               pip = susie_object$pip,
                                z = susie_object$z[,1],
                                posterior_mean = mean_vec, 
                                posterior_sd = sd_vec,
@@ -818,20 +820,6 @@ extractResults <- function(susie_object){
   }
 
   return(list(cs_df = cs_df, variant_df = variant_df, lbf_df = lbf_df))
-}
-
-extractPipsFromVariantDf <- function(variant_df){
-# Recover the PIP for the specific credible set assignment stored in cs_index.
-  alpha_df = dplyr::select(variant_df, phenotype_id, variant_id, cs_id, cs_index, alpha1:alpha10)
-  #Rename alpha1:alpha10 to L1:L10
-  colnames(alpha_df) = c("phenotype_id", "variant_id", "cs_id","cs_index", "L1","L2","L3","L4", "L5", "L6", "L7", "L8", "L9", "L10")
-  
-  pip_df = dplyr::filter(alpha_df, !is.na(cs_index)) %>% 
-    tidyr::pivot_longer(L1:L10, values_to = "pip") %>% 
-    dplyr::filter(cs_index == name) %>% 
-    dplyr::select(-name)
-  
-  return(pip_df)
 }
 
 # Build connected components across credible sets and keep the highest-PIP

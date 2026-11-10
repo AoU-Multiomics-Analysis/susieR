@@ -170,6 +170,22 @@ The workflow returns these combined tables:
 
 Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
 
+The `pip` column in primary and full variant tables is the native fitted
+SuSiE variant PIP across effects. It is copied from the saved fit's `pip`
+vector. The `alpha1` through `alpha10` columns in full tables contain the
+separate effect probabilities. A variant's `cs_index` does not select or
+change its PIP. Full tables also retain native PIPs for variants outside
+retained credible sets.
+
+**Output correction, 2026-11-09:** Earlier exporters put the assigned effect's
+alpha value in `pip`. Full-table variants outside retained credible sets
+received missing PIPs. Those exports need to be regenerated from the original
+saved SuSiE RDS fits with the corrected formatter, then aggregated again.
+Saved fits already contain native PIPs, so re-export does not require a new
+model fit. Primary summary tables alone do not contain enough information to
+recover the native PIPs. Existing downloaded files are not changed by this
+code correction.
+
 Each chromosome manifest has one row per gene. Its columns are `chromosome`, `gene_id`, `gene_key`, `batch_id`, `rds_uri`, `summary_parquet_uri`, `lbf_parquet_uri`, `full_parquet_uri`, `covariate_explained_variants_uri`, `variant_position_summary_uri`, `outcome_index_uri`, `log_uri`, and `provenance_uri`. Chromosome values use `1` through `22`. Original gene IDs are preserved. A gene with several outcomes has one row and one RDS containing those outcome fits. Genes with no credible sets or nonconverged outcomes remain in the manifests; their linked outcome index gives the per-outcome status.
 
 The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The locations are output-only string metadata: the aggregate task never opens or localizes those gene files. It reads the existing small batch files and its validated outcome index, checks all nine artifact roles, and writes the manifests in the same task. No extra VM, gene-file copy, output-directory guess, or new workflow input is needed. Files that the aggregate task opens remain typed WDL Files.
@@ -198,3 +214,7 @@ python3 tests/test_pgen_wdl.py .
 The tests reject workflow-scope file writers. They also render and run every task command after simulated cloud-to-local File replacement. A recording CLI checks exact scalar arguments and file-list contents, including optional inputs, spaces, apostrophes, dollar expressions, and backticks. The WDL CI job also uses the command renderer in the pinned WOMtool 85 JAR to check the batch command with cloud File values and a local-path mapper. This catches the struct-member path error that a test with pre-localized inputs cannot detect. These checks use no Docker build or Terra submission. The separate image workflow builds and tests the installed R and PLINK code in GitHub Actions.
 
 Normal image builds check CPU detection in a container limited to one CPU. They also run thread-setting tests, the standalone MAC check, the shared QC count tests, and one small installed-code smoke test: 48 samples, shared preparation, one cis-window extraction, one SuSiE fit, and aggregation. They check count and call-rate boundaries, duplicate IDs, retained phase/dosage, source hashes, extracted genotypes, inferred sample order, model outputs, timing records, thread settings, and reusable manifests. The full regression and legacy parity suites remain available. To run them in GitHub Actions, start the **SuSiE PGEN image CI** workflow manually and enable `full_checks`. To run them in an existing image, use `bash tests/test_pgen_container.sh --full`. Automatic image builds still require a change to source installed in the image.
+
+Every image smoke run also checks exported primary and full-table PIPs against
+a real multi-effect fitted model. This check includes non-CS variants,
+cached extraction, and a Parquet write/read round trip.

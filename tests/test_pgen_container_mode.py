@@ -80,7 +80,8 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
         self.assertEqual(scripts, ["tests/test_pgen_runtime.R", "tests/test_pgen_mac.R", "tests/test_pgen_qc.R",
                                   "tests/test_pgen_preparation.R",
                                   "tests/run_pgen_reader_tests.R",
-                                  "tests/run_pgen_cache_tests.R", "tests/test_pgen_smoke.R"])
+                                  "tests/run_pgen_cache_tests.R",
+                                  "tests/run_susie_output_tests.R", "tests/test_pgen_smoke.R"])
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
         self.assertTrue(any(call[:2] == ["plink2", "--version"] for call in calls))
 
@@ -95,6 +96,7 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
         self.assertEqual(scripts.count("tests/test_pgen_smoke.R"), 1)
         self.assertEqual(scripts.count("tests/run_pgen_reader_tests.R"), 1)
         self.assertEqual(scripts.count("tests/run_pgen_cache_tests.R"), 1)
+        self.assertEqual(scripts.count("tests/run_susie_output_tests.R"), 1)
         self.assertLess(scripts.index("tests/test_pgen_mac.R"), scripts.index("tests/test_pgen_smoke.R"))
         self.assertLess(scripts.index("tests/test_pgen_preparation.R"), scripts.index("tests/test_pgen_smoke.R"))
         for suite in FULL_SUITES:

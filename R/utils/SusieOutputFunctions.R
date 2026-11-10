@@ -68,9 +68,6 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
       dplyr::mutate(chr = stringr::str_remove_all(chr, "chr")) %>%
       dplyr::mutate(cs_index = cs_id) %>%
       dplyr::mutate(cs_id = paste(phenotype_id, cs_index, sep = "_"))
-    pip_df <- extractPipsFromVariantDf(variant_df)
-    variant_df <- dplyr::left_join(variant_df, pip_df,
-      by = c("phenotype_id", "variant_id", "cs_id", "cs_index"))
   }
 
   lbf_df_res <- purrr::map_df(res$lbf_df, identity, .id = "phenotype_id")

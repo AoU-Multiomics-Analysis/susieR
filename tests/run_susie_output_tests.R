@@ -1,0 +1,12 @@
+# Run the output regression without genotype-reader or eQTLUtils dependencies.
+benchmark_library <- Sys.getenv("BENCH_LIBRARY", unset = "")
+if (nzchar(benchmark_library)) .libPaths(c(benchmark_library, .libPaths()))
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(purrr)
+})
+args <- commandArgs(trailingOnly = TRUE)
+repo_dir <- normalizePath(if (length(args)) args[[1L]] else getwd(), mustWork = TRUE)
+source(file.path(repo_dir, "tests", "test_susie_output_pip.R"))
+run_susie_output_pip_tests(repo_dir)

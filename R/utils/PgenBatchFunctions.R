@@ -537,6 +537,40 @@ pgenBindCompact <- function(tables, label, empty_compatible = character()) {
   dplyr::bind_rows(tables)
 }
 
+# This metadata is optional only for legacy files. Never derive a missing scale.
+# A shared state records one value per outcome when full output spans batches.
+pgenCheckPhenotypeResidualSD <- function(table, label, seen = NULL) {
+  column <- "phenotype_residual_SD"
+  if (!column %in% names(table)) table[[column]] <- rep(NA_real_, nrow(table))
+  value <- table[[column]]
+  if (!is.numeric(value)) {
+    stop(label, " requires numeric phenotype_residual_SD", call. = FALSE)
+  }
+  if (any(!is.na(value) & (!is.finite(value) | value < 0))) {
+    stop(label, " phenotype_residual_SD must be nonnegative and finite or missing", call. = FALSE)
+  }
+  table[[column]] <- as.double(value)
+  table[[column]][is.na(table[[column]])] <- NA_real_
+  values <- table |>
+    dplyr::select(molecular_trait_id, phenotype_residual_SD) |>
+    dplyr::distinct()
+  if (anyDuplicated(values$molecular_trait_id)) {
+    stop(label, " has inconsistent phenotype_residual_SD within an outcome", call. = FALSE)
+  }
+  if (!is.null(seen)) {
+    for (i in seq_len(nrow(values))) {
+      outcome <- values$molecular_trait_id[[i]]
+      scale <- values$phenotype_residual_SD[[i]]
+      if (exists(outcome, envir = seen, inherits = FALSE) &&
+          !identical(get(outcome, envir = seen, inherits = FALSE), scale)) {
+        stop(label, " has inconsistent phenotype_residual_SD within an outcome", call. = FALSE)
+      }
+      assign(outcome, scale, envir = seen)
+    }
+  }
+  table
+}
+
 aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_files,
                                 index_files, diagnostic_files, output_dir) {
   message("Checking localized batch files and expected outcomes")
@@ -628,6 +662,7 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
         for (column in intersect(c("low_purity", "has_covariate_explained_variant"), names(table))) table[[column]] <- logical()
       }
       pgenCheckOwnership(table, own_expected, kind, variant_chromosome = kind == "summary")
+      if (kind == "summary") table <- pgenCheckPhenotypeResidualSD(table, "Summary")
       text_columns <- intersect(c("molecular_trait_id", "variant", "ref", "alt", "cs_id", "region"), names(table))
       for (column in text_columns) pgenCheckIds(table[[column]], paste(kind, "text schema", column))
       if (nrow(table) && "variant" %in% names(table)) {
@@ -864,6 +899,14 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
         !types[["low_purity"]] %in% if (reader$num_rows) "bool" else c("bool", "string")) {
       stop("Full-SuSiE schema has incompatible column types", call. = FALSE)
     }
+    # Normalize only this optional addition; all other columns retain exact checks.
+    optional <- "phenotype_residual_SD"
+    if (optional %in% names && !types[[optional]] %in% numeric_types) {
+      stop("Full-SuSiE requires numeric phenotype_residual_SD", call. = FALSE)
+    }
+    schema <- arrow::schema(c(schema$fields[names != optional],
+      list(arrow::field(optional, arrow::float64()))))
+    types <- c(types[names(types) != optional], phenotype_residual_SD = "double")
     list(schema = schema, types = types, rows = reader$num_rows)
   }
   # Only footer schemas and row counts are retained across genes.
@@ -906,6 +949,7 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
     seen_outcomes <- character()
     # Cross-batch duplicate keys are limited to the current gene, then released.
     seen_variants <- new.env(hash = TRUE, parent = emptyenv())
+    seen_residual_sd <- new.env(hash = TRUE, parent = emptyenv())
     dataset <- arrow::open_dataset(full_susie_files[[i]], format = "parquet")
     batch_reader <- arrow::Scanner$create(dataset, use_threads = FALSE,
       batch_size = batch_size,
@@ -918,6 +962,7 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
       pgenCheckIds(table$molecular_trait_id, "Full-SuSiE molecular_trait_id")
       owner <- match(table$molecular_trait_id, own_index$outcome_id)
       if (anyNA(owner)) stop("Full-SuSiE rows contain foreign gene outcome ownership", call. = FALSE)
+      table <- pgenCheckPhenotypeResidualSD(table, "Full-SuSiE", seen_residual_sd)
       for (column in setdiff(text_columns, c("cs_id", "cs_index"))) {
         pgenCheckIds(table[[column]], paste("Full-SuSiE", column))
       }
@@ -965,6 +1010,7 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
       for (row_key in row_keys) assign(row_key, TRUE, envir = seen_variants)
       seen_outcomes <- union(seen_outcomes, table$molecular_trait_id)
       for (column in owner_columns) table[[column]] <- own_index[[column]][owner]
+      table <- table[output_schema$names]
       writer$WriteBatch(arrow::RecordBatch$create(table, schema = output_schema), chunk_size = batch_size)
       total_rows <- total_rows + nrow(table)
     }
@@ -973,7 +1019,7 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
     if (any(!own_index$outcome_id[own_index$credible_set_count > 0] %in% seen_outcomes)) {
       stop("Full-SuSiE is missing rows for an outcome with credible sets", call. = FALSE)
     }
-    rm(seen_variants, dataset)
+    rm(seen_variants, seen_residual_sd, dataset)
     message("Aggregated full-SuSiE gene ", genes$gene_id[[i]])
   }
   if (total_rows == 0) {

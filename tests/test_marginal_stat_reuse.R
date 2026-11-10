@@ -359,6 +359,7 @@ run_marginal_stat_reuse_tests <- function(repo_dir = ".") {
         fit$z <- helpers$computeMarginalZScores(fixture$X, fixture$y)
       }
       fit$covariate_explained_variants <- helpers$emptyCovariateExplainedVariants()
+      fit$phenotype_residual_SD <- stats::sd(drop(fixture$y))
       fit
     })
     reset_counts()

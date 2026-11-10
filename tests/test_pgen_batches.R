@@ -153,9 +153,11 @@ run_pgen_batch_tests <- function(repo_dir) {
                                converged = c(TRUE, FALSE, TRUE),
                                credible_set_count = c(1L, 0L, 0L), reason = "")
   own <- wanted %>% select(batch_id, gene_id, outcome_id, phenotype_id)
-  summary <- InitEmptyInCSVariantDf(TRUE)
-  summary[1, ] <- list("a", "1_10_A_G", "1", 10L, "A", "G", "a_1", "1", "chr1:6-16",
-                       .9, 4, .8, .9, 1L, .4, .1, 3, FALSE)
+  summary <- tibble(molecular_trait_id = "a", variant = "1_10_A_G", chromosome = "1",
+    position = 10L, ref = "A", alt = "G", cs_id = "a_1", cs_index = "1", region = "chr1:6-16",
+    pip = .9, z = 4, cs_min_r2 = .8, cs_avg_r2 = .9, cs_size = 1L,
+    posterior_mean = .4, posterior_sd = .1, cs_log10bf = 3,
+    has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25)
   summary <- bind_cols(own[1, ], summary)
   cs <- tibble(molecular_trait_id = "a", cs_id = "a_1", cs_index = 1,
                region = "chr1:6-16", cs_log10bf = 3, cs_avg_r2 = .9, cs_min_r2 = .8,
@@ -182,7 +184,44 @@ run_pgen_batch_tests <- function(repo_dir) {
   stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 1,
             nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 1,
             identical(read_tsv("aggregate/outcome_index.tsv")$status, index$status),
-            nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1)
+            nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1,
+            identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, 1.25))
+  # Missing legacy metadata stays missing, including when all files are old.
+  legacy_summary <- select(summary, -phenotype_residual_SD)
+  emit(sum = legacy_summary)
+  aggregate()
+  legacy <- arrow::read_parquet("aggregate/susie.parquet")
+  stopifnot("phenotype_residual_SD" %in% names(legacy),
+    is.double(legacy$phenotype_residual_SD), all(is.na(legacy$phenotype_residual_SD)))
+  emit()
+  arrow::write_parquet(filter(legacy_summary, batch_id == "batch_000002"), "2 summary.parquet")
+  aggregate()
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, 1.25))
+  # Both schemas can have rows; an old outcome must not inherit a new outcome's SD.
+  other_summary <- bind_cols(own[3L, ], select(summary, -all_of(names(own)))) %>%
+    mutate(molecular_trait_id = "c", variant = "1_20_A_G", position = 20L,
+           cs_id = "c_1", phenotype_residual_SD = 2.5)
+  other_cs <- bind_cols(own[3L, ], select(cs, -all_of(names(own)))) %>%
+    mutate(molecular_trait_id = "c", cs_id = "c_1")
+  emit(idx = mutate(index, credible_set_count = if_else(outcome_id == "c", 1L, credible_set_count)),
+       sum = bind_rows(summary, other_summary), sets = bind_rows(cs, other_cs))
+  arrow::write_parquet(legacy_summary, "1 summary.parquet")
+  aggregate()
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD,
+                      c(NA_real_, 2.5)))
+  for (invalid_scale in list("1.25", Inf, -1)) {
+    emit(sum = mutate(summary, phenotype_residual_SD = invalid_scale))
+    error(aggregate(), "phenotype_residual_SD|numeric|finite|nonnegative")
+  }
+  emit()
+  arrow::write_parquet(mutate(summary[FALSE, ], phenotype_residual_SD = character()), "2 summary.parquet")
+  error(aggregate(), "phenotype_residual_SD|numeric|schema")
+  for (valid_scale in c(0, NA_real_)) {
+    emit(sum = mutate(summary, phenotype_residual_SD = valid_scale))
+    aggregate()
+    stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, valid_scale))
+  }
+  emit()
   # IDs decoded from quoted BED fields must survive compact TSV aggregation.
   quote_id <- function(table) table %>%
     mutate(across(any_of(c("gene_id", "outcome_id", "phenotype_id", "molecular_trait_id")),
@@ -250,7 +289,14 @@ run_pgen_batch_tests <- function(repo_dir) {
     mutate(cs_size = 2L)
   emit(sum = two_variant_summary, sets = mutate(cs, cs_size = 2))
   aggregate()
-  stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 2L)
+  stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 2L,
+    identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, c(1.25, 1.25)))
+  for (bad_scale in c(2, NA_real_)) {
+    inconsistent <- two_variant_summary
+    inconsistent$phenotype_residual_SD[[2L]] <- bad_scale
+    emit(sum = inconsistent, sets = mutate(cs, cs_size = 2))
+    error(aggregate(), "phenotype_residual_SD|inconsistent")
+  }
   emit()
   # Historical empty schemas have numeric ID/boolean columns; nonempty data stay numeric.
   empty_cs <- bind_cols(own[FALSE, ], InitEmptyCS())
@@ -288,7 +334,12 @@ run_pgen_batch_tests <- function(repo_dir) {
   emit(idx = zero_index, sum = summary[FALSE, ], sets = empty_cs, diag = diagnostic[FALSE, ])
   aggregate()
   stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 0L,
-            nrow(read_tsv("aggregate/outcome_index.tsv")) == 3L)
+            nrow(read_tsv("aggregate/outcome_index.tsv")) == 3L,
+            is.double(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD))
+  emit(idx = zero_index, sum = select(summary[FALSE, ], -phenotype_residual_SD),
+       sets = empty_cs, diag = diagnostic[FALSE, ])
+  aggregate()
+  stopifnot(is.double(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD))
   emit(idx = zero_index[-2, ], sum = summary[FALSE, ], sets = empty_cs, diag = diagnostic[FALSE, ])
   error(aggregate(), "Missing|missing")
   emit(idx = bind_rows(zero_index, zero_index[1, ]), sum = summary[FALSE, ],

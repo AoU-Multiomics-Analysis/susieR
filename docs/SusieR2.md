@@ -171,7 +171,7 @@ The command placeholders use WDL 1.0 `write_lines()` to create these lists after
 The workflow returns these combined tables:
 
 - `SusieParquet`: selected variant results.
-- `AggregateFullSuSiEParquet`: one combined `full_susie.parquet` with all rows already present in the per-gene full outputs, including variants outside retained credible sets and `X_column_scale_factors`.
+- `AggregateFullSuSiEParquet`: one combined `full_susie.parquet` with all rows already present in the per-gene full outputs, including variants outside retained credible sets, `X_column_scale_factors`, and `phenotype_residual_SD`.
 - `CredibleSetsParquet`: credible-set results.
 - `OutcomeIndex`: every expected outcome, including outcomes with no credible sets and fits that did not converge.
 - `GenotypeCacheReports`: one JSON decision and runtime-counter report per batch.
@@ -247,11 +247,25 @@ Streaming limits R memory use but does not reduce localized disk requirements.
 The new workflows have not been run on Terra; syntax, localization, and small
 installed-code checks are separate from a complete Terra execution.
 
-For effects per SD of the covariate-adjusted genotype, multiply both
-`posterior_mean` and `posterior_sd` by `X_column_scale_factors`. The current full
-schema does not record phenotype residual SD. A comparison in SD units for both
-variables also needs division by the phenotype SD after covariate adjustment.
-The fitted SuSiE error SD is a different quantity.
+The full and credible-set summary Parquets record `phenotype_residual_SD` on
+each variant row. This is the sample SD of the final residual phenotype vector
+passed to SuSiE, after the pipeline's normalization, sample selection, and
+covariate adjustment. The saved fit also contains this value. The individual-data
+and sufficient-statistics paths use the same definition. This metadata does not
+change model settings, effects, PIPs, or credible sets.
+
+For effects in phenotype residual SDs per additional ALT copy, divide both
+`posterior_mean` and `posterior_sd` by `phenotype_residual_SD`. For effects per SD
+of the covariate-adjusted genotype, multiply both by `X_column_scale_factors`.
+Apply both operations for SD units on both variables. These conversions do not
+require another model fit. A zero phenotype SD cannot be used as a divisor.
+The fitted SuSiE error SD and the genotype diagnostic `residual_sd` are different
+quantities.
+
+Older saved fits and Parquets do not contain phenotype residual SD. Their rows
+receive numeric missing values when formatted or aggregated. A mixed set of old
+and new files retains the known scales and leaves the old scales missing. The
+aggregator does not estimate a missing scale from the fitted error variance.
 
 For `AdditionalGenotypes`, each gene uses the union of feature rows for its selected phenotype IDs. Every outcome for that gene receives the same union, as in the legacy per-gene task. Features from other genes are excluded. Source row order, sample order, and missing codes are preserved. A gene with no matching rows still uses the additional file's sample columns for the legacy sample intersection.
 

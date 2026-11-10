@@ -176,11 +176,14 @@ run_finemap_path_tests <- function(repo_dir = ".") {
                             estimate_prior_variance = TRUE,
                             scaled_prior_variance = 0.1, verbose = FALSE,
                             compute_univariate_zscore = TRUE, min_abs_corr = 0.5)
+    fitted$phenotype_residual_SD <- stats::sd(drop(y))
     fitted$variant_id <- colnames(x)
     fitted
   }
   compare_fit <- function(reference, actual) {
     stopifnot(identical(reference$variant_id, actual$variant_id),
+              isTRUE(all.equal(reference$phenotype_residual_SD,
+                               actual$phenotype_residual_SD, tolerance = 1e-12)),
               identical(reference$sets$cs, actual$sets$cs),
               identical(reference$converged, actual$converged),
               identical(attributes(reference$z), attributes(actual$z)),

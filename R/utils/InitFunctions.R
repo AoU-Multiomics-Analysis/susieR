@@ -2,7 +2,7 @@
 # no credible sets or no variants after filtering.
 
 # Return an empty full-SuSiE variant table with the columns written by susie.R.
-InitEmptyVariantDf <- function() {
+InitEmptyVariantDf <- function(include_phenotype_residual_sd = FALSE) {
 empty_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
   variant = character(),
@@ -50,6 +50,9 @@ empty_variant_df = dplyr::tibble(
   mu2_9 = numeric(),
   mu2_10 = numeric()
 )
+if (include_phenotype_residual_sd) {
+  empty_variant_df <- dplyr::mutate(empty_variant_df, phenotype_residual_SD = numeric())
+}
 empty_variant_df
 
 
@@ -79,7 +82,8 @@ empty_lbf_df
 
 # Return an empty credible-set variant table. The main entry point enables
 # diagnostics; the checkpointed formatter keeps its existing output columns.
-InitEmptyInCSVariantDf <- function(include_covariate_diagnostics = FALSE) {
+InitEmptyInCSVariantDf <- function(include_covariate_diagnostics = FALSE,
+                                  include_phenotype_residual_sd = FALSE) {
 empty_in_cs_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
   variant = character(),
@@ -102,6 +106,11 @@ empty_in_cs_variant_df = dplyr::tibble(
 if (include_covariate_diagnostics) {
   empty_in_cs_variant_df <- dplyr::mutate(
     empty_in_cs_variant_df, has_covariate_explained_variant = logical()
+  )
+}
+if (include_phenotype_residual_sd) {
+  empty_in_cs_variant_df <- dplyr::mutate(
+    empty_in_cs_variant_df, phenotype_residual_SD = numeric()
   )
 }
 empty_in_cs_variant_df

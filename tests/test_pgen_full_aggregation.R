@@ -37,11 +37,12 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
         low_purity = dplyr::if_else(dplyr::row_number() == 1L, FALSE, NA),
         region = "chr1:1-1000", pip = seq_len(n) / (n + 1),
         X_column_scale_factors = seq_len(n) / 10,
-        source_marker = paste0(outcomes, ":", positions))
+        source_marker = paste0(outcomes, ":", positions),
+        phenotype_residual_SD = unname(c(outcome1 = 2, outcome2 = 0, outcome3 = 1.5)[outcomes]))
   }
   tables <- list(make_table(c("outcome1", "outcome1", "outcome1", "outcome2", "outcome2"), 101:105),
     make_table(rep("outcome3", 3), 201:203),
-    dplyr::mutate(InitEmptyVariantDf(), source_marker = character()))
+    dplyr::mutate(InitEmptyVariantDf(), source_marker = character(), phenotype_residual_SD = double()))
   # A gene-owned additional feature can come from a different chromosome.
   tables[[1L]]$chromosome[[4L]] <- "2"
   tables[[1L]]$variant[[4L]] <- "chr2_104_A_G"
@@ -68,7 +69,24 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     identical(actual$phenotype_id, index$phenotype_id[match(actual$outcome_id, index$outcome_id)]),
     sum(is.na(actual$cs_index)) == 6L,
     identical(actual$X_column_scale_factors, expected$X_column_scale_factors),
-    identical(actual$pip, expected$pip))
+    identical(actual$pip, expected$pip),
+    identical(actual$phenotype_residual_SD, c(2, 2, 2, 0, 0, 1.5, 1.5, 1.5)))
+
+  # Old files retain an explicit missing scale; mixing old and new does not infer one.
+  legacy_tables <- lapply(tables, function(table) dplyr::select(table, -phenotype_residual_SD))
+  write_tables(legacy_tables)
+  aggregate()
+  legacy <- arrow::read_parquet(output)
+  stopifnot("phenotype_residual_SD" %in% names(legacy),
+    is.double(legacy$phenotype_residual_SD), all(is.na(legacy$phenotype_residual_SD)))
+  mixed_tables <- tables
+  mixed_tables[[1L]] <- legacy_tables[[1L]]
+  write_tables(mixed_tables)
+  aggregate()
+  mixed <- arrow::read_parquet(output)
+  stopifnot(is.double(mixed$phenotype_residual_SD),
+    identical(mixed$phenotype_residual_SD, c(rep(NA_real_, 5), 1.5, 1.5, 1.5)))
+  write_tables()
 
   # Keep the chromosome aliases accepted by the compact aggregation path.
   for (variant_id in c("2_104_A_G", "chr2_104_A_G", "chr2_104_A_G_extra",
@@ -110,6 +128,27 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     expect_error(aggregate(), pattern)
     write_tables()
   }
+  # Scales must be numeric and valid even on empty tables. One outcome can span batches.
+  check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = "2"), "phenotype_residual_SD|numeric|schema")
+  check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = Inf), "phenotype_residual_SD|finite")
+  check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = -1), "phenotype_residual_SD|negative|nonnegative")
+  check_bad_table(dplyr::mutate(tables[[3L]], phenotype_residual_SD = character()), "phenotype_residual_SD|numeric|schema", 3L)
+  # Row three is in the next batch; preserve the previous complete output on failure.
+  previous_sd_output <- readBin(output, "raw", n = file.info(output)$size)
+  for (bad_scale in c(3, NA_real_)) {
+    broken <- tables
+    broken[[1L]]$phenotype_residual_SD[[3L]] <- bad_scale
+    write_tables(broken)
+    expect_error(aggregate(batch_size = 2L), "phenotype_residual_SD|inconsistent")
+    stopifnot(identical(readBin(output, "raw", n = file.info(output)$size), previous_sd_output),
+      identical(list.files(dirname(output)), "full_susie.parquet"))
+  }
+  missing_tables <- lapply(tables, function(table) dplyr::mutate(table, phenotype_residual_SD = rep(NA_real_, nrow(table))))
+  write_tables(missing_tables)
+  aggregate()
+  stopifnot(all(is.na(arrow::read_parquet(output)$phenotype_residual_SD)))
+  write_tables()
+  aggregate()
   check_bad_table(dplyr::select(tables[[1L]], -X_column_scale_factors), "schema|column")
   check_bad_table(dplyr::mutate(tables[[2L]], posterior_mean = as.character(posterior_mean)), "schema|type|numeric", 2L)
   check_bad_table(dplyr::mutate(tables[[1L]], molecular_trait_id = "outcome3"), "ownership|foreign|gene")
@@ -141,13 +180,26 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
 
   # Empty schema differences are accepted only on the known legacy columns.
   write_index(dplyr::mutate(index, credible_set_count = 0L))
-  empties <- rep(list(InitEmptyVariantDf()), length(paths))
+  empties <- rep(list(dplyr::mutate(InitEmptyVariantDf(), phenotype_residual_SD = double())), length(paths))
   write_tables(empties)
   aggregate()
   empty <- arrow::read_parquet(output)
   stopifnot(nrow(empty) == 0L,
-    identical(names(empty), c(names(InitEmptyVariantDf()),
-      "batch_id", "gene_id", "outcome_id", "phenotype_id", "gene_key")))
+    identical(names(empty), c(names(empties[[1L]]),
+      "batch_id", "gene_id", "outcome_id", "phenotype_id", "gene_key")),
+    is.double(empty$phenotype_residual_SD))
+  # Entirely empty legacy files still emit the optional numeric scale column.
+  write_tables(lapply(empties, function(table) dplyr::select(table, -phenotype_residual_SD)))
+  aggregate()
+  empty_legacy <- arrow::read_parquet(output)
+  stopifnot(nrow(empty_legacy) == 0L, is.double(empty_legacy$phenotype_residual_SD))
+  # An integer optional column is numeric and is normalized without loosening other types.
+  mixed_empty <- empties
+  mixed_empty[[2L]]$phenotype_residual_SD <- integer()
+  mixed_empty[[3L]] <- dplyr::select(mixed_empty[[3L]], -phenotype_residual_SD)
+  write_tables(mixed_empty)
+  aggregate()
+  stopifnot(is.double(arrow::read_parquet(output)$phenotype_residual_SD))
 
   # The CLI must treat cloud output locations as metadata while opening local Files.
   write_index(dplyr::mutate(index, credible_set_count = 0L))

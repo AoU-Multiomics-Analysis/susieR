@@ -268,7 +268,7 @@ extractResults <- function(susie_object){
   lbf_variable_mat = t(susie_object$lbf_variable)
   colnames(lbf_variable_mat) = paste0("lbf_variable", seq_len(ncol(lbf_variable_mat)))
   posterior_df = dplyr::tibble(variant_id = rownames(alpha_mat), 
-                               #pip = susie_object$pip,
+                               pip = susie_object$pip,
                                z = susie_object$z[,1],
                                posterior_mean = mean_vec, 
                                posterior_sd = sd_vec,
@@ -302,8 +302,6 @@ CleanSusieData <- function(res,region_df) {
       dplyr::mutate(chr = stringr::str_remove_all(chr, "chr")) %>%
       dplyr::mutate(cs_index = cs_id) %>%
       dplyr::mutate(cs_id = paste(phenotype_id, cs_index, sep = "_"))
-    pip_df = extractPipsFromVariantDf(variant_df)
-    variant_df = dplyr::left_join(variant_df, pip_df, by = c("phenotype_id", "variant_id", "cs_id", "cs_index"))
   }
   
   #Extract lbf variable df and format correctly for export

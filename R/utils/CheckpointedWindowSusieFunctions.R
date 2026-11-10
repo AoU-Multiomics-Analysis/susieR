@@ -1363,7 +1363,9 @@ format_checkpointed_susie_tables <- function(result, phenotype_record) {
   variant_df <- extracted$variant_df |>
     dplyr::mutate(
       phenotype_id = phenotype_id,
-      region = window_id
+      region = window_id,
+      # The pinned base image's extractor does not return a PIP column.
+      pip = extraction_fit$pip[match(.data$variant_id, extraction_fit$variant_id)]
     ) |>
     tidyr::separate(
       .data$variant_id,
@@ -1380,13 +1382,6 @@ format_checkpointed_susie_tables <- function(result, phenotype_record) {
         paste(.data$phenotype_id, .data$cs_index, sep = "_")
       )
     )
-  pip_df <- checkpointed_call_legacy_helper(extractPipsFromVariantDf, variant_df)
-  variant_df <- variant_df |>
-    dplyr::left_join(
-      pip_df,
-      by = c("phenotype_id", "variant_id", "cs_id", "cs_index")
-    )
-
   lbf_variable <- extracted$lbf_df |>
     dplyr::mutate(
       molecular_trait_id = phenotype_id,

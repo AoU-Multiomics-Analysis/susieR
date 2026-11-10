@@ -27,7 +27,8 @@ if (length(missing_packages) > 0L) {
 test_files <- c(
   "test_covariate_reader.R", "test_susie_performance.R", "test_susie_fit_caches.R",
   "test_marginal_stat_reuse.R", "test_susie_native_fallback.R", "test_finemap_paths.R",
-  "test_covariate_explained_outputs.R", "test_memory_debug.R"
+  "test_covariate_explained_outputs.R", "test_susie_output_pip.R",
+  "test_susie_cv_output_pip.R", "test_memory_debug.R"
 )
 for (test_file in test_files) {
   test_path <- file.path(repo_dir, "tests", test_file)
@@ -52,5 +53,9 @@ if (isTRUE(fit_helpers$.susieFitSourceSupported(asNamespace("susieR")))) {
 }
 run_finemap_path_tests(repo_dir)
 run_covariate_explained_output_tests(repo_dir)
+run_susie_output_pip_tests(repo_dir)
+if (file.exists(file.path(functions_path, "SusieCVFunctions.R"))) {
+  run_susie_cv_output_pip_tests(repo_dir)
+}
 run_memory_debug_tests(repo_dir)
 message("All SuSiE regression tests passed.")

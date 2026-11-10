@@ -909,6 +909,91 @@ full_susie_columns <- c(
   paste0("mu2_", seq_len(10L))
 )
 
+# This fails if the formatter exports the assigned alpha value or loses PIPs
+# for fitted variants outside credible sets.
+run_named_test("formatter exports native fitted PIPs for every variant", {
+  set.seed(20261109L)
+  sample_count <- 120L
+  variant_count <- 20L
+  variant_ids <- paste0("chr1_", 1000L + seq_len(variant_count), "_A_G")
+  genotype <- matrix(
+    stats::rnorm(sample_count * variant_count),
+    nrow = sample_count,
+    dimnames = list(NULL, variant_ids)
+  )
+  genotype[, 2L] <- genotype[, 1L] + stats::rnorm(sample_count, sd = 0.1)
+  genotype[, 4L] <- genotype[, 3L] + stats::rnorm(sample_count, sd = 0.1)
+  phenotype <- cbind(
+    0.65 * genotype[, 1L] - 0.55 * genotype[, 3L] + stats::rnorm(sample_count)
+  )
+  fitted <- suppressMessages(susieR::susie(
+    genotype, phenotype, L = 10L, estimate_prior_variance = FALSE,
+    scaled_prior_variance = 0.1, compute_univariate_zscore = TRUE
+  ))
+  fitted$variant_id <- variant_ids
+  expect_true_value(length(fitted$sets$cs) >= 2L, "multiple source credible sets")
+  cs_variants <- unlist(fitted$sets$cs, use.names = FALSE)
+  cs_effects <- rep(fitted$sets$cs_index, lengths(fitted$sets$cs))
+  expect_true_value(
+    any(abs(fitted$pip[cs_variants] - fitted$alpha[cbind(cs_effects, cs_variants)]) > 0.01),
+    "native PIPs differ from assigned alpha"
+  )
+
+  tables <- format_checkpointed_susie_tables(
+    list(status = "CONVERGED", fit = fitted),
+    ordered_manifest[1L, ]
+  )
+  full_index <- match(tables$full_susie$variant, variant_ids)
+  cs_index <- match(tables$credible_sets$variant, variant_ids)
+  outside_cs <- is.na(tables$full_susie$cs_index)
+  expect_true_value(any(outside_cs), "full output has variants outside credible sets")
+  expect_true_value(
+    nrow(tables$full_susie) == variant_count && !anyDuplicated(full_index) &&
+      !anyNA(full_index),
+    "each fitted variant appears once"
+  )
+  expect_true_value(
+    nrow(tables$credible_sets) > 0L && !anyNA(cs_index) &&
+      isTRUE(all.equal(
+        unname(tables$credible_sets$pip), unname(fitted$pip[cs_index]),
+        tolerance = 0, check.attributes = FALSE
+      )),
+    "credible-set output preserves fitted PIPs"
+  )
+  expect_true_value(
+    isTRUE(all.equal(
+      unname(tables$full_susie$pip), unname(fitted$pip[full_index]),
+      tolerance = 0, check.attributes = FALSE
+    )),
+    "full output preserves all fitted PIPs"
+  )
+})
+
+# The pinned checkpoint image uses an older extractor without a PIP column.
+# Keep its extraction behavior and test the formatter with that column absent.
+run_named_test("formatter supports the base image extractor without PIPs", {
+  base_helpers <- new.env(parent = globalenv())
+  base_helpers$native_extract_results <- extractResults
+  base_helpers$extractResults <- function(susie_object) {
+    extracted <- checkpointed_call_legacy_helper(
+      native_extract_results, susie_object
+    )
+    extracted$variant_df <- extracted$variant_df |>
+      dplyr::select(-dplyr::any_of("pip"))
+    extracted
+  }
+  environment(base_helpers$extractResults) <- base_helpers
+  base_formatter <- format_checkpointed_susie_tables
+  environment(base_formatter) <- base_helpers
+  base_tables <- base_formatter(
+    list(status = "CONVERGED", fit = fitted),
+    ordered_manifest[1L, ]
+  )
+  expect_identical_value(
+    base_tables, tables, "base image and current extractor output tables"
+  )
+})
+
 run_named_test("formatter preserves all three result schemas", {
   z_dimensions_before <- dim(fit_results[[1L]]$fit$z)
   tables <- format_checkpointed_susie_tables(fit_results[[1L]], ordered_manifest[1L, ])

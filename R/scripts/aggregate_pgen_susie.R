@@ -9,10 +9,37 @@ metadata_names <- c("gene_rds_uris_file", "gene_parquet_uris_file", "gene_tsv_ur
                      "gene_log_uris_file", "gene_provenance_uris_file")
 pgen_metadata_names <- c("pgen_chromosomes_file", "pgen_uris_file", "pvar_uris_file", "psam_uris_file")
 options <- lapply(c("expected-outcomes", "summary-files", "credible-set-files", "index-files",
-                    "diagnostic-files", "output-dir", gsub("_", "-", c(metadata_names, pgen_metadata_names))), function(name) {
+                    "diagnostic-files", "full-susie-files", "outcome-index", "output-dir",
+                    gsub("_", "-", c(metadata_names, pgen_metadata_names))), function(name) {
   make_option(paste0("--", name), type = "character")
 })
+options <- c(options, list(make_option("--full-only", action = "store_true", default = FALSE,
+  help = "Combine existing full-SuSiE files using --outcome-index, without compact aggregation")))
 opt <- parse_args(OptionParser(option_list = options), convert_hyphens_to_underscores = TRUE)
+read_file_list <- function(path) {
+  paths <- readLines(pgenLocalFile(path, "Localized file list"), warn = FALSE)
+  if (!length(paths) || anyNA(paths) || any(!nzchar(paths)) || any(grepl("[\r\n\t]", paths))) {
+    stop("File lists need one nonempty localized path per line", call. = FALSE)
+  }
+  for (input in paths) pgenLocalFile(input, "Listed batch input")
+  paths
+}
+if (isTRUE(opt$full_only)) {
+  incompatible <- c("expected_outcomes", "summary_files", "credible_set_files", "index_files",
+    "diagnostic_files", metadata_names, pgen_metadata_names)
+  if (any(!vapply(opt[incompatible], is.null, logical(1)))) {
+    stop("--full-only cannot combine compact aggregation inputs or output URI metadata", call. = FALSE)
+  }
+  required <- c("outcome_index", "full_susie_files", "output_dir")
+  missing <- required[vapply(required, function(name) is.null(opt[[name]]), logical(1))]
+  if (length(missing)) stop("Missing required full-only arguments: ", paste(missing, collapse = ", "), call. = FALSE)
+  message("Aggregating existing full-SuSiE files")
+  aggregatePgenFullSusie(opt$outcome_index, read_file_list(opt$full_susie_files),
+    file.path(opt$output_dir, "full_susie.parquet"))
+  message("Full-SuSiE aggregation complete")
+  quit(status = 0L)
+}
+if (!is.null(opt$outcome_index)) stop("--outcome-index requires --full-only", call. = FALSE)
 required <- c("expected_outcomes", "summary_files", "credible_set_files", "index_files", "diagnostic_files", "output_dir")
 missing <- required[vapply(required, function(name) is.null(opt[[name]]), logical(1))]
 if (length(missing)) stop("Missing required arguments: ", paste(missing, collapse = ", "), call. = FALSE)
@@ -52,14 +79,6 @@ if (!is.null(pgen_metadata)) {
     stop("PGEN output metadata chromosomes do not match the expected batch order", call. = FALSE)
   }
 }
-read_file_list <- function(path) {
-  paths <- readLines(pgenLocalFile(path, "Localized file list"), warn = FALSE)
-  if (!length(paths) || anyNA(paths) || any(!nzchar(paths)) || any(grepl("[\r\n\t]", paths))) {
-    stop("File lists need one nonempty localized path per line", call. = FALSE)
-  }
-  for (input in paths) pgenLocalFile(input, "Listed batch input")
-  paths
-}
 message("Aggregating PGEN SuSiE batch summaries")
 files <- aggregatePgenBatches(
   expected_outcomes = opt$expected_outcomes,
@@ -69,6 +88,11 @@ files <- aggregatePgenBatches(
   diagnostic_files = read_file_list(opt$diagnostic_files),
   output_dir = opt$output_dir
 )
+if (!is.null(opt$full_susie_files)) {
+  message("Aggregating localized full-SuSiE gene tables")
+  files[["full_susie"]] <- aggregatePgenFullSusie(files[["index"]],
+    read_file_list(opt$full_susie_files), file.path(opt$output_dir, "full_susie.parquet"))
+}
 if (!is.null(metadata)) {
   message("Writing chromosome gene-output manifests from completed output metadata")
   do.call(writeChromosomeGeneManifests, c(list(

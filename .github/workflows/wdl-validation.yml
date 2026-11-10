@@ -10,6 +10,7 @@ on:
       - "tests/test_pgen_wdl.py"
       - "tests/test_pgen_womtool.sh"
       - "tests/test_pgen_wom_render.scala"
+      - "tests/test_full_aggregate_wom_render.scala"
       - "workflows/**/*.wdl"
   pull_request:
     branches: [ "main" ]
@@ -19,6 +20,7 @@ on:
       - "tests/test_pgen_wdl.py"
       - "tests/test_pgen_womtool.sh"
       - "tests/test_pgen_wom_render.scala"
+      - "tests/test_full_aggregate_wom_render.scala"
       - "workflows/**/*.wdl"
 
 jobs:
@@ -59,6 +61,7 @@ jobs:
         working-directory: workflows
         run: |
           miniwdl check AggregateSusie.wdl
+          miniwdl check AggregateFullSusie.wdl
           miniwdl check AggregateSusieTask.wdl
           miniwdl check AnnotateSusie.wdl
           miniwdl check CheckpointedWindowSusie.wdl

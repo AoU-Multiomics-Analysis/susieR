@@ -166,6 +166,7 @@ workflow SusieR2 {
     input:
       expected_outcomes = PlanPgenSusie.ExpectedOutcomes,
       summary_files = RunPgenSusieBatch.Summary,
+      full_susie_files = flatten(RunPgenSusieBatch.FullSusieParquetFiles),
       credible_set_files = RunPgenSusieBatch.CredibleSets,
       index_files = RunPgenSusieBatch.OutcomeIndex,
       diagnostic_files = RunPgenSusieBatch.Diagnostics,
@@ -189,6 +190,7 @@ workflow SusieR2 {
 
   output {
     File SusieParquet = AggregatePgenSusie.Summary
+    File AggregateFullSuSiEParquet = AggregatePgenSusie.FullSuSiEParquet
     File CredibleSetsParquet = AggregatePgenSusie.CredibleSets
     File OutcomeIndex = AggregatePgenSusie.OutcomeIndex
     File CovariateExplainedVariants = AggregatePgenSusie.Diagnostics
@@ -544,6 +546,7 @@ task RunPgenSusieBatch {
     File OutcomeIndex = "batch/batch.outcome_index.tsv"
     File Diagnostics = "batch/batch.covariate_explained_variants.tsv"
     File GenotypeCacheReport = "batch/batch.genotype_cache.json"
+    Array[File] FullSusieParquetFiles = glob("batch/genes/*/*.full_susie.parquet")
     Array[File] GeneRds = glob("batch/genes/*/*_susie.rds")
     Array[File] GeneParquets = glob("batch/genes/*/*.parquet")
     Array[File] GeneTsvs = glob("batch/genes/*/*.tsv")
@@ -567,6 +570,7 @@ task AggregatePgenSusie {
   input {
     File expected_outcomes
     Array[File] summary_files
+    Array[File] full_susie_files
     Array[File] credible_set_files
     Array[File] index_files
     Array[File] diagnostic_files
@@ -606,6 +610,8 @@ task AggregatePgenSusie {
     # also let Cromwell map each engine-generated list into the container.
     cp '~{write_lines(summary_files)}' summary_files.txt
     while IFS= read -r path; do require_readable "$path"; done < summary_files.txt
+    cp '~{write_lines(full_susie_files)}' full_susie_files.txt
+    while IFS= read -r path; do require_readable "$path"; done < full_susie_files.txt
     cp '~{write_lines(credible_set_files)}' credible_set_files.txt
     while IFS= read -r path; do require_readable "$path"; done < credible_set_files.txt
     cp '~{write_lines(index_files)}' index_files.txt
@@ -625,6 +631,7 @@ task AggregatePgenSusie {
     Rscript /opt/r/scripts/aggregate_pgen_susie.R \
       --expected-outcomes '~{sub(expected_outcomes, "'", "'\"'\"'")}' \
       --summary-files summary_files.txt \
+      --full-susie-files full_susie_files.txt \
       --credible-set-files credible_set_files.txt \
       --index-files index_files.txt \
       --diagnostic-files diagnostic_files.txt \
@@ -642,6 +649,7 @@ task AggregatePgenSusie {
   >>>
   output {
     File Summary = "aggregate/susie.parquet"
+    File FullSuSiEParquet = "aggregate/full_susie.parquet"
     File CredibleSets = "aggregate/credible_sets.parquet"
     File OutcomeIndex = "aggregate/outcome_index.tsv"
     File Diagnostics = "aggregate/covariate_explained_variants.tsv"

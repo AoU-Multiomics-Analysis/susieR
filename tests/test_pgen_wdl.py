@@ -30,9 +30,9 @@ GENE_URI_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in GENE
 PGEN_METADATA_FLAGS = {'--' + name.replace('_', '-') + '-file': name for name in
                        ('pgen_chromosomes', 'pgen_uris', 'pvar_uris', 'psam_uris')}
 METADATA_INPUTS = set(GENE_URI_INPUTS) | set(PGEN_METADATA_FLAGS.values())
-LIST_FLAGS = ('--worklists-file', '--summary-files', '--credible-set-files', '--index-files', '--diagnostic-files') + tuple(GENE_URI_FLAGS) + tuple(PGEN_METADATA_FLAGS)
+LIST_FLAGS = ('--worklists-file', '--summary-files', '--full-susie-files', '--credible-set-files', '--index-files', '--diagnostic-files') + tuple(GENE_URI_FLAGS) + tuple(PGEN_METADATA_FLAGS)
 FILE_NAMES = {'pgen_manifest', 'phenotype_bed', 'qtl_results', 'gene_map', 'worklist', 'covariates', 'sample_list',
-              'ancestry', 'variant_list', 'additional_genotypes', 'genotype_qc_report', 'prepared_batch_manifest', 'expected_outcomes', 'pgen', 'pvar', 'psam'}
+              'ancestry', 'variant_list', 'additional_genotypes', 'genotype_qc_report', 'prepared_batch_manifest', 'expected_outcomes', 'outcome_index', 'pgen', 'pvar', 'psam'}
 OPTIONAL_FILES = {'gene_map', 'sample_list', 'ancestry', 'variant_list', 'additional_genotypes', 'genotype_qc_report'}
 
 
@@ -150,7 +150,7 @@ class PgenWdlTests(unittest.TestCase):
         self.assertEqual(planner_files, {'pgen_manifest', 'phenotype_bed', 'qtl_results', 'gene_map'})
         planner_outputs = {decl.name: decl for decl in self.tasks['PlanPgenSusie'].outputs}
         self.assertIsInstance(planner_outputs['NormalizedManifest'].type, WDL.Type.File)
-        for name in ('summary_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
+        for name in ('summary_files', 'full_susie_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
             decl = next(d for d in self.tasks['AggregatePgenSusie'].inputs if d.name == name)
             self.assertIsInstance(decl.type.item_type, WDL.Type.File)
         # Output paths remain typed, including per-gene artifacts and diagnostics.
@@ -187,6 +187,136 @@ class PgenWdlTests(unittest.TestCase):
 
                 rewritten = WDL.Value.rewrite_paths(metadata, reject_localization)
                 self.assertEqual(rewritten.json, uris)
+
+    def test_full_susie_files_remain_typed_from_batch_collection_to_aggregate(self):
+        batch_outputs = {decl.name: decl for decl in self.tasks['RunPgenSusieBatch'].outputs}
+        self.assertIn('FullSusieParquetFiles', batch_outputs,
+                      'Collect full per-gene results as files for aggregation')
+        declaration = batch_outputs['FullSusieParquetFiles']
+        self.assertEqual(str(declaration.type), 'Array[File]')
+        self.assertIsInstance(declaration.expr, WDL.Expr.Apply)
+        self.assertEqual(declaration.expr.function_name, 'glob')
+        with tempfile.TemporaryDirectory(prefix='susier-full-output-') as temporary:
+            directory = pathlib.Path(temporary)
+            selected = []
+            for chromosome, gene in (('chr2', 'gene_b'), ('chr1', 'gene_a')):
+                gene_dir = directory / 'batch/genes' / chromosome
+                gene_dir.mkdir(parents=True)
+                for suffix in ('.full_susie.parquet', '.susie.parquet', '.credible_sets.parquet'):
+                    path = gene_dir / (gene + suffix)
+                    path.write_text('fixture\n')
+                    if suffix == '.full_susie.parquet':
+                        selected.append(str(path))
+            stdlib = TaskOutputStdLib(directory)
+            collected = declaration.expr.eval(WDL.Env.Bindings(), stdlib)
+            self.assertEqual(collected.json, sorted(selected))
+            self.assertEqual({str(path) for path in stdlib.collected_files}, set(selected))
+
+        task = self.tasks['AggregatePgenSusie']
+        inputs = {decl.name: decl for decl in task.inputs}
+        self.assertIn('full_susie_files', inputs)
+        self.assertEqual(str(inputs['full_susie_files'].type), 'Array[File]')
+        call = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'AggregatePgenSusie')
+        self.assertIn('full_susie_files', call.inputs)
+        uris = ['gs://bucket/batch_1/gene_a.full_susie.parquet',
+                'gs://bucket/batch_2/gene_b.full_susie.parquet']
+        source = WDL.Value.from_json(WDL.Type.Array(WDL.Type.Array(WDL.Type.File())),
+                                     [[uris[0]], [], [uris[1]]])
+        env = WDL.Env.Bindings().bind('RunPgenSusieBatch.FullSusieParquetFiles', source)
+        actual = call.inputs['full_susie_files'].eval(env, WDL.StdLib.Base('1.0'))
+        self.assertIsInstance(actual.type, WDL.Type.Array)
+        self.assertIsInstance(actual.type.item_type, WDL.Type.File)
+        self.assertEqual(actual.json, uris)
+        rewritten = WDL.Value.rewrite_paths(actual, lambda file: '/localized/' + pathlib.Path(file.value).name)
+        self.assertEqual(rewritten.json, ['/localized/gene_a.full_susie.parquet',
+                                          '/localized/gene_b.full_susie.parquet'])
+
+        aggregate_outputs = {decl.name: decl for decl in task.outputs}
+        self.assertIn('FullSuSiEParquet', aggregate_outputs)
+        output = aggregate_outputs['FullSuSiEParquet']
+        self.assertEqual(str(output.type), 'File')
+        self.assertEqual(output.expr.eval(WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value,
+                         'aggregate/full_susie.parquet')
+        workflow_outputs = {decl.name: decl for decl in self.doc.workflow.outputs}
+        self.assertIn('AggregateFullSuSiEParquet', workflow_outputs)
+        output = workflow_outputs['AggregateFullSuSiEParquet']
+        self.assertEqual(str(output.type), 'File')
+        env = WDL.Env.Bindings().bind('AggregatePgenSusie.FullSuSiEParquet',
+                                      WDL.Value.File('gs://bucket/aggregate/full_susie.parquet'))
+        self.assertEqual(output.expr.eval(env, WDL.StdLib.Base('1.0')).value,
+                         'gs://bucket/aggregate/full_susie.parquet')
+
+    def saved_full_aggregation(self):
+        path = ROOT / 'workflows/AggregateFullSusie.wdl'
+        self.assertTrue(path.is_file(), 'Saved full outputs need an aggregation-only workflow')
+        return WDL.load(str(path))
+
+    def test_saved_full_aggregation_has_one_typed_aggregate_call(self):
+        doc = self.saved_full_aggregation()
+        self.assertEqual(doc.effective_wdl_version, '1.0')
+        self.assertEqual(doc.workflow.name, 'AggregateFullSusie')
+        self.assertEqual([task.name for task in doc.tasks], ['AggregateFullSusieFiles'])
+        self.assertEqual(workflow_writers(doc.workflow), [])
+        calls = [node for node in walk(doc.workflow) if isinstance(node, WDL.Tree.Call)]
+        self.assertEqual([call.name for call in calls], ['AggregateFullSusieFiles'])
+        workflow_inputs = {decl.name: decl for decl in doc.workflow.inputs}
+        task = doc.tasks[0]
+        task_inputs = {decl.name: decl for decl in task.inputs}
+        self.assertFalse(task.postinputs, 'Keep File types until command rendering')
+        writers = []
+        command_text = ''.join(part for part in task.command.parts if isinstance(part, str))
+        for part in task.command.parts:
+            if isinstance(part, WDL.Expr.Placeholder):
+                for node in walk(part.expr):
+                    if isinstance(node, WDL.Expr.Apply) and node.function_name in WRITERS:
+                        writers.append(node)
+                        self.assertIs(part.expr, node)
+                        self.assertIsInstance(node.arguments[0].type.item_type, WDL.Type.File)
+        self.assertEqual([(node.function_name, str(node.arguments[0])) for node in writers],
+                         [('write_lines', 'full_susie_files')])
+        for forbidden in ('plink', 'run_pgen_susie_batch.R', 'susie_rss'):
+            self.assertNotIn(forbidden, command_text)
+        values = {
+            'outcome_index': WDL.Value.File('gs://bucket/saved/outcome_index.tsv'),
+            'full_susie_files': WDL.Value.from_json(WDL.Type.Array(WDL.Type.File()),
+                                                   ['gs://bucket/saved/gene_a.full_susie.parquet'])}
+        for name, value in values.items():
+            with self.subTest(input=name):
+                self.assertEqual(str(workflow_inputs[name].type), str(value.type).rstrip('+'))
+                self.assertEqual(str(task_inputs[name].type), str(value.type).rstrip('+'))
+                actual = calls[0].inputs[name].eval(WDL.Env.Bindings().bind(name, value),
+                                                   WDL.StdLib.Base('1.0'))
+                self.assertTrue(has_file_type(actual.type))
+                self.assertEqual(actual.json, value.json)
+        for name, expected in (('memory_gb', 8), ('disk_gb', 50),
+                               ('docker_image', 'ghcr.io/aou-multiomics-analysis/susier/pgen:main')):
+            self.assertEqual(workflow_inputs[name].expr.eval(WDL.Env.Bindings(),
+                                                            WDL.StdLib.Base('1.0')).value, expected)
+        task_outputs = {decl.name: decl for decl in task.outputs}
+        workflow_outputs = {decl.name: decl for decl in doc.workflow.outputs}
+        self.assertEqual(set(task_outputs), {'FullSuSiEParquet', 'TaskStdout', 'TaskStderr'})
+        self.assertEqual(set(workflow_outputs), set(task_outputs))
+        for name, output in workflow_outputs.items():
+            self.assertIsInstance(output.type, WDL.Type.File)
+            value = WDL.Value.File('gs://bucket/aggregate/' + name)
+            actual = output.expr.eval(WDL.Env.Bindings().bind('AggregateFullSusieFiles.' + name, value),
+                                      WDL.StdLib.Base('1.0'))
+            self.assertEqual(actual.json, value.json)
+        self.assertEqual(task_outputs['FullSuSiEParquet'].expr.eval(WDL.Env.Bindings(),
+                                                                 WDL.StdLib.Base('1.0')).value,
+                         'aggregate/full_susie.parquet')
+
+    def test_saved_full_aggregation_localizes_files_and_rejects_cloud_uris(self):
+        task = self.saved_full_aggregation().tasks[0]
+        payload = self.execute(task)
+        self.assertEqual([arg for arg in payload['args'][1:] if arg.startswith('--')],
+                         ['--full-only', '--outcome-index', '--full-susie-files', '--output-dir'])
+        self.assertEqual(set(payload['lists']), {'--full-susie-files'})
+        for name in ('outcome_index', 'full_susie_files'):
+            for failure in ('uri', 'missing'):
+                with self.subTest(input=name, failure=failure):
+                    self.execute(task, broken=(name, failure))
 
     def test_planner_collects_dynamic_files_with_glob(self):
         # A list of filenames does not cause the GCP backend to upload them.
@@ -625,6 +755,7 @@ class PgenWdlTests(unittest.TestCase):
         self.assertCountEqual(writers, [
             ('PreparePgenBatches', 'worklists'),
             ('AggregatePgenSusie', 'summary_files'),
+            ('AggregatePgenSusie', 'full_susie_files'),
             ('AggregatePgenSusie', 'credible_set_files'),
             ('AggregatePgenSusie', 'index_files'),
             ('AggregatePgenSusie', 'diagnostic_files'),
@@ -851,6 +982,7 @@ if args[0].endswith('/plan_pgen_susie.R'):
                 self.assertEqual(float(rate), localized['min_call_rate'].value)
             else:
                 self.assertEqual(args[0], '/opt/r/scripts/aggregate_pgen_susie.R')
+                self.assertIn('--full-susie-files', args)
                 for flag, paths in payload['lists'].items():
                     if flag in GENE_URI_FLAGS or flag in PGEN_METADATA_FLAGS:
                         self.assertEqual(paths, raw[{**GENE_URI_FLAGS, **PGEN_METADATA_FLAGS}[flag]].json)
@@ -859,8 +991,9 @@ if args[0].endswith('/plan_pgen_susie.R'):
                         for path in paths:
                             self.assertTrue(pathlib.Path(path).is_file())
                 for flag, name in GENE_URI_FLAGS.items():
-                    self.assertIn(flag, args)
-                    self.assertEqual(payload['lists'][flag], raw[name].json)
+                    if name in raw:
+                        self.assertIn(flag, args)
+                        self.assertEqual(payload['lists'][flag], raw[name].json)
             for name, value in localized.items():
                 if name in FILE_NAMES:
                     flag = '--' + name.replace('_', '-')
@@ -900,9 +1033,10 @@ if args[0].endswith('/plan_pgen_susie.R'):
                     self.execute(task, broken=(name, failure))
 
     def test_aggregate_file_lists_reject_unresolved_cloud_paths(self):
-        for name in ('summary_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
-            with self.subTest(file_list=name):
-                self.execute(self.tasks['AggregatePgenSusie'], broken=(name, 'uri'))
+        for name in ('summary_files', 'full_susie_files', 'credible_set_files', 'index_files', 'diagnostic_files'):
+            for failure in ('uri', 'missing'):
+                with self.subTest(file_list=name, failure=failure):
+                    self.execute(self.tasks['AggregatePgenSusie'], broken=(name, failure))
 
     def test_preparation_worklists_reject_unresolved_or_missing_files(self):
         for failure in ('uri', 'missing', 'empty'):

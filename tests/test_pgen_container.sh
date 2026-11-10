@@ -34,6 +34,8 @@ echo 'TEST PGEN reader and native mean imputation'
 Rscript tests/run_pgen_reader_tests.R .
 echo 'TEST adaptive prepared-genotype caches and fit agreement'
 Rscript tests/run_pgen_cache_tests.R .
+echo 'TEST full SuSiE aggregation from saved Parquet outputs'
+Rscript tests/test_pgen_full_aggregation.R .
 echo 'TEST exported PIPs against native fitted PIPs'
 Rscript tests/run_susie_output_tests.R .
 echo 'SMOKE one PLINK extraction, one SuSiE fit, and aggregation'

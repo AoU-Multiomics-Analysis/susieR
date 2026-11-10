@@ -537,6 +537,40 @@ pgenBindCompact <- function(tables, label, empty_compatible = character()) {
   dplyr::bind_rows(tables)
 }
 
+# This metadata is optional only for legacy files. Never derive a missing scale.
+# A shared state records one value per outcome when full output spans batches.
+pgenCheckPhenotypeResidualSD <- function(table, label, seen = NULL) {
+  column <- "phenotype_residual_SD"
+  if (!column %in% names(table)) table[[column]] <- rep(NA_real_, nrow(table))
+  value <- table[[column]]
+  if (!is.numeric(value)) {
+    stop(label, " requires numeric phenotype_residual_SD", call. = FALSE)
+  }
+  if (any(!is.na(value) & (!is.finite(value) | value < 0))) {
+    stop(label, " phenotype_residual_SD must be nonnegative and finite or missing", call. = FALSE)
+  }
+  table[[column]] <- as.double(value)
+  table[[column]][is.na(table[[column]])] <- NA_real_
+  values <- table |>
+    dplyr::select(molecular_trait_id, phenotype_residual_SD) |>
+    dplyr::distinct()
+  if (anyDuplicated(values$molecular_trait_id)) {
+    stop(label, " has inconsistent phenotype_residual_SD within an outcome", call. = FALSE)
+  }
+  if (!is.null(seen)) {
+    for (i in seq_len(nrow(values))) {
+      outcome <- values$molecular_trait_id[[i]]
+      scale <- values$phenotype_residual_SD[[i]]
+      if (exists(outcome, envir = seen, inherits = FALSE) &&
+          !identical(get(outcome, envir = seen, inherits = FALSE), scale)) {
+        stop(label, " has inconsistent phenotype_residual_SD within an outcome", call. = FALSE)
+      }
+      assign(outcome, scale, envir = seen)
+    }
+  }
+  table
+}
+
 aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_files,
                                 index_files, diagnostic_files, output_dir) {
   message("Checking localized batch files and expected outcomes")
@@ -628,6 +662,7 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
         for (column in intersect(c("low_purity", "has_covariate_explained_variant"), names(table))) table[[column]] <- logical()
       }
       pgenCheckOwnership(table, own_expected, kind, variant_chromosome = kind == "summary")
+      if (kind == "summary") table <- pgenCheckPhenotypeResidualSD(table, "Summary")
       text_columns <- intersect(c("molecular_trait_id", "variant", "ref", "alt", "cs_id", "region"), names(table))
       for (column in text_columns) pgenCheckIds(table[[column]], paste(kind, "text schema", column))
       if (nrow(table) && "variant" %in% names(table)) {
@@ -774,4 +809,230 @@ writeChromosomeGeneManifests <- function(outcome_index_file, gene_rds_uris,
   }
   message("Wrote gene-output manifests for ", length(files), " chromosomes and ", nrow(genes), " genes")
   files
+}
+
+# Combine native full tables one gene and one Arrow record batch at a time.
+# The index supplies ownership; output URI metadata is never opened here.
+aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_file,
+                                  batch_size = 16384L) {
+  if (!is.numeric(batch_size) || length(batch_size) != 1L || is.na(batch_size) ||
+      !is.finite(batch_size) || batch_size < 1 || batch_size != floor(batch_size) ||
+      batch_size > .Machine$integer.max) {
+    stop("batch_size must be one positive integer", call. = FALSE)
+  }
+  batch_size <- as.integer(batch_size)
+  index <- pgenReadTextTable(outcome_index_file,
+    numeric_columns = "credible_set_count", logical_columns = "converged")
+  owner_columns <- c("batch_id", "gene_id", "outcome_id", "phenotype_id", "gene_key")
+  pgenRequireColumns(index, c(owner_columns, "chromosome", "status", "converged",
+    "credible_set_count"), "Full-SuSiE outcome index")
+  if (!nrow(index)) stop("Full-SuSiE outcome index must not be empty", call. = FALSE)
+  for (column in c(owner_columns, "chromosome")) pgenCheckIds(index[[column]], paste("Outcome index", column))
+  pgenAutosome(index$chromosome)
+  if (anyDuplicated(pgenOwnershipKey(index)) || anyDuplicated(index$outcome_id) ||
+      anyDuplicated(index$phenotype_id)) {
+    stop("Full-SuSiE outcome index contains duplicate outcome IDs", call. = FALSE)
+  }
+  if (anyNA(index$status) || any(!index$status %in% c("CONVERGED", "NONCONVERGED")) ||
+      anyNA(index$converged) || any(index$converged != (index$status == "CONVERGED"))) {
+    stop("Full-SuSiE outcome index has invalid status or converged values", call. = FALSE)
+  }
+  if (any(!is.finite(index$credible_set_count)) || any(index$credible_set_count < 0) ||
+      any(index$credible_set_count != floor(index$credible_set_count))) {
+    stop("Full-SuSiE outcome index has invalid credible_set_count", call. = FALSE)
+  }
+  gene_keys <- vapply(index$gene_id, function(gene) paste0("gene-",
+    digest::digest(charToRaw(enc2utf8(gene)), algo = "sha256", serialize = FALSE)),
+    character(1), USE.NAMES = FALSE)
+  if (any(index$gene_key != gene_keys)) {
+    stop("Outcome index gene_key does not match the original gene_id hash", call. = FALSE)
+  }
+  genes <- index |>
+    dplyr::mutate(chromosome = as.character(pgenAutosome(chromosome))) |>
+    dplyr::distinct(gene_id, gene_key, batch_id, chromosome)
+  if (anyDuplicated(genes$gene_id) || anyDuplicated(genes$gene_key)) {
+    stop("Each gene must have exactly one chromosome and batch", call. = FALSE)
+  }
+  if (!is.character(full_susie_files) || anyNA(full_susie_files) ||
+      anyDuplicated(full_susie_files)) {
+    stop("Full-SuSiE inputs must be unique local files; duplicate paths are not allowed", call. = FALSE)
+  }
+  for (path in full_susie_files) pgenLocalFile(path, "Full-SuSiE input")
+  normalized_inputs <- normalizePath(full_susie_files, mustWork = TRUE)
+  if (anyDuplicated(normalized_inputs) || anyDuplicated(basename(full_susie_files))) {
+    stop("Duplicate localized full-SuSiE files or gene basenames", call. = FALSE)
+  }
+  expected_names <- paste0(genes$gene_key, ".full_susie.parquet")
+  if (length(full_susie_files) != nrow(genes) ||
+      !setequal(basename(full_susie_files), expected_names)) {
+    stop("Supply exactly one full-SuSiE file for each gene; missing or foreign gene basename", call. = FALSE)
+  }
+  full_susie_files <- full_susie_files[match(expected_names, basename(full_susie_files))]
+  if (!is.character(output_file) || length(output_file) != 1L || is.na(output_file) ||
+      !nzchar(output_file) || grepl("[\t\r\n]", output_file) ||
+      grepl("^[A-Za-z][A-Za-z0-9+.-]*://", output_file)) {
+    stop("Full-SuSiE output must be one local path", call. = FALSE)
+  }
+  output_path <- normalizePath(output_file, mustWork = FALSE)
+  if (output_path %in% c(normalized_inputs, normalizePath(outcome_index_file, mustWork = TRUE))) {
+    stop("Full-SuSiE output must not replace an input file", call. = FALSE)
+  }
+  text_columns <- c("molecular_trait_id", "variant", "chromosome", "ref", "alt",
+    "cs_id", "cs_index", "region")
+  numeric_columns <- c("pip", "z", "posterior_mean", "posterior_sd",
+    "X_column_scale_factors", paste0("alpha", seq_len(10L)),
+    paste0("mu_", seq_len(10L)), paste0("mu2_", seq_len(10L)))
+  required <- c(text_columns, "position", "low_purity", numeric_columns)
+  numeric_types <- c("double", "float", "int8", "int16", "int32", "int64",
+    "uint8", "uint16", "uint32", "uint64")
+  inspect_file <- function(path) {
+    reader <- arrow::ParquetFileReader$create(path, mmap = FALSE)
+    schema <- reader$GetSchema()
+    names <- schema$names
+    if (anyDuplicated(names) || !all(required %in% names) || any(owner_columns %in% names)) {
+      stop("Full-SuSiE schema has missing, duplicate, or reserved ownership columns", call. = FALSE)
+    }
+    types <- vapply(schema$fields, function(field) field$type$ToString(), character(1))
+    names(types) <- names
+    if (any(types[text_columns] != "string") || any(!types[numeric_columns] %in% numeric_types) ||
+        !types[["position"]] %in% c("string", numeric_types) ||
+        !types[["low_purity"]] %in% if (reader$num_rows) "bool" else c("bool", "string")) {
+      stop("Full-SuSiE schema has incompatible column types", call. = FALSE)
+    }
+    # Normalize only this optional addition; all other columns retain exact checks.
+    optional <- "phenotype_residual_SD"
+    if (optional %in% names && !types[[optional]] %in% numeric_types) {
+      stop("Full-SuSiE requires numeric phenotype_residual_SD", call. = FALSE)
+    }
+    schema <- arrow::schema(c(schema$fields[names != optional],
+      list(arrow::field(optional, arrow::float64()))))
+    types <- c(types[names(types) != optional], phenotype_residual_SD = "double")
+    list(schema = schema, types = types, rows = reader$num_rows)
+  }
+  # Only footer schemas and row counts are retained across genes.
+  descriptions <- lapply(full_susie_files, inspect_file)
+  populated <- which(vapply(descriptions, function(item) item$rows > 0, logical(1)))
+  prototype <- descriptions[[if (length(populated)) populated[[1L]] else 1L]]
+  for (description in descriptions) {
+    if (!identical(description$schema$names, prototype$schema$names)) {
+      stop("Full-SuSiE files have incompatible schema columns or column order", call. = FALSE)
+    }
+    different <- names(description$types)[description$types != prototype$types]
+    # The legacy zero-row constructor uses integer positions and text purity.
+    compatible_empty <- !description$rows &&
+      all(different %in% c("position", "low_purity")) &&
+      (!"position" %in% different ||
+        (description$types[["position"]] == "int32" && prototype$types[["position"]] == "string") ||
+        (description$types[["position"]] == "string" && prototype$types[["position"]] == "int32"))
+    if (length(different) && !compatible_empty) {
+      stop("Full-SuSiE files have incompatible schema types", call. = FALSE)
+    }
+  }
+  output_schema <- arrow::schema(c(prototype$schema$fields,
+    lapply(owner_columns, function(column) arrow::field(column, arrow::utf8()))))
+  dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
+  temporary_output <- tempfile(".full_susie-", tmpdir = dirname(output_file), fileext = ".parquet.tmp")
+  sink <- writer <- batch_reader <- NULL
+  complete <- FALSE
+  on.exit({
+    if (!is.null(batch_reader)) try(batch_reader$Close(), silent = TRUE)
+    if (!is.null(writer)) try(writer$Close(), silent = TRUE)
+    if (!is.null(sink)) try(sink$close(), silent = TRUE)
+    if (!complete && file.exists(temporary_output)) unlink(temporary_output)
+  }, add = TRUE)
+  sink <- arrow::FileOutputStream$create(temporary_output)
+  writer <- arrow::ParquetFileWriter$create(output_schema, sink,
+    properties = arrow::ParquetWriterProperties$create(output_schema$names))
+  total_rows <- 0
+  for (i in seq_along(full_susie_files)) {
+    own_index <- dplyr::filter(index, gene_key == genes$gene_key[[i]])
+    seen_outcomes <- character()
+    # Cross-batch duplicate keys are limited to the current gene, then released.
+    seen_variants <- new.env(hash = TRUE, parent = emptyenv())
+    seen_residual_sd <- new.env(hash = TRUE, parent = emptyenv())
+    dataset <- arrow::open_dataset(full_susie_files[[i]], format = "parquet")
+    batch_reader <- arrow::Scanner$create(dataset, use_threads = FALSE,
+      batch_size = batch_size,
+      fragment_scan_options = arrow::ParquetFragmentScanOptions$create(pre_buffer = FALSE))$ToRecordBatchReader()
+    repeat {
+      batch <- batch_reader$read_next_batch()
+      if (is.null(batch)) break
+      if (!batch$num_rows) next
+      table <- tibble::as_tibble(as.data.frame(batch))
+      pgenCheckIds(table$molecular_trait_id, "Full-SuSiE molecular_trait_id")
+      owner <- match(table$molecular_trait_id, own_index$outcome_id)
+      if (anyNA(owner)) stop("Full-SuSiE rows contain foreign gene outcome ownership", call. = FALSE)
+      table <- pgenCheckPhenotypeResidualSD(table, "Full-SuSiE", seen_residual_sd)
+      for (column in setdiff(text_columns, c("cs_id", "cs_index"))) {
+        pgenCheckIds(table[[column]], paste("Full-SuSiE", column))
+      }
+      for (column in c("cs_id", "cs_index")) {
+        pgenCheckIds(table[[column]][!is.na(table[[column]])], paste("Full-SuSiE", column))
+      }
+      if (any(!grepl("^[^_]+_[0-9]+_[^_]+_.+$", table$variant))) {
+        stop("Full-SuSiE has malformed variant IDs", call. = FALSE)
+      }
+      # The native formatter uses the third and fourth underscore-delimited
+      # fields. Additional ID suffix fields do not change the exported allele.
+      variant_fields <- stringr::str_split_fixed(table$variant, stringr::fixed("_"), 5L)
+      if (any(table$ref != variant_fields[, 3L])) {
+        stop("Full-SuSiE ref allele does not match the variant ID", call. = FALSE)
+      }
+      if (any(table$alt != variant_fields[, 4L])) {
+        stop("Full-SuSiE alt allele does not match the variant ID", call. = FALSE)
+      }
+      variant_chromosome <- sub("^(?i:chr)+", "", sub("_.*$", "", table$variant), perl = TRUE)
+      table_chromosome <- sub("^(?i:chr)+", "", table$chromosome, perl = TRUE)
+      if (any(pgenAutosome(table_chromosome) != pgenAutosome(variant_chromosome))) {
+        stop("Full-SuSiE chromosome does not match the variant ID", call. = FALSE)
+      }
+      position <- suppressWarnings(as.numeric(table$position))
+      variant_position <- suppressWarnings(as.numeric(sub("^[^_]+_([0-9]+)_.*$", "\\1", table$variant)))
+      if (any(!is.finite(position)) || any(position < 1) || any(position != floor(position)) ||
+          any(position != variant_position)) {
+        stop("Full-SuSiE position does not match the variant ID", call. = FALSE)
+      }
+      if (!all(vapply(table[numeric_columns], is.numeric, logical(1))) || !is.logical(table$low_purity)) {
+        stop("Full-SuSiE rows require numeric fields and logical low_purity", call. = FALSE)
+      }
+      if (any(!is.finite(table$X_column_scale_factors)) || any(table$X_column_scale_factors <= 0)) {
+        stop("Full-SuSiE X_column_scale_factors must be positive finite values", call. = FALSE)
+      }
+      if (any(!is.finite(table$pip)) || any(table$pip < 0 | table$pip > 1)) {
+        stop("Full-SuSiE pip must contain finite values from zero to one", call. = FALSE)
+      }
+      row_keys <- paste0(nchar(table$molecular_trait_id, type = "bytes"), ":",
+        table$molecular_trait_id, nchar(table$variant, type = "bytes"), ":", table$variant)
+      if (anyDuplicated(row_keys) || any(vapply(row_keys, exists, logical(1),
+          envir = seen_variants, inherits = FALSE))) {
+        stop("Full-SuSiE contains duplicate outcome variant rows", call. = FALSE)
+      }
+      for (row_key in row_keys) assign(row_key, TRUE, envir = seen_variants)
+      seen_outcomes <- union(seen_outcomes, table$molecular_trait_id)
+      for (column in owner_columns) table[[column]] <- own_index[[column]][owner]
+      table <- table[output_schema$names]
+      writer$WriteBatch(arrow::RecordBatch$create(table, schema = output_schema), chunk_size = batch_size)
+      total_rows <- total_rows + nrow(table)
+    }
+    batch_reader$Close()
+    batch_reader <- NULL
+    if (any(!own_index$outcome_id[own_index$credible_set_count > 0] %in% seen_outcomes)) {
+      stop("Full-SuSiE is missing rows for an outcome with credible sets", call. = FALSE)
+    }
+    rm(seen_variants, seen_residual_sd, dataset)
+    message("Aggregated full-SuSiE gene ", genes$gene_id[[i]])
+  }
+  if (total_rows == 0) {
+    writer$WriteTable(arrow::Table$create(schema = output_schema), chunk_size = batch_size)
+  }
+  writer$Close()
+  writer <- NULL
+  sink$close()
+  sink <- NULL
+  if (!file.rename(temporary_output, output_file)) {
+    stop("Cannot move the complete full-SuSiE Parquet file to its output path", call. = FALSE)
+  }
+  complete <- TRUE
+  message("Aggregated ", total_rows, " full-SuSiE rows from ", nrow(genes), " genes")
+  invisible(output_file)
 }

@@ -483,6 +483,7 @@ fitSusieModel <- function(X, y, legacy = FALSE,
     fitted <- postprocess(fitted, x_stats)
   }
   fitted$covariate_explained_variants <- covariate_explained_variants
+  fitted$phenotype_residual_SD <- stats::sd(drop(y))
   fitted
 }
 
@@ -739,6 +740,11 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
 # and per-effect log-Bayes factors.
 extractResults <- function(susie_object){
   credible_sets = susie_object$sets$cs
+  phenotype_residual_sd <- if (is.null(susie_object$phenotype_residual_SD)) {
+    NA_real_
+  } else {
+    as.double(susie_object$phenotype_residual_SD)
+  }
   flagged_variant_ids <- if (is.null(susie_object$covariate_explained_variants)) {
     character()
   } else {
@@ -813,7 +819,8 @@ extractResults <- function(susie_object){
                                z = susie_object$z[,1],
                                posterior_mean = mean_vec, 
                                posterior_sd = sd_vec,
-                               X_column_scale_factors = susie_object$X_column_scale_factors) %>%
+                               X_column_scale_factors = susie_object$X_column_scale_factors,
+                               phenotype_residual_SD = phenotype_residual_sd) %>%
                  dplyr::bind_cols(purrr::map(list(alpha_mat, mu_mat, mu2_mat), dplyr::as_tibble))
   lbf_df = dplyr::tibble(variant_id = rownames(lbf_variable_mat)) %>%
     dplyr::bind_cols(dplyr::as_tibble(lbf_variable_mat))

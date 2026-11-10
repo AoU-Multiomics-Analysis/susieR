@@ -157,8 +157,15 @@ run_pgen_smoke <- function() {
   fits <- readRDS(rds_files[[1L]])
   stopifnot(identical(names(fits), phenotype_id))
   fitted <- fits[[1L]]
+  # Derive the phenotype scale independently from the fitted model's error SD.
+  normalized_phenotype <- qnorm((rank(phenotype) - 0.5) / length(phenotype))
+  phenotype_residual <- stats::lm.fit(cbind(t(cov), intercept = 1),
+                                     normalized_phenotype)$residuals
+  expected_phenotype_sd <- stats::sd(phenotype_residual)
   stopifnot("The smoke test must contain a real fitted outcome" =
     inherits(fitted, "susie"), isTRUE(fitted$converged),
+    isTRUE(all.equal(fitted$phenotype_residual_SD, expected_phenotype_sd,
+                     tolerance = 1e-12)),
     identical(fitted$variant_id, variant_ids[keep]),
     length(fitted$pip) == sum(keep), all(is.finite(fitted$pip)),
     all(fitted$pip >= 0 & fitted$pip <= 1))
@@ -260,7 +267,13 @@ run_pgen_smoke <- function() {
     any(grepl("fine_mapping", gene_log, fixed = TRUE)))
   summary <- arrow::read_parquet(file.path(aggregate_dir, "susie.parquet"))
   credible_sets <- arrow::read_parquet(file.path(aggregate_dir, "credible_sets.parquet"))
+  full_files <- gene_files[grepl("[.]full_susie[.]parquet$", gene_files)]
+  stopifnot(length(full_files) == 1L)
+  full <- arrow::read_parquet(full_files[[1L]])
   stopifnot(nrow(summary) > 0L, nrow(credible_sets) > 0L,
+            nrow(full) > 0L,
+            all(summary$phenotype_residual_SD == fitted$phenotype_residual_SD),
+            all(full$phenotype_residual_SD == fitted$phenotype_residual_SD),
             all(summary$outcome_id == phenotype_id),
             all(credible_sets$outcome_id == phenotype_id))
   manifests <- list.files(file.path(aggregate_dir, "gene_manifests"), full.names = TRUE)

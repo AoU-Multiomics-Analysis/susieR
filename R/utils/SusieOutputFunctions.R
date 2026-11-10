@@ -1,5 +1,5 @@
 # Shared output formatting for the legacy and PGEN entry points.
-# Keep the native fitted objects and the existing output schemas unchanged.
+# Keep the native fitted values and append the recorded phenotype scale.
 # Optional extractions must come from these same fitted outcomes.
 formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   outcome_ids <- names(results)
@@ -42,9 +42,11 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
     # Use fitted-outcome order even when supplied extractions have another order.
     extracted_results <- extracted_results[outcome_ids]
   }
-  empty_variant_df <- InitEmptyVariantDf()
+  empty_variant_df <- InitEmptyVariantDf(include_phenotype_residual_sd = TRUE)
   empty_lbf_df <- InitEmptyLbfDf()
-  empty_in_cs_variant_df <- InitEmptyInCSVariantDf(include_covariate_diagnostics = TRUE)
+  empty_in_cs_variant_df <- InitEmptyInCSVariantDf(
+    include_covariate_diagnostics = TRUE, include_phenotype_residual_sd = TRUE
+  )
   empty_cs_df <- InitEmptyCS()
   covariate_explained_variants <- dplyr::bind_rows(
     dplyr::tibble(molecular_trait_id = character(), variant = character(),
@@ -98,7 +100,8 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
       dplyr::transmute(molecular_trait_id = phenotype_id, variant = variant_id,
                        chromosome = chr, position = pos, ref, alt, cs_id, cs_index,
                        region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean,
-                       posterior_sd, cs_log10bf, has_covariate_explained_variant)
+                       posterior_sd, cs_log10bf, has_covariate_explained_variant,
+                       phenotype_residual_SD)
   } else {
     in_cs_variant_df <- empty_in_cs_variant_df
     cs_df <- empty_cs_df
@@ -110,7 +113,8 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
       position = pos, ref, alt, cs_id, cs_index, low_purity, region, pip, z,
       posterior_mean, posterior_sd, X_column_scale_factors)
     variant_df <- dplyr::bind_cols(variant_df_transmute,
-                                   dplyr::select(variant_df, alpha1:mu2_10))
+                                   dplyr::select(variant_df, alpha1:mu2_10,
+                                                 phenotype_residual_SD))
   } else {
     variant_df <- empty_variant_df
   }

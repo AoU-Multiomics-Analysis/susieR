@@ -29,3 +29,6 @@ PY
 echo 'CHECK PGEN command localization with Cromwell 85'
 "$java_bin" -Dscala.usejavacp=true -cp "$WOMTOOL_JAR" \
   scala.tools.nsc.MainGenericRunner "$repo_dir/tests/test_pgen_wom_render.scala" "$repo_dir"
+echo 'CHECK full-result aggregate command localization with Cromwell 85'
+"$java_bin" -Dscala.usejavacp=true -cp "$WOMTOOL_JAR" \
+  scala.tools.nsc.MainGenericRunner "$repo_dir/tests/test_full_aggregate_wom_render.scala" "$repo_dir"

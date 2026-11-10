@@ -1,5 +1,5 @@
 # Shared output formatting for the legacy and PGEN entry points.
-# Keep the native fitted values and append the recorded phenotype scale.
+# Keep the native fitted values and append the recorded feature metadata.
 # Optional extractions must come from these same fitted outcomes.
 formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   outcome_ids <- names(results)
@@ -126,6 +126,21 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   } else {
     in_cs_variant_df <- dplyr::mutate(in_cs_variant_df, position = as.integer(position))
   }
+
+  # Use the native fit for each feature, including when extraction was cached.
+  # Older fits without this field have unknown convergence status.
+  feature_convergence <- purrr::map_lgl(results, function(fitted) {
+    if (is.null(fitted$converged)) NA else fitted$converged
+  })
+  append_feature_convergence <- function(table) {
+    dplyr::mutate(table, feature_converged = unname(
+      feature_convergence[match(molecular_trait_id, outcome_ids)]
+    ))
+  }
+  cs_df <- append_feature_convergence(cs_df)
+  in_cs_variant_df <- append_feature_convergence(in_cs_variant_df)
+  variant_df <- append_feature_convergence(variant_df)
+
   list(in_cs_variant_df = in_cs_variant_df, lbf_df = lbf_df,
        variant_df = variant_df, cs_df = cs_df,
        covariate_explained_variants = covariate_explained_variants)

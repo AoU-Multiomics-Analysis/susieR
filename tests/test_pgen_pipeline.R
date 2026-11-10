@@ -273,7 +273,9 @@ run_pipeline_checks <- function() {
   stopifnot(identical(first$fits, single$fits), identical(first$fits, hundred$fits))
   first_minus <- run_layout(2L, "-1")
   single_minus <- run_layout(1L, "-1")
-  stopifnot(identical(first_minus$fits, single_minus$fits))
+  stopifnot(identical(first_minus$fits, single_minus$fits),
+    "Native PGEN fits must not depend on the CLI missing-code flag" =
+      identical(first$fits, first_minus$fits))
   compare_summary <- function(left, right) {
     columns <- setdiff(names(left), "batch_id")
     left <- dplyr::arrange(left[columns], gene_id, outcome_id, dplyr::across(dplyr::everything()))
@@ -295,10 +297,11 @@ run_pipeline_checks <- function() {
       character(1))
     stopifnot(identical(inferred_hashes, explicit_hashes))
   }
-  # Reference the current real Tabix loader with the same values and fit seeds.
+  # Native PGEN-only reads use NA missing semantics for either CLI flag.
+  # A -1 Tabix reference would keep all-missing and zero-ALT rows during the
+  # pre-imputation filter. Use NA to compare the same retained variants and seeds.
   for (missing_code in c("NA", "-1")) {
     doses <- hardcalls
-    if (missing_code == "-1") doses[is.na(doses)] <- -1
     dosage_tsv <- file.path(directory, paste0("reference_", missing_code, ".tsv"))
     readr::write_tsv(dplyr::bind_cols(
       tibble::tibble(CHROM = "1", POS = positions, REF = refs, ALT = alts),

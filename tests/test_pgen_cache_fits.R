@@ -73,9 +73,17 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     region = paste0("chr1:", pmax(1L, feature_positions - distance), "-",
                     feature_positions + distance))
 
+  # Keep the exact inputs at the real fitter boundary. Do not change the fit.
+  original_fit_susie_model <- fitSusieModel
+  fit_inputs <- NULL
+  fitSusieModel <- function(X, y, ...) {
+    fit_inputs <<- list(X = X, y = y)
+    original_fit_susie_model(X, y, ...)
+  }
   fit <- function(id, cov = covariates, cache = NULL, explicit = TRUE,
                    timing_callback = NULL) {
     set.seed(259L)
+    fit_inputs <<- NULL
     arguments <- list(phenotype_id = id, se = se, reader = reader, covariates = cov,
                       cis_distance = distance, missing_code = "NA")
     if (explicit) {
@@ -84,7 +92,7 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     }
     if (!is.null(timing_callback)) arguments$timing_callback <- timing_callback
     result <- do.call(finemapPgenPhenotype, arguments)
-    list(result = result, rng = .Random.seed)
+    list(result = result, rng = .Random.seed, inputs = fit_inputs, phenotype_id = id)
   }
   make_cache <- function(mode, cov = covariates) {
     plan <- planPgenGenotypeCache(reader, worklist, selected_samples, mode = mode,
@@ -92,20 +100,112 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     createPgenGenotypeCache(reader, plan, selected_samples,
       cbind(cov[selected_samples, , drop = FALSE], 1))
   }
-  compare_fit <- function(actual, reference, exact = FALSE) {
-    if (exact) {
-      expect_identical_value(actual$result, reference$result, "guarded complete fit")
-    } else {
-      comparison <- all.equal(actual$result, reference$result, tolerance = 1e-10,
-                              check.attributes = TRUE)
-      if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+  report_fit_differences <- function(actual, reference) {
+    max_absolute_error <- function(actual, reference) {
+      if (!is.numeric(actual) || !is.numeric(reference) ||
+          length(actual) != length(reference) ||
+          !identical(dim(actual), dim(reference))) return(NA_real_)
+      if (!length(actual)) return(0)
+      max(abs(actual - reference))
     }
-    expect_identical_value(actual$rng, reference$rng, "fit RNG state")
-    expect_identical_value(actual$result$variant_id, reference$result$variant_id,
-                           "fit variant order")
-    expect_identical_value(actual$result$sets$cs, reference$result$sets$cs,
-                           "credible-set memberships")
-    stopifnot(max(abs(actual$result$pip - reference$result$pip)) < 1e-10)
+    dimensions <- function(value) {
+      if (is.null(dim(value))) "vector" else paste(dim(value), collapse = "x")
+    }
+    report_field <- function(field, actual, reference) {
+      cat("CACHE FIT DIAGNOSTIC field=", field,
+          " actual_length=", length(actual),
+          " reference_length=", length(reference),
+          " actual_dimensions=", dimensions(actual),
+          " reference_dimensions=", dimensions(reference),
+          " max_abs_error=", sprintf("%.17g", max_absolute_error(actual, reference)),
+          " actual_max_abs=", sprintf("%.17g", max(abs(actual))),
+          " reference_max_abs=", sprintf("%.17g", max(abs(reference))),
+          "\n", sep = "")
+    }
+    cat("CACHE FIT DIAGNOSTIC phenotype=", actual$phenotype_id,
+        " actual_converged=", actual$result$converged,
+        " reference_converged=", reference$result$converged,
+        " credible_sets_identical=",
+        identical(actual$result$sets$cs, reference$result$sets$cs), "\n", sep = "")
+    for (field in c("X", "y")) {
+      report_field(paste0("input_", field), actual$inputs[[field]], reference$inputs[[field]])
+    }
+    for (field in c("alpha", "mu", "mu2", "V", "lbf", "lbf_variable", "pip")) {
+      report_field(field, actual$result[[field]], reference$result[[field]])
+    }
+  }
+  # Linux OpenBLAS produced a 2.22e-16 input difference with identical y,
+  # convergence and credible sets. The native Brent prior optimizer uses
+  # R's default sqrt(machine epsilon) tolerance, about 1.49e-8. It amplified
+  # the input error to a 6.84e-10 PIP and 6.79e-8 log-BF difference. Bound inputs and
+  # native scientific values separately from internal optimizer roundoff.
+  # Guarded fits, identities, RNG state and convergence must remain exact.
+  input_absolute_tolerance <- 1e-13
+  scientific_absolute_tolerance <- 1e-8
+  fit_tolerance <- 1e-7
+  compare_absolute <- function(actual, reference, tolerance, label) {
+    same_structure <- is.numeric(actual) && is.numeric(reference) &&
+      length(actual) == length(reference) &&
+      identical(attributes(actual), attributes(reference)) &&
+      all(is.finite(actual)) && all(is.finite(reference))
+    error <- if (same_structure) max(c(0, abs(actual - reference))) else Inf
+    if (!is.finite(error) || error > tolerance) {
+      stop(label, " max absolute error exceeds ", sprintf("%.1e", tolerance),
+           ": ", sprintf("%.17g", error), call. = FALSE)
+    }
+    invisible(TRUE)
+  }
+  compare_model_values <- function(actual, reference, exact = FALSE) {
+    expect_identical_value(actual$variant_id, reference$variant_id, "fit variant order")
+    expect_identical_value(actual$sets$cs, reference$sets$cs, "credible-set memberships")
+    expect_identical_value(actual$sets$cs_index, reference$sets$cs_index, "credible-set effects")
+    expect_identical_value(actual$converged, reference$converged, "fit convergence status")
+    if (exact) {
+      expect_identical_value(actual, reference, "guarded complete fit")
+      return(invisible(TRUE))
+    }
+    compare_absolute(actual$pip, reference$pip,
+                     scientific_absolute_tolerance, "native PIP")
+    compare_absolute(susieR::susie_get_posterior_mean(actual),
+                     susieR::susie_get_posterior_mean(reference),
+                     scientific_absolute_tolerance, "native posterior mean")
+    compare_absolute(susieR::susie_get_posterior_sd(actual),
+                     susieR::susie_get_posterior_sd(reference),
+                     scientific_absolute_tolerance, "native posterior SD")
+    comparison <- all.equal(actual, reference, tolerance = fit_tolerance,
+                            check.attributes = TRUE)
+    if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+    invisible(TRUE)
+  }
+  compare_fit <- function(actual, reference, exact = FALSE) {
+    tryCatch({
+      for (field in c("X", "y")) {
+        compare_absolute(actual$inputs[[field]], reference$inputs[[field]],
+                         input_absolute_tolerance, paste("fitter input", field))
+      }
+      expect_identical_value(actual$rng, reference$rng, "fit RNG state")
+      compare_model_values(actual$result, reference$result, exact = exact)
+    }, error = function(error) {
+      report_fit_differences(actual, reference)
+      stop(conditionMessage(error), call. = FALSE)
+    })
+  }
+  compare_output_values <- function(actual, reference) {
+    actual_tables <- if (is.data.frame(actual)) list(actual) else actual
+    reference_tables <- if (is.data.frame(reference)) list(reference) else reference
+    expect_identical_value(names(actual), names(reference), "output names")
+    for (i in seq_along(reference_tables)) {
+      scientific_columns <- intersect(c("pip", "posterior_mean", "posterior_sd"),
+                                      names(reference_tables[[i]]))
+      for (field in scientific_columns) {
+        compare_absolute(actual_tables[[i]][[field]], reference_tables[[i]][[field]],
+                         scientific_absolute_tolerance, paste("output", field))
+      }
+    }
+    comparison <- all.equal(actual, reference, tolerance = fit_tolerance,
+                            check.attributes = TRUE)
+    if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+    invisible(TRUE)
   }
   contains_environment <- function(value) {
     is.environment(value) ||
@@ -129,6 +229,33 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   })
 
   references <- stats::setNames(lapply(phenotype_ids, fit), phenotype_ids)
+  run_named_test("cache fit comparison rejects changed fitter inputs", {
+    reference <- references[["overlap"]]
+    for (field in c("X", "y")) {
+      changed <- reference
+      changed$inputs[[field]][[1L]] <- changed$inputs[[field]][[1L]] + 1e-6
+      invisible(capture.output(expect_error_message(
+        compare_fit(changed, reference), paste("fitter input", field)
+      )))
+    }
+  })
+  run_named_test("cache fit comparison rejects a material native PIP change", {
+    reference <- references[["overlap"]]
+    changed <- reference
+    changed$result$pip[[1L]] <- changed$result$pip[[1L]] + 1e-6
+    invisible(capture.output(expect_error_message(
+      compare_fit(changed, reference), "native PIP"
+    )))
+  })
+  run_named_test("cache fit comparison accepts machine-precision input changes", {
+    reference <- references[["overlap"]]
+    rounded <- reference
+    for (field in c("X", "y")) {
+      rounded$inputs[[field]][[1L]] <-
+        rounded$inputs[[field]][[1L]] + .Machine$double.eps
+    }
+    compare_fit(rounded, reference)
+  })
   run_named_test("whole and rolling caches preserve overlapping, disjoint and returning fits", {
     regions <- tibble::tibble(phenotype_id = phenotype_ids, region = worklist$region)
     reference_fits <- lapply(references, `[[`, "result")
@@ -141,9 +268,7 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
         for (id in phenotype_ids) compare_fit(actual[[id]], references[[id]])
         actual_fits <- lapply(actual, `[[`, "result")
         tables <- formatSusieOutputs(actual_fits, regions)
-        comparison <- all.equal(tables, reference_tables, tolerance = 1e-10,
-                                check.attributes = TRUE)
-        if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+        compare_output_values(tables, reference_tables)
         saved <- file.path(directory, paste0(mode, ".rds"))
         saveRDS(actual_fits, saved)
         stopifnot(!contains_environment(readRDS(saved)))
@@ -234,15 +359,13 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
                     rowSums(as.matrix(index[setdiff(timing_columns, "outcome_total_seconds")]))))
       }
       for (name in c("summary", "credible_sets", "diagnostics")) {
-        comparison <- all.equal(actual[[name]], reference[[name]], tolerance = 1e-10,
-                                check.attributes = TRUE)
-        if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+        compare_output_values(actual[[name]], reference[[name]])
       }
       saved <- readRDS(actual$files[["rds"]])
       stopifnot(!contains_environment(saved))
       expected <- readRDS(reference$files[["rds"]])
-      comparison <- all.equal(saved, expected, tolerance = 1e-10, check.attributes = TRUE)
-      if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+      expect_identical_value(names(saved), names(expected), "saved outcome order")
+      for (id in names(expected)) compare_model_values(saved[[id]], expected[[id]])
     }, finally = clearPgenGenotypeCache(cache))
   })
   message("All prepared PGEN cache fit tests passed.")

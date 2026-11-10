@@ -200,7 +200,13 @@ run_pgen_smoke <- function() {
     threading$data_table_threads <= threading$selected_threads)
   stopifnot(!file.exists(file.path(batch_dir, "batch.genotypes.log")),
     any(grepl("CPU threads: requested=2", batch_output, fixed = TRUE)),
-    any(grepl("USE prepared batch shard; no PLINK execution", batch_output, fixed = TRUE)))
+    any(grepl("USE prepared batch shard; no PLINK execution", batch_output, fixed = TRUE)),
+    sum(grepl("^\\[FIT 1/1\\] START", batch_output)) == 1L,
+    sum(grepl("^\\[FIT 1/1\\] CONVERGED", batch_output)) == 1L,
+    any(grepl("[BATCH] COMPLETE", batch_output, fixed = TRUE)),
+    any(grepl("converged=1; nonconverged=0", batch_output, fixed = TRUE)),
+    !any(grepl("^[[:space:]]*iter[[:space:]]+ELBO", batch_output)),
+    !any(grepl("Outcome timing:", batch_output, fixed = TRUE)))
   batch_timing <- unlist(provenance$batch_timing, use.names = FALSE)
   stopifnot(length(batch_timing) == 4L, all(is.finite(batch_timing)), all(batch_timing >= 0),
     provenance$batch_timing$plink_extraction_seconds == 0,
@@ -264,7 +270,8 @@ run_pgen_smoke <- function() {
   gene_log <- readLines(gene_files[grepl("[.]log$", gene_files)])
   stopifnot(any(grepl("Gene timing:", gene_log, fixed = TRUE)),
     any(grepl("data_loading", gene_log, fixed = TRUE)),
-    any(grepl("fine_mapping", gene_log, fixed = TRUE)))
+    any(grepl("fine_mapping", gene_log, fixed = TRUE)),
+    any(grepl("^[[:space:]]*iter[[:space:]]+ELBO", gene_log)))
   summary <- arrow::read_parquet(file.path(aggregate_dir, "susie.parquet"))
   credible_sets <- arrow::read_parquet(file.path(aggregate_dir, "credible_sets.parquet"))
   full_files <- gene_files[grepl("[.]full_susie[.]parquet$", gene_files)]

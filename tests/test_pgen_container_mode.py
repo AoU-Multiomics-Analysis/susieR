@@ -43,6 +43,8 @@ if os.environ.get("FAIL_CACHE") == "true" and sys.argv[1:2] == ["tests/run_pgen_
     raise SystemExit(47)
 if os.environ.get("FAIL_FULL_AGGREGATION") == "true" and sys.argv[1:2] == ["tests/test_pgen_full_aggregation.R"]:
     raise SystemExit(48)
+if os.environ.get("FAIL_LOGGING") == "true" and sys.argv[1:2] == ["tests/test_pgen_logging.R"]:
+    raise SystemExit(49)
 """
         for name in names:
             executable = directory / name
@@ -52,7 +54,7 @@ if os.environ.get("FAIL_FULL_AGGREGATION") == "true" and sys.argv[1:2] == ["test
 
     def run_runner(self, arguments=(), fail_smoke=False, fail_mac=False, fail_qc=False,
                    fail_preparation=False, fail_imputation=False, fail_cache=False,
-                   fail_full_aggregation=False):
+                   fail_full_aggregation=False, fail_logging=False):
         with tempfile.TemporaryDirectory(prefix="pgen-runner-") as directory:
             directory = Path(directory)
             log = self.recording_commands(directory, ("Rscript", "plink2", "bgzip", "tabix"))
@@ -67,6 +69,7 @@ if os.environ.get("FAIL_FULL_AGGREGATION") == "true" and sys.argv[1:2] == ["test
                 FAIL_IMPUTATION="true" if fail_imputation else "false",
                 FAIL_CACHE="true" if fail_cache else "false",
                 FAIL_FULL_AGGREGATION="true" if fail_full_aggregation else "false",
+                FAIL_LOGGING="true" if fail_logging else "false",
                 SUSIER_FUNCTIONS_PATH="/installed functions",
                 SUSIER_SCRIPTS_PATH="/installed scripts",
             )
@@ -86,7 +89,8 @@ if os.environ.get("FAIL_FULL_AGGREGATION") == "true" and sys.argv[1:2] == ["test
                                   "tests/run_pgen_reader_tests.R",
                                   "tests/test_pgen_full_aggregation.R",
                                   "tests/run_pgen_cache_tests.R",
-                                  "tests/run_susie_output_tests.R", "tests/test_pgen_smoke.R"])
+                                  "tests/run_susie_output_tests.R", "tests/test_pgen_logging.R",
+                                  "tests/test_pgen_smoke.R"])
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
         self.assertTrue(any(call[:2] == ["plink2", "--version"] for call in calls))
 
@@ -103,6 +107,7 @@ if os.environ.get("FAIL_FULL_AGGREGATION") == "true" and sys.argv[1:2] == ["test
         self.assertEqual(scripts.count("tests/run_pgen_cache_tests.R"), 1)
         self.assertEqual(scripts.count("tests/test_pgen_full_aggregation.R"), 1)
         self.assertEqual(scripts.count("tests/run_susie_output_tests.R"), 1)
+        self.assertEqual(scripts.count("tests/test_pgen_logging.R"), 1)
         self.assertLess(scripts.index("tests/test_pgen_mac.R"), scripts.index("tests/test_pgen_smoke.R"))
         self.assertLess(scripts.index("tests/test_pgen_preparation.R"), scripts.index("tests/test_pgen_smoke.R"))
         for suite in FULL_SUITES:
@@ -113,6 +118,16 @@ if os.environ.get("FAIL_FULL_AGGREGATION") == "true" and sys.argv[1:2] == ["test
         self.assertEqual(result.returncode, 42, result.stderr)
         scripts = [call[1] for call in calls if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
         self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
+
+    def test_logging_failure_stops_smoke_and_full_checks(self):
+        for arguments in ([], ["--full"]):
+            with self.subTest(arguments=arguments):
+                result, calls = self.run_runner(arguments, fail_logging=True)
+                self.assertEqual(result.returncode, 49, result.stderr)
+                scripts = [call[1] for call in calls
+                           if call[0] == "Rscript" and len(call) > 1 and call[1] != "-"]
+                self.assertNotIn("tests/test_pgen_smoke.R", scripts)
+                self.assertFalse(any(suite in scripts for suite in FULL_SUITES))
 
     def test_full_aggregation_failure_stops_smoke_in_both_modes(self):
         for arguments in ([], ["--full"]):

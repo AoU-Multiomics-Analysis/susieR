@@ -246,6 +246,29 @@ geneOutcomeSeed <- function(base_seed, gene_id, outcome_id) {
   force(code)
 }
 
+# Use one connection so native stdout and R conditions keep their order.
+# Warnings remain original conditions; the caller still controls their handling.
+.pgenGeneCaptureLog <- function(log_file, code, warning_callback = NULL) {
+  output_depth <- sink.number(type = "output")
+  connection <- file(log_file, open = "at")
+  on.exit({
+    while (sink.number(type = "output") > output_depth) sink(type = "output")
+    flush(connection)
+    close(connection)
+  }, add = TRUE)
+  sink(connection, type = "output")
+  withCallingHandlers(force(code),
+    message = function(condition) {
+      text <- conditionMessage(condition)
+      cat(text, if (endsWith(text, "\n")) "" else "\n", file = connection, sep = "")
+      tryInvokeRestart("muffleMessage")
+    },
+    warning = function(condition) {
+      cat("WARNING: ", conditionMessage(condition), "\n", file = connection, sep = "")
+      if (!is.null(warning_callback)) warning_callback(condition)
+    })
+}
+
 .pgenGeneEmptyIndex <- function() {
   tibble::tibble(gene_id = character(), gene_key = character(), outcome_id = character(),
                 phenotype_id = character(), seed = integer(), status = character(),
@@ -301,9 +324,9 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
   # A failed retry must not leave a successful manifest from an earlier attempt.
   if (file.exists(extra_files[["provenance"]])) unlink(extra_files[["provenance"]])
   writeLines(character(), extra_files[["log"]])
-  log_line <- function(text) {
+  log_line <- function(text, progress = FALSE) {
     cat(text, "\n", file = extra_files[["log"]], append = TRUE, sep = "")
-    message(text)
+    if (progress) message(text)
   }
   index <- .pgenGeneEmptyIndex()
   gene_complete <- FALSE
@@ -333,8 +356,10 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
                    paste0(prefix, ".covariate_explained_variants.tsv"), quote = "needed")
   results <- list()
   extracted_results <- list()
-  log_line(paste0("Gene start: ", gene_id, "; outcomes: ", length(outcomes)))
-  for (id in outcome_ids) {
+  log_line(paste0("[GENE] ", gene_id, "; fits=", length(outcomes),
+                  "; log=", extra_files[["log"]]), progress = TRUE)
+  for (outcome_number in seq_along(outcome_ids)) {
+    id <- outcome_ids[[outcome_number]]
     outcome <- outcomes[[id]]
     seed <- seeds[[id]]
     outcome_started <- proc.time()[["elapsed"]]
@@ -357,9 +382,36 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     }
     timing_row <- function() tibble::as_tibble_row(c(as.list(stage_seconds),
       list(outcome_total_seconds = proc.time()[["elapsed"]] - outcome_started)))
+    warning_count <- 0L
+    fit_progress <- function(status, count = NULL, fitted = NULL, reason = NULL) {
+      details <- paste0("[FIT ", outcome_number, "/", length(outcomes), "] ", status, " ", id)
+      if (status == "START") {
+        if (outcome$phenotype_id != id) {
+          details <- paste0(details, "; phenotype=", outcome$phenotype_id)
+        }
+      } else {
+        if (!is.null(count)) details <- paste0(details, "; cs=", count)
+        if (!is.null(fitted$n) && length(fitted$n) == 1L) {
+          details <- paste0(details, "; n=", fitted$n)
+        }
+        if (!is.null(fitted$variant_id)) {
+          details <- paste0(details, "; p=", length(fitted$variant_id))
+        }
+        if (!is.null(fitted$niter) && length(fitted$niter) == 1L) {
+          details <- paste0(details, "; iter=", fitted$niter)
+        }
+        seconds <- c(stage_seconds, proc.time()[["elapsed"]] - outcome_started)
+        details <- paste0(details, "; ",
+          paste(c("load", "prep", "fit", "total"), format(seconds, digits = 3L, trim = TRUE),
+                sep = "=", collapse = " s; "), " s; warnings=", warning_count)
+        if (!is.null(reason)) details <- paste0(details, "; reason: ", reason)
+      }
+      log_line(details, progress = TRUE)
+    }
+    fit_progress("START")
     log_line(paste0("Outcome start: ", id, "; phenotype: ", outcome$phenotype_id, "; seed: ", seed))
     fitted <- tryCatch(
-      withCallingHandlers(
+      .pgenGeneCaptureLog(extra_files[["log"]],
         .pgenGeneWithSeed(seed, finemapPgenPhenotype(
           outcome$phenotype_id, outcome$se, reader, outcome$covariates,
           outcome$cis_distance, missing_code, ancestry_data = outcome$ancestry_data,
@@ -367,9 +419,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
           variant_list = outcome$variant_list, additional_genotypes = outcome$additional_genotypes,
           variant_report_file = extra_files[["variant_positions"]], timing_callback = timing_callback,
           genotype_cache = genotype_cache, cache_outcome_id = id)),
-        message = function(condition) cat(conditionMessage(condition), file = extra_files[["log"]], append = TRUE),
-        warning = function(condition) cat("WARNING: ", conditionMessage(condition), "\n",
-          file = extra_files[["log"]], append = TRUE, sep = "")),
+        warning_callback = function(condition) warning_count <<- warning_count + 1L),
       error = function(condition) condition)
     if (inherits(fitted, "error")) {
       reason <- conditionMessage(fitted)
@@ -378,7 +428,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
         phenotype_id = outcome$phenotype_id, seed = seed, status = "FAILED",
         converged = NA, credible_set_count = NA_integer_, reason = reason), timing_row()))
       readr::write_tsv(index, extra_files[["index"]], quote = "needed")
-      log_line(paste0("FAILED outcome ", id, ": ", reason))
+      fit_progress("FAILED", reason = reason)
       stop("Gene ", gene_id, ", outcome ", id, " failed: ", reason, call. = FALSE)
     }
     results[[id]] <- fitted
@@ -393,7 +443,7 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
       converged = converged, credible_set_count = count,
       reason = if (converged) "" else "SuSiE did not converge"), timing_row()))
     readr::write_tsv(index, extra_files[["index"]], quote = "needed")
-    log_line(paste0("Outcome complete: ", id, "; ", status, "; credible sets: ", count))
+    fit_progress(status, count = count, fitted = fitted)
   }
   regions <- tibble::tibble(
     phenotype_id = outcome_ids,

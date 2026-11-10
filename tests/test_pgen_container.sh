@@ -24,6 +24,8 @@ bgzip --version
 tabix --version
 echo 'TEST task CPU detection and thread settings'
 Rscript tests/test_pgen_runtime.R .
+echo 'TEST metadata memory estimates without genotype decoding'
+Rscript tests/test_pgen_memory.R .
 echo 'TEST optional MAC with real PLINK extraction'
 Rscript tests/test_pgen_mac.R .
 echo 'TEST shared PGEN MAC and AN call-rate QC'

@@ -55,7 +55,7 @@ Rolling mode releases variants outside the next window, retains prepared
 overlap, and reads and prepares only new variants. No-cache mode uses the
 existing per-feature path.
 
-The automatic cache limit is 20% of `BatchMemoryGB`. Set
+The automatic cache limit is 20% of the resolved task memory. Set
 `GenotypeCacheMemoryGB` to a positive decimal-GB limit to replace it. The estimate
 includes numeric cache columns (`8 * samples * variants` bytes) and bounded
 preparation buffers. The fit's working memory is separate; these rules are not a
@@ -103,7 +103,7 @@ imputation, so the legacy `-1` sentinel cannot cancel observed ALT counts.
 | `DockerImage` | `ghcr.io/aou-multiomics-analysis/susier/pgen:main` |
 | `Cpu` | 1 |
 | `Threads` | 0 (detect the task CPU allowance) |
-| `BatchMemoryGB` / `BatchDiskGB` | 16 / 100 |
+| `BatchMemoryGB` / `BatchDiskGB` | 0 (automatic) / 100 |
 | `PlinkMemoryMB` | 1024 |
 | `PlanMemoryGB` / `PlanDiskGB` | 8 / 50 |
 | `QcMemoryGB` / `QcDiskGB` | 8 / 100 |
@@ -112,11 +112,53 @@ imputation, so the legacy `-1` sentinel cannot cancel observed ALT counts.
 
 Select an image digest through `DockerImage` when a fixed image is required. `QcMemoryGB` and `QcDiskGB` now apply to preparation. Its disk must hold the original triplet, the shared QC output when enabled, and all batch subsets for that input. `BatchDiskGB` covers one localized subset and its gene outputs. Keep `PlinkMemoryMB` below the preparation memory limit. Preparation uses one PLINK thread. The number of subset triplets equals the existing planned batch count. Larger `BatchSize` values reduce file count and increase each batch's input size. Preparation logs its batch count, variant counts and total subset bytes.
 
+Set `BatchMemoryGB` to zero for a separate memory request for each batch. A
+positive value keeps a fixed request. Preparation uses the full PSAM sample
+count and counts physical PVAR rows in the exact feature windows. Duplicate
+variant IDs remain separate. No genotype decoding or extra localization is
+needed for this calculation. Sequential fits use the largest window, not the
+sum of all windows.
+When `AdditionalGenotypes` is supplied, set a positive `BatchMemoryGB` override.
+Their extra variants and merge buffers cannot be estimated from PVAR and PSAM.
+Automatic mode rejects that combination before shared QC or extraction.
+
+The estimate uses decimal GB. One double matrix needs `D = 8 * N * P` bytes,
+where `N` is the full sample count and `P` is the largest feature window. The
+fitting allowance starts at `max(8 GB, 5 * D)` and includes an allowance for
+all fitted outcomes retained within the largest gene group. Add two sample-by-sample matrices
+(`16 * N^2` bytes) for the existing numerical safeguard, 2 GB for other data,
+and cache storage. For large batches, increase the 2 GB allowance from the
+total number of requested variant rows to cover retained summary tables.
+Add 25% extra capacity, then round up to an integer GB.
+When the default cache budget can be used, sizing reserves 20% of the final
+request and solves that allowance together with the 25% buffer. Auto mode
+does not reserve a whole-batch cache for windows with insufficient reuse.
+Explicit cache limits are included, and forced modes must fit their budget.
+The full PSAM cohort is an upper bound when analysis uses fewer samples.
+
+`BatchMemoryGBs` lists the actual requests. `BatchMemoryReports` contains a TSV
+with the counts, fitting allowance, cache allowance, safeguard allowance,
+buffer and request for each batch. Each preparation report also contains its
+memory calculation. A fixed override below the estimate is logged. These are
+planning estimates, not measured limits or a guarantee against memory kills.
+The complete workflow has not been tested on Terra for this change.
+
 `Cpu` requests resources from Terra. `Threads = 0` detects the CPU capacity available to the batch process, including CPU affinity and container quotas. A positive `Threads` value sets a limit, capped at the detected capacity. For the local batch CLI, use `--threads`. The worker applies this count to supported BLAS/OpenMP operations, data.table, and Arrow. Gene fits remain sequential. Standalone batch extraction also uses this count for PLINK; prepared workers do not run PLINK. The log and provenance report the detected limits, selected count, BLAS library, and effective thread counts. A serial BLAS library can remain at one thread. The planner, preparation, and aggregate tasks keep their existing thread settings.
 
 CPU detection does not request a larger VM or bypass a task CPU limit. Set `Cpu` higher when the task needs more allocated CPU capacity. Multithreaded numerical libraries can change the last floating-point bits. Set `Threads = 1` for the previous thread setting.
 
 Detailed memory reports are off by default. Set `SusieR2.MemoryDebug` to `true` to enable object-size reports and two extra garbage collections per fit. For a local PGEN batch, add `--memory-debug`. The legacy `susie.R` command accepts `--memory_debug true`. Direct R callers can use `options(susier.memory_debug = TRUE)`. The default keeps progress and error logs, variant diagnostics, and the three garbage collections after large matrices are removed. This setting does not change model calculations. A batch restores the caller's R option when it returns or fails.
+
+Process memory readings are always logged at outcome stage boundaries and
+before and after cleanup between genes. On Linux they include RSS, peak RSS,
+and available cgroup memory and OOM counters. SuSiE's iteration memory display
+is R-managed memory after garbage collection; it does not report peak RSS.
+Between genes, the worker collects unused R objects after saving full fits
+and retaining only compact output tables. It preserves the active genotype
+cache. Whole mode keeps its cache until batch completion. Rolling mode removes
+columns outside the next window and collects unused blocks before reading
+new columns. No-cache mode retains no genotype cache. Garbage collection can
+make memory reusable without returning all of it to the operating system.
 
 The planner sorts genes by chromosome and position. It derives each feature position from `floor((BED start + BED end) / 2)`. Cis windows use inclusive coordinates, with the query start clamped to 1. PLINK uses `--extract range` for these 1-based regions. Disjoint windows retain their gaps. Extraction retains the complete genotype sample cohort. Ancestry MAF filtering therefore runs before the phenotype sample subset. The fit keeps the existing phenotype missing-value behavior.
 

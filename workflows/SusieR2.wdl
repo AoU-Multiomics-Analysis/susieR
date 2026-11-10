@@ -35,7 +35,8 @@ workflow SusieR2 {
     String DockerImage = "ghcr.io/aou-multiomics-analysis/susier/pgen:main"
     Int Cpu = 1
     Int Threads = 0
-    Int BatchMemoryGB = 16
+    # Zero calculates one memory request per batch during preparation.
+    Int BatchMemoryGB = 0
     Int BatchDiskGB = 100
     Int PlinkMemoryMB = 1024
     Int PlanMemoryGB = 8
@@ -91,6 +92,11 @@ workflow SusieR2 {
         mac = MAC,
         min_call_rate = MinCallRate,
         plink_memory_mb = PlinkMemoryMB,
+        batch_memory_gb = BatchMemoryGB,
+        genotype_cache_mode = GenotypeCacheMode,
+        cache_memory_gb = GenotypeCacheMemoryGB,
+        cache_eligible = !defined(VariantList) && !defined(AdditionalGenotypes) && !(defined(Ancestry) && MAF > 0),
+        has_additional_genotypes = defined(AdditionalGenotypes),
         docker_image = DockerImage,
         memory_gb = QcMemoryGB,
         disk_gb = QcDiskGB,
@@ -118,6 +124,7 @@ workflow SusieR2 {
     File batch_pvar = PreparePgenBatches.BatchPvars[chromosome_index][within_pgen_index]
     File batch_psam = PreparePgenBatches.BatchPsams[chromosome_index][within_pgen_index]
     File batch_preparation_manifest = PreparePgenBatches.Manifests[chromosome_index][within_pgen_index]
+    Int selected_batch_memory_gb = PreparePgenBatches.BatchMemoryGB[chromosome_index][within_pgen_index]
     if (MAC > 0 || MinCallRate > 0) {
       File shared_qc_report = PreparePgenBatches.Reports[chromosome_index][0]
     }
@@ -155,7 +162,7 @@ workflow SusieR2 {
         docker_image = DockerImage,
         cpu = Cpu,
         threads = Threads,
-        memory_gb = BatchMemoryGB,
+        memory_gb = selected_batch_memory_gb,
         disk_gb = BatchDiskGB,
         preemptible_attempts = PreemptibleAttempts,
         max_retries = MaxRetries
@@ -206,6 +213,8 @@ workflow SusieR2 {
     Array[File] BatchPvars = batch_pvar
     Array[File] BatchPsams = batch_psam
     Array[File] BatchPreparationReports = batch_preparation_manifest
+    Array[Int] BatchMemoryGBs = selected_batch_memory_gb
+    Array[File] BatchMemoryReports = PreparePgenBatches.BatchMemoryReport
     Array[File] GenotypeCacheReports = RunPgenSusieBatch.GenotypeCacheReport
     Array[File] GeneRds = flatten(RunPgenSusieBatch.GeneRds)
     Array[File] GeneParquets = flatten(RunPgenSusieBatch.GeneParquets)
@@ -344,6 +353,11 @@ task PreparePgenBatches {
     Int mac = 0
     Float min_call_rate = 0.95
     Int plink_memory_mb
+    Int batch_memory_gb = 0
+    String genotype_cache_mode = "auto"
+    Float cache_memory_gb = 0.0
+    Boolean cache_eligible = true
+    Boolean has_additional_genotypes = false
     String docker_image
     Int memory_gb
     Int disk_gb
@@ -387,6 +401,11 @@ task PreparePgenBatches {
       '--mac=~{mac}' \
       '--min-call-rate=~{min_call_rate}' \
       --plink-memory-mb '~{plink_memory_mb}' \
+      --batch-memory-gb '~{batch_memory_gb}' \
+      --genotype-cache-mode '~{sub(genotype_cache_mode, "'", "'\"'\"'")}' \
+      --genotype-cache-memory-gb '~{cache_memory_gb}' \
+      ~{true="" false="--cache-ineligible" cache_eligible} \
+      ~{true="--has-additional-genotypes" false="" has_additional_genotypes} \
       --output-dir prepared
     if ~{mac > 0 || min_call_rate > 0}; then
       require_readable prepared/qc/filtered.pgen prepared/qc/filtered.pvar prepared/qc/filtered.psam prepared/qc/variant_qc.tsv.gz prepared/qc/qc.json
@@ -407,7 +426,7 @@ task PreparePgenBatches {
         exit 1
       fi
     done
-    require_readable "${pgens[@]}" "${pvars[@]}" "${psams[@]}" "${manifests[@]}"
+    require_readable "${pgens[@]}" "${pvars[@]}" "${psams[@]}" "${manifests[@]}" prepared/batch_memory_gb.json prepared/batch_memory.tsv
     echo 'COMPLETE shared PGEN QC and batch preparation'
   >>>
   output {
@@ -420,6 +439,8 @@ task PreparePgenBatches {
     Array[File] BatchPvars = glob("prepared/batches/batch_*.pvar")
     Array[File] BatchPsams = glob("prepared/batches/batch_*.psam")
     Array[File] Manifests = glob("prepared/batches/batch_*.preparation.json")
+    Array[Int] BatchMemoryGB = read_json("prepared/batch_memory_gb.json")
+    File BatchMemoryReport = "prepared/batch_memory.tsv"
     Array[File] PlinkLogs = flatten([glob("prepared/qc/*.log"), glob("prepared/batches/*.log")])
     File TaskStdout = stdout()
     File TaskStderr = stderr()
@@ -472,6 +493,28 @@ task RunPgenSusieBatch {
   command <<<
     set -euo pipefail
     echo 'START PGEN SuSiE batch'
+    report_task_exit() {
+      local task_status=$?
+      trap - EXIT
+      set +e
+      printf 'Task exit status: %s\n' "$task_status"
+      local counter value memory_found=0
+      for counter in /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.events \
+        /sys/fs/cgroup/memory.usage_in_bytes /sys/fs/cgroup/memory.max_usage_in_bytes /sys/fs/cgroup/memory.limit_in_bytes /sys/fs/cgroup/memory.failcnt \
+        /sys/fs/cgroup/memory/memory.usage_in_bytes /sys/fs/cgroup/memory/memory.max_usage_in_bytes /sys/fs/cgroup/memory/memory.limit_in_bytes /sys/fs/cgroup/memory/memory.failcnt; do
+        if [[ -r "$counter" ]]; then
+          memory_found=1
+          while IFS= read -r value || [[ -n "$value" ]]; do
+            printf 'Task memory: %s %s\n' "$counter" "$value"
+          done < "$counter"
+        fi
+      done
+      if [[ "$memory_found" == 0 ]]; then
+        echo 'Task memory: cgroup counters unavailable'
+      fi
+      exit "$task_status"
+    }
+    trap report_task_exit EXIT
     export SUSIER_RUNTIME_IMAGE='~{sub(docker_image, "'", "'\"'\"'")}'
     export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 VROOM_THREADS=1
     require_readable() {

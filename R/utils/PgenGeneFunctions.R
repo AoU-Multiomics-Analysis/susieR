@@ -342,6 +342,9 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     stage_started <- stats::setNames(rep(NA_real_, length(stages)), stages)
     stage_seconds <- stats::setNames(rep(NA_real_, length(stages)), paste0(stages, "_seconds"))
     timing_callback <- function(stage, event) {
+      if (exists("pgenMemoryLogLine", mode = "function")) {
+        message(pgenMemoryLogLine(paste0("outcome=", id, " ", stage, ":", event)))
+      }
       now <- proc.time()[["elapsed"]]
       if (event == "start") {
         stage_started[[stage]] <<- now

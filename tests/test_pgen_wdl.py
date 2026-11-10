@@ -315,6 +315,99 @@ class PgenWdlTests(unittest.TestCase):
                 self.assertEqual(batch.inputs['cache_memory_gb'].eval(
                     env, WDL.StdLib.Base('1.0')).value, 3.25)
 
+    def test_preparation_exports_numeric_memory_requests_and_report(self):
+        outputs = {decl.name: decl for decl in self.tasks['PreparePgenBatches'].outputs}
+        self.assertIn('BatchMemoryGB', outputs,
+                      'Preparation must return memory requests before batch scheduling')
+        with tempfile.TemporaryDirectory(prefix='susier-memory-outputs-') as temporary:
+            directory = pathlib.Path(temporary)
+            prepared = directory / 'prepared'
+            prepared.mkdir()
+            (prepared / 'batch_memory_gb.json').write_text('[14, 22, 37]')
+            (prepared / 'batch_memory.tsv').write_text('batch_id\tmemory_gb\n')
+            stdlib = TaskOutputStdLib(directory)
+            declaration = outputs['BatchMemoryGB']
+            memory = declaration.expr.eval(WDL.Env.Bindings(), stdlib).coerce(declaration.type)
+            self.assertEqual(str(declaration.type), 'Array[Int]')
+            self.assertIsInstance(memory.type.item_type, WDL.Type.Int)
+            self.assertEqual(memory.json, [14, 22, 37])
+            report = outputs['BatchMemoryReport']
+            self.assertEqual(str(report.type), 'File')
+            self.assertEqual(report.expr.eval(WDL.Env.Bindings(), stdlib).value,
+                             'prepared/batch_memory.tsv')
+
+    def test_memory_settings_and_cache_eligibility_reach_preparation(self):
+        inputs = {decl.name: decl for decl in self.doc.workflow.inputs}
+        self.assertEqual(inputs['BatchMemoryGB'].expr.eval(
+            WDL.Env.Bindings(), WDL.StdLib.Base('1.0')).value, 0,
+            'Automatic memory sizing must be active by default')
+        example = json.loads((ROOT / 'examples/inputs/SusieR2.inputs.json').read_text())
+        self.assertEqual(example['SusieR2.BatchMemoryGB'], 0)
+        call = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'PreparePgenBatches')
+        for fixed_memory in (0, 32):
+            for ancestry, variant_list, additional, maf, eligible in (
+                (False, False, False, 0.0, True),
+                (True, False, False, 0.0, True),
+                (True, False, False, .01, False),
+                (False, True, False, 0.0, False),
+                (False, False, True, 0.0, False),
+            ):
+                env = WDL.Env.Bindings().bind('BatchMemoryGB', WDL.Value.Int(fixed_memory))
+                env = env.bind('GenotypeCacheMode', WDL.Value.String('rolling'))
+                env = env.bind('GenotypeCacheMemoryGB', WDL.Value.Float(3.25))
+                env = env.bind('MAF', WDL.Value.Float(maf))
+                for name, present in (('Ancestry', ancestry), ('VariantList', variant_list),
+                                      ('AdditionalGenotypes', additional)):
+                    env = env.bind(name, WDL.Value.File('gs://inputs/' + name) if present else WDL.Value.Null())
+                self.assertEqual(call.inputs['batch_memory_gb'].eval(env, WDL.StdLib.Base('1.0')).value,
+                                 fixed_memory)
+                self.assertEqual(call.inputs['genotype_cache_mode'].eval(env, WDL.StdLib.Base('1.0')).value,
+                                 'rolling')
+                self.assertEqual(call.inputs['cache_memory_gb'].eval(env, WDL.StdLib.Base('1.0')).value,
+                                 3.25)
+                self.assertEqual(call.inputs['cache_eligible'].eval(env, WDL.StdLib.Base('1.0')).value,
+                                 eligible)
+                self.assertEqual(call.inputs['has_additional_genotypes'].eval(
+                    env, WDL.StdLib.Base('1.0')).value, additional)
+
+    def test_each_batch_uses_its_matching_prepared_memory_request(self):
+        call = next(node for node in walk(self.doc.workflow)
+                    if isinstance(node, WDL.Tree.Call) and node.name == 'RunPgenSusieBatch')
+        env = self.batch_environment()
+        env = env.bind('PreparePgenBatches.BatchMemoryGB', WDL.Value.from_json(
+            WDL.Type.Array(WDL.Type.Array(WDL.Type.Int())), [[33], [19, 27]]))
+        observed = []
+        for batch in self.batch_scatter().expr.eval(env, WDL.StdLib.Base('1.0')).value:
+            iteration = self.batch_iteration(env, batch)
+            observed.append(call.inputs['memory_gb'].eval(iteration, WDL.StdLib.Base('1.0')).value)
+        self.assertEqual(observed, [19, 27, 33])
+        outputs = {decl.name: decl for decl in self.doc.workflow.outputs}
+        self.assertEqual(str(outputs['BatchMemoryGBs'].type), 'Array[Int]')
+        self.assertEqual(str(outputs['BatchMemoryReports'].type), 'Array[File]')
+
+    def test_preparation_cli_receives_memory_settings_and_safe_cache_mode(self):
+        for eligible in (False, True):
+            payload = self.execute(self.tasks['PreparePgenBatches'], overrides={
+                'batch_memory_gb': WDL.Value.Int(32),
+                'genotype_cache_mode': WDL.Value.String("rolling 'quoted' $(touch PWNED) `touch PWNED`"),
+                'cache_memory_gb': WDL.Value.Float(3.25),
+                'cache_eligible': WDL.Value.Boolean(eligible),
+                'has_additional_genotypes': WDL.Value.Boolean(not eligible),
+            })
+            args = payload['args']
+            self.assertEqual(args[args.index('--batch-memory-gb') + 1], '32')
+            self.assertEqual(float(args[args.index('--genotype-cache-memory-gb') + 1]), 3.25)
+            self.assertEqual(args[args.index('--genotype-cache-mode') + 1],
+                             "rolling 'quoted' $(touch PWNED) `touch PWNED`")
+            self.assertEqual('--cache-ineligible' in args, not eligible)
+            self.assertEqual('--has-additional-genotypes' in args, not eligible)
+
+    def test_worker_exit_diagnostics_preserve_success_and_failure_status(self):
+        for status in (0, 42, 137):
+            with self.subTest(exit_status=status):
+                self.execute(self.tasks['RunPgenSusieBatch'], worker_exit_status=status)
+
     def test_genotype_cache_cli_receives_task_memory_and_quoted_mode(self):
         task = self.tasks['RunPgenSusieBatch']
         for mode in ('auto', 'whole', 'rolling', 'none',
@@ -449,6 +542,11 @@ class PgenWdlTests(unittest.TestCase):
                    for index in range(max(indices) + 1)]
         env = env.bind('PreparePgenBatches.Reports', WDL.Value.from_json(
             WDL.Type.Array(WDL.Type.Array(WDL.Type.File())), reports))
+        memory = [[] for _ in range(max(indices) + 1)]
+        for source_index in indices:
+            memory[source_index].append(24)
+        env = env.bind('PreparePgenBatches.BatchMemoryGB', WDL.Value.from_json(
+            WDL.Type.Array(WDL.Type.Array(WDL.Type.Int())), memory))
         return env
 
     def batch_iteration(self, env, batch):
@@ -687,7 +785,7 @@ class PgenWdlTests(unittest.TestCase):
         return raw
 
     def execute(self, task, optional=True, broken=None, overrides=None, plan_failure=None,
-                preparation_failure=None):
+                preparation_failure=None, worker_exit_status=None):
         with tempfile.TemporaryDirectory(prefix='susier-wdl-') as temporary:
             cwd = pathlib.Path(temporary)
             raw = self.inputs(task, optional)
@@ -731,6 +829,8 @@ for i, arg in enumerate(args):
     if arg in ''' + repr(LIST_FLAGS) + ''':
         lists[arg] = pathlib.Path(args[i+1]).read_text().splitlines()
 pathlib.Path('capture.json').write_text(json.dumps({'args': args, 'lists': lists}))
+if args[0].endswith('/run_pgen_susie_batch.R'):
+    sys.exit(int(os.environ.get('SUSIER_TEST_WORKER_STATUS', '0')))
 if args[0].endswith('/prepare_pgen_susie.R'):
     prepared = pathlib.Path(args[args.index('--output-dir') + 1])
     batches = prepared / 'batches'
@@ -749,9 +849,17 @@ if args[0].endswith('/prepare_pgen_susie.R'):
     elif failure == 'empty_outputs':
         for path in batches.iterdir():
             path.unlink()
+    elif failure in ('missing_memory_json', 'missing_memory_report'):
+        pass
     elif failure:
         raise ValueError('Unknown preparation fixture failure: ' + failure)
     (prepared / 'batch_worklists.txt').write_text(''.join(path + '\\n' for path in worklists))
+    (prepared / 'batch_memory_gb.json').write_text(json.dumps([24] * len(worklists)))
+    (prepared / 'batch_memory.tsv').write_text('batch_id\\tmemory_gb\\n')
+    if failure == 'missing_memory_json':
+        (prepared / 'batch_memory_gb.json').unlink()
+    elif failure == 'missing_memory_report':
+        (prepared / 'batch_memory.tsv').unlink()
     qc = prepared / 'qc'
     qc.mkdir()
     for extension in ('pgen', 'pvar', 'psam'):
@@ -802,10 +910,18 @@ if args[0].endswith('/plan_pgen_susie.R'):
             result = subprocess.run(['bash', 'command.sh'], cwd=cwd,
                                     env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
                                          'SUSIER_TEST_PLAN_FAILURE': plan_failure or '',
-                                         'SUSIER_TEST_PREPARATION_FAILURE': preparation_failure or ''},
+                                         'SUSIER_TEST_PREPARATION_FAILURE': preparation_failure or '',
+                                         'SUSIER_TEST_WORKER_STATUS': str(worker_exit_status or 0)},
                                     text=True, capture_output=True)
             self.assertFalse((cwd / 'PWNED').exists(), command)
             captured = cwd / 'capture.json'
+            if worker_exit_status is not None:
+                self.assertTrue(captured.exists(), 'The worker must run before exit diagnostics')
+                self.assertEqual(result.returncode, worker_exit_status, result.stderr)
+                self.assertIn('Task exit status: ' + str(worker_exit_status), result.stdout)
+                self.assertIn('Task memory:', result.stdout)
+                self.assertEqual('COMPLETE PGEN SuSiE batch' in result.stdout, worker_exit_status == 0)
+                return
             if broken:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(captured.exists(), 'Computation must not start with an unresolved input')
@@ -910,7 +1026,8 @@ if args[0].endswith('/plan_pgen_susie.R'):
                 self.execute(self.tasks['PreparePgenBatches'], broken=('worklists', failure))
 
     def test_preparation_rejects_incomplete_or_mismatched_shard_files(self):
-        for failure in ('missing_pvar', 'extra_pgen', 'mismatched_stems', 'empty_outputs'):
+        for failure in ('missing_pvar', 'extra_pgen', 'mismatched_stems', 'empty_outputs',
+                        'missing_memory_json', 'missing_memory_report'):
             with self.subTest(failure=failure):
                 self.execute(self.tasks['PreparePgenBatches'], preparation_failure=failure)
 

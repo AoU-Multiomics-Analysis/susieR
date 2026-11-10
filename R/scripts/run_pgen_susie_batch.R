@@ -455,6 +455,9 @@ runPgenSusieBatch <- function(opt) {
   message(sprintf("Batch timing: input verification = %.3f seconds; setup total = %.3f seconds",
     provenance$batch_timing$input_verification_seconds,
     provenance$batch_timing$setup_total_seconds))
+  message("MEMORY requested task allocation: ", opt$job_memory_gb, " GB")
+  message(pgenMemoryLogLine("before_first_gene"))
+  gc(verbose = FALSE)
   compact <- purrr::map(unique(execution_worklist$gene_id), function(gene_id) {
     selected <- dplyr::filter(execution_worklist, .data$gene_id == .env$gene_id)
     additional_genotypes <- additionalGenotypesForGene(additional_table, selected$phenotype_id)
@@ -469,6 +472,13 @@ runPgenSusieBatch <- function(opt) {
     names(outcomes) <- selected$outcome_id
     result <- runPgenGene(gene_id, outcomes, reader, output_dir, opt$base_seed,
                            opt$missing_code, provenance, genotype_cache = genotype_cache)
+    rm(outcomes, additional_genotypes)
+    # runPgenGene has saved the full fits and returned only compact tables.
+    # Its genotype temporaries are now eligible for collection. The explicit
+    # cache remains reachable and rolling eviction still controls its columns.
+    message(pgenMemoryLogLine(paste0("gene=", gene_id, " before_gene_cleanup")))
+    gc(verbose = FALSE)
+    message(pgenMemoryLogLine(paste0("gene=", gene_id, " after_gene_cleanup")))
     result$summary <- decorateBatchTable(result$summary, worklist, gene_id)
     result$credible_sets <- decorateBatchTable(result$credible_sets, worklist, gene_id)
     result$diagnostics <- decorateBatchTable(result$diagnostics, worklist, gene_id)

@@ -140,6 +140,54 @@ run_pgen_cache_tests <- function(repo_dir) {
               summary$variants_evicted > 0, summary$resident_variants == 3,
               summary$excluded_variants == 2)
   })
+  run_named_test("rolling eviction collects freed blocks before reading entering variants", {
+    four <- samples[c(7L, 3L, 1L, 5L)]
+    four_design <- cbind(pc = c(-2, -1, 1, 2), intercept = 1)
+    rownames(four_design) <- four
+    plan <- planPgenGenotypeCache(reader, worklist, four, mode = "rolling")
+    cache <- createPgenGenotypeCache(reader, plan, four, four_design)
+    on.exit(clearPgenGenotypeCache(cache), add = TRUE)
+    first <- getPgenGenotypeCacheWindow(cache, "A")
+    observe_cleanup <- function(code) {
+      observer <- new.env(parent = emptyenv())
+      observer$events <- character()
+      event <- function(label) substitute({
+        .cache_cleanup_observer <- captured
+        .cache_cleanup_observer$events <- c(.cache_cleanup_observer$events, text)
+      }, list(captured = observer, text = label))
+      suppressMessages(trace(".pgenCacheEvict", exit = event("evict_return"),
+        where = environment(.pgenCacheEvict), print = FALSE))
+      suppressMessages(trace("gc", tracer = event("gc"), where = baseenv(), print = FALSE))
+      suppressMessages(trace("ReadList", tracer = event("read"),
+        where = asNamespace("pgenlibr"), print = FALSE))
+      on.exit({
+        suppressMessages(untrace(".pgenCacheEvict", where = environment(.pgenCacheEvict)))
+        suppressMessages(untrace("gc", where = baseenv()))
+        suppressMessages(untrace("ReadList", where = asNamespace("pgenlibr")))
+      }, add = TRUE)
+      value <- force(code)
+      list(value = value, events = observer$events)
+    }
+    before_rng <- .Random.seed
+    moved <- observe_cleanup(getPgenGenotypeCacheWindow(cache, "B"))
+    expect_identical_value(moved$events, c("evict_return", "gc", "read"))
+    expect_identical_value(.Random.seed, before_rng, "RNG after rolling cleanup")
+    expect_identical_value(moved$value$variant_indices, c(3L, 4L, 7L))
+    expect_identical_value(moved$value$gt_hat[, 1:2, drop = FALSE],
+      first$gt_hat[, 2:3, drop = FALSE], "retained overlapping columns")
+    summary <- pgenGenotypeCacheSummary(cache)
+    stopifnot(summary$variants_read == 6, summary$variants_prepared == 4,
+      summary$variants_evicted == 1, summary$resident_variants == 3)
+    repeated <- observe_cleanup(getPgenGenotypeCacheWindow(cache, "B"))
+    expect_identical_value(repeated$events, "evict_return")
+    expect_identical_value(repeated$value$gt_hat, moved$value$gt_hat)
+    whole_plan <- planPgenGenotypeCache(reader, worklist, four, mode = "whole")
+    whole <- createPgenGenotypeCache(reader, whole_plan, four, four_design)
+    on.exit(clearPgenGenotypeCache(whole), add = TRUE)
+    getPgenGenotypeCacheWindow(whole, "A")
+    observed_whole <- observe_cleanup(getPgenGenotypeCacheWindow(whole, "B"))
+    expect_identical_value(observed_whole$events, character())
+  })
   run_named_test("cache flags covariate-explained columns without applying dense math", {
     explained_design <- cbind(variant = calls[2L, selected], intercept = 1)
     rownames(explained_design) <- selected

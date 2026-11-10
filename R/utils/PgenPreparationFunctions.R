@@ -122,6 +122,21 @@ preparePgenBatches <- function(opt) {
   if (is.null(opt$min_call_rate)) opt$min_call_rate <- .95
   if (is.null(opt$plink2)) opt$plink2 <- "plink2"
   if (is.null(opt$plink_memory_mb)) opt$plink_memory_mb <- 1024
+  if (is.null(opt$batch_memory_gb)) opt$batch_memory_gb <- 0L
+  if (is.null(opt$genotype_cache_mode)) opt$genotype_cache_mode <- "auto"
+  if (is.null(opt$genotype_cache_memory_gb)) opt$genotype_cache_memory_gb <- 0
+  if (is.null(opt$cache_ineligible)) opt$cache_ineligible <- FALSE
+  if (is.null(opt$has_additional_genotypes)) opt$has_additional_genotypes <- FALSE
+  if (!is.logical(opt$has_additional_genotypes) || length(opt$has_additional_genotypes) != 1L ||
+      is.na(opt$has_additional_genotypes)) stop("Invalid additional-genotype setting", call. = FALSE)
+  if (opt$has_additional_genotypes && identical(as.numeric(opt$batch_memory_gb), 0)) {
+    stop("Automatic memory sizing requires a fixed --batch-memory-gb with additional genotypes",
+      call. = FALSE)
+  }
+  if (!is.logical(opt$cache_ineligible) || length(opt$cache_ineligible) != 1L ||
+      is.na(opt$cache_ineligible)) stop("Invalid cache eligibility", call. = FALSE)
+  validatePgenBatchMemoryOptions(opt$genotype_cache_mode,
+    opt$genotype_cache_memory_gb, opt$batch_memory_gb, !opt$cache_ineligible)
   validatePgenQcThresholds(opt$mac, opt$min_call_rate)
   integer <- function(value, lower) is.numeric(value) && length(value) == 1L &&
     is.finite(value) && value >= lower && value <= .Machine$integer.max && value == floor(value)
@@ -195,6 +210,7 @@ preparePgenBatches <- function(opt) {
   paths <- lapply(c("pgen", "pvar", "psam", "reports"), function(role) character(length(batches)))
   names(paths) <- c("pgen", "pvar", "psam", "reports")
   total_records <- total_bytes <- 0
+  memory_reports <- vector("list", length(batches))
   message("PREPARE ", length(batches), " batches from one input cohort")
   for (index in seq_along(batches)) {
     worklist <- batches[[index]]
@@ -226,10 +242,21 @@ preparePgenBatches <- function(opt) {
         stop("Prepared PGEN variant count differs from selected source records", call. = FALSE)
       }
       # Copy IDs to remove readr growable-vector flags from R serialization.
+      memory <- planPgenBatchMemory(reader, worklist, cache_mode = opt$genotype_cache_mode,
+        cache_memory_gb = opt$genotype_cache_memory_gb, memory_gb = opt$batch_memory_gb,
+        cache_eligible = !opt$cache_ineligible)
+      memory_reports[[index]] <- c(list(batch_id = ids[[index]]), memory)
+      message("MEMORY ", ids[[index]], ": request=", memory$memory_gb,
+        " GB; estimated=", memory$estimated_memory_gb, " GB; samples=", memory$sample_count,
+        "; largest_window_variants=", memory$max_window_variants,
+        "; cache_mode=", memory$cache_mode)
+      if (memory$memory_gb < memory$estimated_memory_gb) {
+        message("MEMORY fixed override is below the estimate for ", ids[[index]])
+      }
       list(sample_count = reader$raw_sample_count,
            sample_ids_sha256 = digest::digest(as.character(reader$raw_sample_ids)[], algo = "sha256", serializeVersion = 2),
            sample_ids_hash_algorithm = "sha256:R-serialize-v2",
-           variant_count = nrow(reader$variants))
+           variant_count = nrow(reader$variants), memory = memory)
     }, finally = closePgenReader(reader))
     report <- c(list(schema_version = 1L, batch_id = ids[[index]],
       chromosome = worklist$chromosome[[1L]], cis_distance = opt$cis_distance,
@@ -247,8 +274,17 @@ preparePgenBatches <- function(opt) {
   }
   message("COMPLETE preparation: ", length(batches), " batches, ", total_records,
     " extracted records, ", total_bytes, " triplet bytes")
+  # Cromwell glob outputs use lexicographic batch-ID order, including when a
+  # direct CLI caller supplied its worklists in another order.
+  memory <- dplyr::bind_rows(memory_reports[order(ids)])
+  memory_gb_file <- file.path(output, "batch_memory_gb.json")
+  memory_report <- file.path(output, "batch_memory.tsv")
+  jsonlite::write_json(as.integer(memory$memory_gb), memory_gb_file,
+    auto_unbox = FALSE, pretty = TRUE)
+  readr::write_tsv(memory, memory_report)
   invisible(c(paths, list(whole_pgen = source$pgen, whole_pvar = source$pvar,
-    whole_psam = source$psam, qc_report = qc_report)))
+    whole_psam = source$psam, qc_report = qc_report,
+    memory_gb_file = memory_gb_file, memory_report = memory_report)))
 }
 
 # Validate small reports and local shard files before phenotype loading or fits.

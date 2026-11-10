@@ -73,6 +73,12 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     region = paste0("chr1:", pmax(1L, feature_positions - distance), "-",
                     feature_positions + distance))
 
+  observed_inputs <- NULL
+  original_fit <- fitSusieModel
+  fitSusieModel <- function(X, y, ...) {
+    observed_inputs <<- list(X = X, y = y)
+    original_fit(X, y, ...)
+  }
   fit <- function(id, cov = covariates, cache = NULL, explicit = TRUE,
                    timing_callback = NULL) {
     set.seed(259L)
@@ -84,7 +90,8 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     }
     if (!is.null(timing_callback)) arguments$timing_callback <- timing_callback
     result <- do.call(finemapPgenPhenotype, arguments)
-    list(result = result, rng = .Random.seed)
+    list(result = result, rng = .Random.seed, inputs = observed_inputs,
+      outcome_id = id, cache_mode = if (is.null(cache)) "none" else cache$mode)
   }
   make_cache <- function(mode, cov = covariates) {
     plan <- planPgenGenotypeCache(reader, worklist, selected_samples, mode = mode,
@@ -92,20 +99,54 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
     createPgenGenotypeCache(reader, plan, selected_samples,
       cbind(cov[selected_samples, , drop = FALSE], 1))
   }
-  compare_fit <- function(actual, reference, exact = FALSE) {
+  # Cache block widths can change BLAS rounding. Native Brent prior-variance
+  # optimization stops at sqrt(machine epsilon), so complete fitted parameters
+  # can differ more than the inputs. These are limits for this fixture, not a
+  # bound for arbitrary data. Guarded fits still require exact equality.
+  model_tolerance <- 1e-7
+  pip_absolute_tolerance <- 1e-8
+  compare_model <- function(actual, reference, exact = FALSE) {
+    expect_identical_value(actual$variant_id, reference$variant_id, "fit variant order")
+    expect_identical_value(actual$sets$cs, reference$sets$cs, "credible-set memberships")
+    expect_identical_value(actual$converged, reference$converged, "convergence status")
+    expect_identical_value(actual$niter, reference$niter, "iteration count")
+    expect_identical_value(length(actual$pip), length(reference$pip), "PIP count")
+    difference <- abs(actual$pip - reference$pip)
+    if (any(!is.finite(difference)) || max(difference) > pip_absolute_tolerance) {
+      stop("PIP absolute difference exceeds 1e-8: ",
+        format(max(difference), digits = 16L), call. = FALSE)
+    }
     if (exact) {
-      expect_identical_value(actual$result, reference$result, "guarded complete fit")
+      expect_identical_value(actual, reference, "guarded complete fit")
     } else {
-      comparison <- all.equal(actual$result, reference$result, tolerance = 1e-10,
+      comparison <- all.equal(actual, reference, tolerance = model_tolerance,
                               check.attributes = TRUE)
       if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
     }
+  }
+  compare_fit <- function(actual, reference, exact = FALSE) {
+    input_differences <- vapply(c("X", "y"), function(name) {
+      left <- actual$inputs[[name]]
+      right <- reference$inputs[[name]]
+      expect_identical_value(attributes(left), attributes(right),
+        paste("Adjusted fit input", name, "attributes"))
+      difference <- abs(left - right)
+      if (any(!is.finite(difference)) || max(difference) > 1e-13) {
+        stop("Adjusted fit input ", name, " differs for ", actual$outcome_id,
+          "; max absolute difference=", format(max(difference), digits = 16L), call. = FALSE)
+      }
+      max(difference)
+    }, numeric(1))
+    if (!exact && actual$cache_mode != "none") {
+      message("Cache fit diagnostics: outcome=", actual$outcome_id,
+        "; mode=", actual$cache_mode,
+        "; X_max_abs=", format(input_differences[["X"]], digits = 16L),
+        "; y_max_abs=", format(input_differences[["y"]], digits = 16L),
+        "; PIP_max_abs=", format(max(abs(actual$result$pip - reference$result$pip)), digits = 16L),
+        "; mu_max_abs=", format(max(abs(actual$result$mu - reference$result$mu)), digits = 16L))
+    }
     expect_identical_value(actual$rng, reference$rng, "fit RNG state")
-    expect_identical_value(actual$result$variant_id, reference$result$variant_id,
-                           "fit variant order")
-    expect_identical_value(actual$result$sets$cs, reference$result$sets$cs,
-                           "credible-set memberships")
-    stopifnot(max(abs(actual$result$pip - reference$result$pip)) < 1e-10)
+    compare_model(actual$result, reference$result, exact)
   }
   contains_environment <- function(value) {
     is.environment(value) ||
@@ -129,6 +170,37 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   })
 
   references <- stats::setNames(lapply(phenotype_ids, fit), phenotype_ids)
+  run_named_test("cache fit comparison separates optimizer rounding from scientific changes", {
+    reference <- references$left
+    rounded <- reference
+    mu_index <- which.max(abs(reference$result$mu))
+    pip_index <- which.max(reference$result$pip)
+    rounded$result$mu[[mu_index]] <- rounded$result$mu[[mu_index]] + 1e-8
+    rounded$result$pip[[pip_index]] <- rounded$result$pip[[pip_index]] - 2e-9
+    compare_fit(rounded, reference)
+    changed <- reference
+    changed$result$pip[[pip_index]] <- changed$result$pip[[pip_index]] - 1e-5
+    expect_error_message(compare_fit(changed, reference), "PIP absolute")
+    changed <- reference
+    changed$result$sets$cs <- list(L1 = 999L)
+    expect_error_message(compare_fit(changed, reference), "credible-set memberships")
+    changed <- reference
+    changed$result$converged <- !changed$result$converged
+    expect_error_message(compare_fit(changed, reference), "convergence status")
+    changed <- reference
+    changed$result$niter <- changed$result$niter + 1L
+    expect_error_message(compare_fit(changed, reference), "iteration count")
+    changed <- reference
+    changed$result$variant_id <- rev(changed$result$variant_id)
+    expect_error_message(compare_fit(changed, reference), "fit variant order")
+    changed <- reference
+    changed$rng[[1L]] <- changed$rng[[1L]] + 1L
+    expect_error_message(compare_fit(changed, reference), "fit RNG state")
+    changed <- reference
+    changed$inputs$X[[1L]] <- changed$inputs$X[[1L]] + 1e-9
+    expect_error_message(compare_fit(changed, reference), "Adjusted fit input X")
+    expect_error_message(compare_fit(rounded, reference, exact = TRUE), "guarded complete fit")
+  })
   run_named_test("whole and rolling caches preserve overlapping, disjoint and returning fits", {
     regions <- tibble::tibble(phenotype_id = phenotype_ids, region = worklist$region)
     reference_fits <- lapply(references, `[[`, "result")
@@ -141,7 +213,7 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
         for (id in phenotype_ids) compare_fit(actual[[id]], references[[id]])
         actual_fits <- lapply(actual, `[[`, "result")
         tables <- formatSusieOutputs(actual_fits, regions)
-        comparison <- all.equal(tables, reference_tables, tolerance = 1e-10,
+        comparison <- all.equal(tables, reference_tables, tolerance = model_tolerance,
                                 check.attributes = TRUE)
         if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
         saved <- file.path(directory, paste0(mode, ".rds"))
@@ -234,15 +306,15 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
                     rowSums(as.matrix(index[setdiff(timing_columns, "outcome_total_seconds")]))))
       }
       for (name in c("summary", "credible_sets", "diagnostics")) {
-        comparison <- all.equal(actual[[name]], reference[[name]], tolerance = 1e-10,
+        comparison <- all.equal(actual[[name]], reference[[name]], tolerance = model_tolerance,
                                 check.attributes = TRUE)
         if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
       }
       saved <- readRDS(actual$files[["rds"]])
       stopifnot(!contains_environment(saved))
       expected <- readRDS(reference$files[["rds"]])
-      comparison <- all.equal(saved, expected, tolerance = 1e-10, check.attributes = TRUE)
-      if (!isTRUE(comparison)) stop(paste(comparison, collapse = "\n"), call. = FALSE)
+      expect_identical_value(names(saved), names(expected), "saved outcome order")
+      for (id in names(expected)) compare_model(saved[[id]], expected[[id]])
     }, finally = clearPgenGenotypeCache(cache))
   })
   message("All prepared PGEN cache fit tests passed.")

@@ -437,6 +437,11 @@ runPgenSusieBatch <- function(opt) {
     mode = opt$genotype_cache_mode, cache_memory_gb = opt$genotype_cache_memory_gb,
     job_memory_gb = opt$job_memory_gb, eligible = !length(cache_restrictions),
     reason = if (length(cache_restrictions)) paste(cache_restrictions, collapse = "; ") else NULL)
+  if (isTRUE(cache_plan$sufficient_statistics$enabled) &&
+      !.susieSufficientStatsSourceSupported(asNamespace("susieR"))) {
+    cache_plan$sufficient_statistics$enabled <- FALSE
+    cache_plan$sufficient_statistics$reason <- "installed SuSiE source is not supported for sufficient statistics"
+  }
   cache_selection <- cache_plan[setdiff(names(cache_plan), c("window_indices", "union_indices", "sample_ids"))]
   cache_selection$covariates_sha256 <- digest::digest(cache_design, algo = "sha256", serializeVersion = 2)
   provenance$settings$genotype_cache <- cache_selection
@@ -445,6 +450,11 @@ runPgenSusieBatch <- function(opt) {
           "; estimated_bytes=", format(cache_plan$estimated_bytes, scientific = FALSE),
           "; whole_saved_fraction=", round(cache_plan$whole_saved_fraction, 3),
           "; rolling_saved_fraction=", round(cache_plan$rolling_saved_fraction, 3))
+  message("SUFFICIENT STATISTICS CACHE: ",
+          if (cache_plan$sufficient_statistics$enabled) "enabled" else "disabled",
+          "; ", cache_plan$sufficient_statistics$reason,
+          "; estimated_peak_bytes=",
+          format(cache_plan$sufficient_statistics$estimated_bytes, scientific = FALSE))
   genotype_cache <- if (cache_plan$mode == "none") NULL else
     createPgenGenotypeCache(reader, cache_plan, analysis_samples, cache_design)
   on.exit(if (!is.null(genotype_cache)) clearPgenGenotypeCache(genotype_cache), add = TRUE)

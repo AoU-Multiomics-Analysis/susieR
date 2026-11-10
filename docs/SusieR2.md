@@ -64,6 +64,20 @@ controlled comparisons. Forced caching must fit its memory limit. Automatic
 mode uses no caching with active ancestry MAF, a variant list, or additional
 genotypes; forced caching rejects these preparation paths.
 
+Eligible whole caches also share one centered, unscaled genotype cross-product
+(`XtX`) across outcomes. Each fit selects its window from this matrix and uses
+`susie_ss()`. This requires at least two nonempty windows, at least twice as many
+samples as variants in the largest window, and enough overlap to keep the batch
+cross-product smaller than separate window cross-products. The shared matrix and
+temporary matrices must also fit the cache budget. Whole caching alone does not
+enable this path. Rolling and uncached fits use the individual-data fitter.
+
+The SS path keeps the current model settings, marginal scores, posterior effect
+scales, and native credible-set purity sampling. Numerical safeguards and an
+unsupported SuSiE implementation select the individual-data fitter. Logs report
+the eligibility reason, cross-product construction time, and fit method. The
+cache report includes the construction count, reuse count, and matrix bytes.
+
 Cached fits preserve the existing numerical safeguard for a genotype or
 phenotype almost fully explained by covariates. Such a feature uses the existing
 full-window calculation. Other features can continue using the prepared cache.

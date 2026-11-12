@@ -185,7 +185,6 @@ The command placeholders use WDL 1.0 `write_lines()` to create these lists after
 The workflow returns these combined tables:
 
 - `SusieParquet`: selected variant results.
-- `AggregateFullSuSiEParquet`: one combined `full_susie.parquet` with all rows already present in the per-gene full outputs, including variants outside retained credible sets, `X_column_scale_factors`, and `phenotype_residual_SD`.
 - `CredibleSetsParquet`: credible-set results.
 - `OutcomeIndex`: every expected outcome, including outcomes with no credible sets and fits that did not converge.
 - `GenotypeCacheReports`: one JSON decision and runtime-counter report per batch.
@@ -197,7 +196,7 @@ The workflow returns these combined tables:
 - `GenotypeQcCounts` and `GenotypeQcReports`: shared QC results, empty when shared QC is disabled. `GenotypeQcLogs` and `GenotypeQcErrors` contain preparation task stdout and stderr, including when only extraction runs.
 - `ChromosomeGeneManifests`: one TSV per processed chromosome, named `chr<N>.gene_outputs.tsv`.
 
-Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. Separate output arrays contain each gene's RDS, three Parquet files, TSV files, log, and provenance JSON. The workflow also returns batch stdout, stderr, and PLINK logs.
+Each gene has a directory at `batch/genes/<gene-key>/`. Its key is `gene-` plus the SHA256 hash of its original ID. The fitting task collects each gene's RDS, three Parquet files, TSV files, log, and provenance JSON as task outputs. Cromwell uploads these source files from the fitting VM. The main workflow returns their locations through `ChromosomeGeneManifests`, rather than exposing the per-gene files as workflow File outputs. The workflow also returns batch stdout, stderr, and PLINK logs.
 
 Credible-set tables and both variant Parquets include the logical field
 `feature_converged`. It records whether that row's molecular-trait fit converged.
@@ -264,21 +263,19 @@ its saved RDS fit again. This does not require another model fit.
 
 Each chromosome manifest has one row per gene. Its columns are `chromosome`, `gene_id`, `gene_key`, `batch_id`, `rds_uri`, `summary_parquet_uri`, `lbf_parquet_uri`, `full_parquet_uri`, `covariate_explained_variants_uri`, `variant_position_summary_uri`, `outcome_index_uri`, `log_uri`, and `provenance_uri`. Chromosome values use `1` through `22`. Original gene IDs are preserved. A gene with several outcomes has one row and one RDS containing those outcome fits. Genes with no credible sets or nonconverged outcomes remain in the manifests; their linked outcome index gives the per-outcome status.
 
-The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The manifest locations remain output-only string metadata. The full files are supplied separately as typed `Array[File]` inputs, so Cromwell localizes them before the aggregate command reads them. RDS, LBF, and log locations in the metadata lists are not opened. The manifest writer matches artifact names to the supplied gene keys. Missing artifact locations remain missing. It does not check fit status or gene ownership.
+The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The aggregate task receives all per-gene locations as String metadata. It does not localize or open the full Parquet, RDS, LBF, or other per-gene files. The manifest writer matches artifact names to the supplied gene keys. Missing artifact locations remain missing. It does not check fit status or gene ownership.
+
+The main workflow copies and combines only the compact batch summary and credible-set Parquets, together with the existing small index and diagnostic tables. Per-gene full Parquets and RDS fits remain at their original fitting-task output locations. They are not selected for another copy through `final_workflow_outputs_dir`.
+
+Keep the Cromwell workflow option `delete_intermediate_output_files` set to `false`. The per-gene files are now task-only outputs; URI strings in a manifest do not protect them from intermediate-output deletion. Retain those source objects while their manifest references are needed.
+
+Update existing Terra output mappings: `AggregateFullSuSiEParquet`, `GeneRds`, `GeneParquets`, `GeneTsvs`, `GeneLogs`, and `GeneProvenance` are no longer main workflow outputs. Map `ChromosomeGeneManifests` instead. The manifests retain all nine artifact URI columns, including `full_parquet_uri` and `rds_uri`.
 
 For a direct call to `aggregate_pgen_susie.R`, supply all five optional metadata-list arguments together: `--gene-rds-uris-file`, `--gene-parquet-uris-file`, `--gene-tsv-uris-file`, `--gene-log-uris-file`, and `--gene-provenance-uris-file`. Each argument names a local newline-delimited list of completed output locations. These list contents are metadata, never file inputs to open. The WDL creates all five lists during command rendering. Direct CLI calls without them keep their previous outputs. Use an image containing the updated aggregation script when running the updated WDL.
 
-The main workflow also supplies `--full-susie-files`, a task-local list of
-localized full-result files. The aggregator writes one Parquet file through
-bounded Arrow batches. It preserves the native columns and adds missing outcome
-metadata from the supplied index. Unknown or conflicting index values stay
-missing. Supplied ownership columns stay unchanged. The final file appears
-only after all supplied inputs have been read and the combined file is written.
+The main workflow does not supply `--full-susie-files` and does not produce a combined full-SuSiE table. The per-gene files retain their original rows and columns, including variants outside retained credible sets.
 
-Aggregation does not recover rows absent from the source full files. The current
-formatter can write an empty full file for an outcome with no retained credible
-set. Such outcomes remain in `OutcomeIndex`. Rows outside credible sets in
-nonempty full files are retained, including their missing CS assignments.
+### Optional full-only aggregation
 
 To combine completed outputs without running any model tasks, use
 `workflows/AggregateFullSusie.wdl`. Its inputs are the completed combined
@@ -302,7 +299,7 @@ are rejected. The full-only mode does not
 open genotypes or invoke PLINK or SuSiE. Ordinary direct aggregation without
 `--full-susie-files` keeps its previous outputs.
 
-Full files can be much larger than summaries. Set aggregation disk space to
+For the optional full-only workflow, full files can be much larger than summaries. Set its aggregation disk space to
 cover the localized full inputs, the combined Parquet, and temporary buffers.
 Streaming limits R memory use but does not reduce localized disk requirements.
 The new workflows have not been run on Terra; syntax, localization, and small

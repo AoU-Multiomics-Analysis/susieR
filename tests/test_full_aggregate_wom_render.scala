@@ -57,7 +57,11 @@ object FullAggregateWomRender extends App {
         case other => sys.error("Unsupported aggregate fixture input type: " + other)
       }
       val inputs = task.inputs.map(input => input -> inputValue(input.womType, input.name)).toMap
-      assert(expectedLists.contains("full_susie_files"), "Full results must remain Array[File]")
+      val fullOnly = taskName == "AggregateFullSusieFiles"
+      val fileLists = if (fullOnly) Set("full_susie_files") else
+        Set("summary_files", "credible_set_files", "index_files", "diagnostic_files")
+      assert(expectedLists.keySet.toSet == fileLists,
+        "Unexpected localized File arrays for " + taskName + ": " + expectedLists.keySet)
       val metadataUris = expectedMetadata.valuesIterator.flatten.filter(_.startsWith("gs://")).toSet
       // Keep gs:// values in the input environment. The real renderer must
       // map File values before sub() and command-time write_lines run.
@@ -106,7 +110,9 @@ for flag in list_flags:
       val actual = new String(Files.readAllBytes(cwd.resolve("capture.args")), UTF_8)
         .split("\u0000", -1).dropRight(1).toVector
       assert(actual.head == "/opt/r/scripts/aggregate_pgen_susie.R", "Unexpected aggregate CLI: " + actual)
-      assert(actual.contains("--full-only") == (taskName == "AggregateFullSusieFiles"), "Incorrect full-only mode")
+      assert(actual.contains("--full-only") == fullOnly, "Incorrect full-only mode")
+      assert(actual.contains("--full-susie-files") == fullOnly,
+        "Full-result inputs must be used only by the standalone aggregate")
       for ((name, path) <- expectedFiles) {
         val flag = "--" + name.replace('_', '-')
         val index = actual.indexOf(flag)

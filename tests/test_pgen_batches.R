@@ -1,4 +1,4 @@
-# These fixtures catch split genes, lost cis windows and incomplete aggregation.
+# Check batch planning and preserve input rows during aggregation.
 run_pgen_batch_tests <- function(repo_dir) {
   suppressPackageStartupMessages(library(dplyr))
   functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH",
@@ -144,327 +144,170 @@ run_pgen_batch_tests <- function(repo_dir) {
   prefixed_key <- read_tsv("prefixed key plan/expected_outcomes.tsv")
   stopifnot(all(prefixed_key$chromosome == "chr1"), prefixed_key$region[[1]] == "1:-100-300")
 
-  # Each file set has one file per batch, paired in the supplied vector order.
+  # The expected-outcomes path is a compatibility input, not a validation plan.
+  writeLines("Readable compatibility input", "expected.tsv")
   wanted <- small_expected %>% filter(batch_id %in% c("batch_000001", "batch_000002"))
-  readr::write_tsv(wanted, "expected.tsv")
   index <- wanted %>% transmute(batch_id, chromosome, gene_id, gene_key = paste0("gene-", gene_id),
-                               outcome_id, phenotype_id, seed = 1L,
-                               status = c("CONVERGED", "NONCONVERGED", "CONVERGED"),
-                               converged = c(TRUE, FALSE, TRUE),
-                               credible_set_count = c(1L, 0L, 0L), reason = "")
+    outcome_id, phenotype_id, seed = 1, status = c("CONVERGED", "NONCONVERGED", "CONVERGED"),
+    converged = c(TRUE, FALSE, TRUE), credible_set_count = c(1, 0, 0), reason = "")
   own <- wanted %>% select(batch_id, gene_id, outcome_id, phenotype_id)
-  summary <- tibble(molecular_trait_id = "a", variant = "1_10_A_G", chromosome = "1",
-    position = 10L, ref = "A", alt = "G", cs_id = "a_1", cs_index = "1", region = "chr1:6-16",
-    pip = .9, z = 4, cs_min_r2 = .8, cs_avg_r2 = .9, cs_size = 1L,
+  summary <- bind_cols(own[1, ], tibble(molecular_trait_id = "a", variant = "1_10_A_G",
+    chromosome = "1", position = 10L, ref = "A", alt = "G", cs_id = "a_1", cs_index = "1",
+    region = "chr1:6-16", pip = .9, z = 4, cs_min_r2 = .8, cs_avg_r2 = .9, cs_size = 1L,
     posterior_mean = .4, posterior_sd = .1, cs_log10bf = 3,
-    has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25)
-  summary <- bind_cols(own[1, ], summary)
-  cs <- tibble(molecular_trait_id = "a", cs_id = "a_1", cs_index = 1,
-               region = "chr1:6-16", cs_log10bf = 3, cs_avg_r2 = .9, cs_min_r2 = .8,
-               cs_size = 1, low_purity = FALSE, has_covariate_explained_variant = FALSE)
-  cs <- bind_cols(own[1, ], cs)
+    has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25))
+  cs <- bind_cols(own[1, ], tibble(molecular_trait_id = "a", cs_id = "a_1", cs_index = "1",
+    region = "chr1:6-16", cs_log10bf = 3, cs_avg_r2 = .9, cs_min_r2 = .8, cs_size = 1,
+    low_purity = FALSE, has_covariate_explained_variant = FALSE))
   diagnostic <- own[1, ] %>% mutate(molecular_trait_id = "a", variant = "1_11_A_T",
-                                    input_scale = 1, residual_sd = 0,
-                                    residual_sd_ratio = 0)
-  emit <- function(idx = index, sum = summary, sets = cs, diag = diagnostic) {
+    input_scale = 1, residual_sd = 0, residual_sd_ratio = 0)
+  summary_tables <- list(
+    bind_rows(summary, summary, mutate(summary, pip = .2, z = -2, posterior_mean = -.3,
+                              phenotype_residual_SD = 2.5)) %>%
+      mutate(feature_converged = c(TRUE, TRUE, FALSE), first_note = c("first", "first", "different")),
+    mutate(summary, molecular_trait_id = "foreign", outcome_id = "outside",
+      phenotype_id = "foreign", gene_id = "unlisted gene", cs_id = "unknown set",
+      cs_size = 99L, feature_converged = TRUE, second_note = "second"))
+  cs_tables <- list(
+    bind_rows(cs, cs, mutate(cs, cs_size = -5, low_purity = TRUE)) %>%
+      mutate(feature_converged = c(FALSE, FALSE, TRUE)),
+    mutate(cs, molecular_trait_id = "foreign", outcome_id = "outside",
+      cs_id = "unknown set", feature_converged = TRUE))
+  index_tables <- list(
+    index[c(2, 1), ] %>% mutate(status = "FAILED", converged = TRUE,
+                               credible_set_count = 77),
+    bind_rows(index[3, ], index[3, ]))
+  diagnostic_tables <- list(bind_rows(diagnostic, diagnostic,
+      mutate(diagnostic, input_scale = 2, residual_sd = .1, residual_sd_ratio = .05)),
+    mutate(diagnostic, gene_id = "foreign", input_scale = -1))
+  emit <- function(sums = summary_tables, sets = cs_tables, indices = index_tables,
+                   diagnostics = diagnostic_tables) {
     for (i in 1:2) {
-      batch <- paste0("batch_00000", i)
-      arrow::write_parquet(filter(sum, batch_id == batch), paste0(i, " summary.parquet"))
-      arrow::write_parquet(filter(sets, batch_id == batch), paste0(i, " cs.parquet"))
-      readr::write_tsv(filter(idx, batch_id == batch), paste0(i, " index.tsv"), quote = "needed")
-      readr::write_tsv(filter(diag, batch_id == batch), paste0(i, " diagnostic.tsv"), quote = "needed")
+      arrow::write_parquet(sums[[i]], paste0(i, " summary.parquet"))
+      arrow::write_parquet(sets[[i]], paste0(i, " cs.parquet"))
+      readr::write_tsv(indices[[i]], paste0(i, " index.tsv"), quote = "needed")
+      readr::write_tsv(diagnostics[[i]], paste0(i, " diagnostic.tsv"), quote = "needed")
     }
   }
-  aggregate <- function(...) aggregatePgenBatches(
-    "expected.tsv", c("1 summary.parquet", "2 summary.parquet"),
-    c("1 cs.parquet", "2 cs.parquet"), c("1 index.tsv", "2 index.tsv"),
-    c("1 diagnostic.tsv", "2 diagnostic.tsv"), "aggregate", ...)
-  capture_warnings <- function(expr) {
+  aggregate <- function(summary_paths = c("1 summary.parquet", "2 summary.parquet"),
+                        cs_paths = c("1 cs.parquet", "2 cs.parquet"),
+                        index_paths = c("1 index.tsv", "2 index.tsv"),
+                        diagnostic_paths = c("1 diagnostic.tsv", "2 diagnostic.tsv"),
+                        expected_path = "expected.tsv") {
+    aggregatePgenBatches(expected_path, summary_paths, cs_paths, index_paths,
+                         diagnostic_paths, "aggregate")
+  }
+  without_warnings <- function(expr) {
     warnings <- character()
-    withCallingHandlers(force(expr), warning = function(condition) {
+    value <- withCallingHandlers(force(expr), warning = function(condition) {
       warnings <<- c(warnings, conditionMessage(condition))
       invokeRestart("muffleWarning")
     })
-    warnings
+    stopifnot("Loading and merging must not warn about scientific metadata" = !length(warnings))
+    value
+  }
+  check_tsv <- function(path, expected) {
+    column_types <- do.call(readr::cols, lapply(expected, function(value) {
+      switch(typeof(value), double = readr::col_double(), integer = readr::col_integer(),
+        logical = readr::col_logical(), readr::col_character())
+    }))
+    actual <- tibble::as_tibble(readr::read_tsv(path, col_types = column_types,
+      na = "NA", show_col_types = FALSE))
+    stopifnot(identical(as.list(actual), as.list(expected)))
   }
   emit()
-  aggregate()
-  stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 1,
-            nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 1,
-            identical(read_tsv("aggregate/outcome_index.tsv")$status, index$status),
-            nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1,
-            identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, 1.25))
-  # A label is not a physical predictor ID. Keep equal and differing rows in order.
-  differing_row <- mutate(summary, pip = .2, z = -2, posterior_mean = -.3,
-                          posterior_sd = .2)
-  repeated_cases <- list(
-    identical_rows = bind_rows(summary, summary),
-    differing_values = bind_rows(summary, differing_row),
-    two_physical_members = mutate(bind_rows(summary, differing_row), cs_size = 2L),
-    legacy_join_expansion = mutate(bind_rows(summary, summary, differing_row,
-                                             differing_row), cs_size = 2L)
-  )
-  for (case in names(repeated_cases)) {
-    repeated <- repeated_cases[[case]]
-    emit(sum = repeated, sets = mutate(cs, cs_size = repeated$cs_size[[1L]]))
-    warnings <- capture_warnings(aggregate())
-    retained <- arrow::read_parquet("aggregate/susie.parquet")
-    stopifnot(identical(retained[names(repeated)], repeated),
-      any(grepl("1 summary.parquet", warnings, fixed = TRUE)),
-      any(grepl("batch_000001", warnings, fixed = TRUE)),
-      any(grepl("outcome=a", warnings, fixed = TRUE)),
-      any(grepl(paste0("repeated_row_count=", nrow(repeated) - 1L), warnings, fixed = TRUE)),
-      any(grepl("physical member count", warnings, fixed = TRUE)))
-  }
-  repeated_diagnostic <- bind_rows(diagnostic, diagnostic,
-    mutate(diagnostic, input_scale = 2, residual_sd = .1, residual_sd_ratio = .05))
-  emit(diag = repeated_diagnostic)
-  warnings <- capture_warnings(aggregate())
-  stopifnot(identical(tibble::as_tibble(read_tsv("aggregate/covariate_explained_variants.tsv")),
-                      repeated_diagnostic),
-    any(grepl("1 diagnostic.tsv", warnings, fixed = TRUE)),
-    any(grepl("outcome=a", warnings, fixed = TRUE)),
-    any(grepl("repeated_row_count=2", warnings, fixed = TRUE)))
-  # Long labels must stay complete in data and remain short in warning examples.
-  long_variant <- paste0("1_10_A_G_", strrep("long", 300L))
-  long_rows <- mutate(bind_rows(summary, summary), variant = long_variant)
-  emit(sum = long_rows)
-  warnings <- capture_warnings(aggregate())
-  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$variant,
-                      rep(long_variant, 2L)),
-    !any(grepl(long_variant, warnings, fixed = TRUE)),
-    max(nchar(warnings)) < 700L)
-  # Repeated labels cannot hide a definite excess or shortage of CS members.
-  emit(sum = bind_rows(summary, summary, mutate(summary, variant = "1_12_A_T",
-                                                position = 12L)))
-  suppressWarnings(error(aggregate(), "missing|excess"))
-  emit(sum = mutate(bind_rows(summary, differing_row), cs_size = 3L),
-       sets = mutate(cs, cs_size = 3L))
-  suppressWarnings(error(aggregate(), "missing|excess"))
-  emit(idx = mutate(index, credible_set_count = if_else(outcome_id == "a", 2L, credible_set_count)),
-       sets = bind_rows(cs, cs))
-  error(aggregate(), "Duplicate credible set")
+  without_warnings(aggregate())
+  # Repeated and foreign rows, differing values, and inconsistent metadata stay intact.
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet"), bind_rows(summary_tables)),
+    identical(arrow::read_parquet("aggregate/credible_sets.parquet"), bind_rows(cs_tables)))
+  check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables))
+  check_tsv("aggregate/covariate_explained_variants.tsv", bind_rows(diagnostic_tables))
+
+  # Each list controls its own row order. A repeated path contributes its rows again.
+  without_warnings(aggregate(summary_paths = c("2 summary.parquet", "1 summary.parquet", "1 summary.parquet"),
+    cs_paths = c("2 cs.parquet", "1 cs.parquet", "1 cs.parquet"),
+    index_paths = c("2 index.tsv", "1 index.tsv", "1 index.tsv"),
+    diagnostic_paths = c("2 diagnostic.tsv", "1 diagnostic.tsv", "1 diagnostic.tsv")))
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet"),
+                      bind_rows(summary_tables[c(2, 1, 1)])),
+    identical(arrow::read_parquet("aggregate/credible_sets.parquet"),
+              bind_rows(cs_tables[c(2, 1, 1)])))
+  check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables[c(2, 1, 1)]))
+  check_tsv("aggregate/covariate_explained_variants.tsv", bind_rows(diagnostic_tables[c(2, 1, 1)]))
+  # Expected-outcome content does not set row order or enforce completeness.
+  writeLines(character(), "expected.tsv")
+  without_warnings(aggregate())
+  check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables))
+
+  # Older files receive unknown SD values. Supplied SD values keep their type.
+  mixed_sd <- list(select(summary_tables[[1L]], -phenotype_residual_SD), summary_tables[[2L]])
+  emit(sums = mixed_sd)
+  without_warnings(aggregate())
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet"), bind_rows(mixed_sd)))
+  text_sd <- lapply(summary_tables, function(table) {
+    mutate(table, phenotype_residual_SD = as.character(phenotype_residual_SD))
+  })
+  emit(sums = text_sd)
+  without_warnings(aggregate())
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet"), bind_rows(text_sd)))
+  mixed_text_sd <- list(select(summary_tables[[1L]], -phenotype_residual_SD), text_sd[[2L]])
+  emit(sums = mixed_text_sd)
+  without_warnings(aggregate())
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet"), bind_rows(mixed_text_sd)))
+
+  # Fill absent metadata only. Conflicting or unknown index values stay unknown.
+  metadata_index <- tibble(outcome_id = c("a", "a", "b", "conflict", "conflict"),
+    converged = c(TRUE, TRUE, FALSE, TRUE, FALSE),
+    status = c("FAILED", "FAILED", "CONVERGED", "FAILED", "NONCONVERGED"))
+  unknown_index <- tibble(outcome_id = "without convergence", status = "FAILED")
+  metadata_summary <- tibble(molecular_trait_id = c("a", "a", "b", "conflict", "unknown",
+                                                    "without convergence"),
+    variant = "same label", pip = c(.1, .2, .3, .4, .5, .6),
+    feature_converged = c(NA, FALSE, NA, NA, NA, NA))
+  metadata_summary2 <- tibble(molecular_trait_id = "b", variant = "other label", pip = .7)
+  metadata_cs <- tibble(molecular_trait_id = c("a", "b", "conflict", "unknown", "without convergence"),
+    cs_id = c("a", "b", "c", "d", "e"))
+  metadata_cs2 <- tibble(molecular_trait_id = "a", cs_id = "explicit", feature_converged = FALSE)
+  emit(sums = list(metadata_summary, metadata_summary2), sets = list(metadata_cs, metadata_cs2),
+    indices = list(metadata_index, unknown_index))
+  without_warnings(aggregate())
+  actual <- arrow::read_parquet("aggregate/susie.parquet")
+  expected <- bind_rows(metadata_summary, metadata_summary2) %>%
+    mutate(feature_converged = c(TRUE, FALSE, FALSE, NA, NA, NA, FALSE),
+           phenotype_residual_SD = NA_real_)
+  stopifnot(identical(actual[names(expected)], expected),
+    is.double(actual$phenotype_residual_SD), all(is.na(actual$phenotype_residual_SD)))
+  actual_cs <- arrow::read_parquet("aggregate/credible_sets.parquet")
+  expected_cs <- bind_rows(metadata_cs, metadata_cs2) %>%
+    mutate(feature_converged = c(TRUE, FALSE, NA, NA, NA, FALSE))
+  stopifnot(identical(actual_cs[names(expected_cs)], expected_cs))
+  check_tsv("aggregate/outcome_index.tsv", bind_rows(metadata_index, unknown_index))
+
+  # Empty tables do not require successful statuses or credible-set counts.
+  empty_summary <- tibble(molecular_trait_id = character(), variant = character())
+  empty_cs <- tibble(molecular_trait_id = character(), cs_id = character())
+  emit(sums = list(empty_summary, empty_summary), sets = list(empty_cs, empty_cs))
+  without_warnings(aggregate())
+  empty <- arrow::read_parquet("aggregate/susie.parquet")
+  stopifnot(nrow(empty) == 0L, is.double(empty$phenotype_residual_SD),
+    is.logical(empty$feature_converged),
+    nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 0L)
+  check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables))
+
+  # File readability and WDL localization errors still stop loading.
   emit()
-  # Backfill old files from the index, including retained NONCONVERGED sets.
-  convergence_index <- index %>%
-    mutate(status = if_else(outcome_id == "a", "NONCONVERGED", "CONVERGED"),
-           converged = outcome_id != "a", credible_set_count = 1L) %>%
-    slice(3:1)
-  convergence_summary <- bind_rows(summary,
-    bind_cols(own[2L, ], select(summary, -all_of(names(own)))) %>%
-      mutate(molecular_trait_id = "b", cs_id = "b_1"),
-    bind_cols(own[3L, ], select(summary, -all_of(names(own)))) %>%
-      mutate(molecular_trait_id = "c", cs_id = "c_1"))
-  convergence_cs <- bind_rows(cs,
-    bind_cols(own[2L, ], select(cs, -all_of(names(own)))) %>%
-      mutate(molecular_trait_id = "b", cs_id = "b_1"),
-    bind_cols(own[3L, ], select(cs, -all_of(names(own)))) %>%
-      mutate(molecular_trait_id = "c", cs_id = "c_1"))
-  check_convergence <- function() {
-    actual_summary <- arrow::read_parquet("aggregate/susie.parquet")
-    actual_cs <- arrow::read_parquet("aggregate/credible_sets.parquet")
-    stopifnot(identical(actual_summary$feature_converged, c(FALSE, TRUE, TRUE)),
-      identical(actual_cs$feature_converged, c(FALSE, TRUE, TRUE)),
-      identical(actual_summary[names(convergence_summary)], convergence_summary),
-      identical(actual_cs[names(convergence_cs)], convergence_cs))
+  error(aggregate(expected_path = "missing expected.tsv"), "read|exist|local")
+  error(aggregate(expected_path = "gs://bucket/expected.tsv"), "localization")
+  for (argument in c("summary_paths", "cs_paths", "index_paths", "diagnostic_paths")) {
+    invalid <- setNames(list("missing batch input"), argument)
+    error(do.call(aggregate, invalid), "read|exist|local")
+    invalid[[1L]] <- "gs://bucket/batch-input"
+    error(do.call(aggregate, invalid), "localization")
   }
-  emit(idx = convergence_index, sum = convergence_summary, sets = convergence_cs)
-  aggregate()
-  check_convergence()
-  # Old and new files can be combined. Logical NA uses the known index value.
-  emit(idx = convergence_index,
-    sum = mutate(convergence_summary, feature_converged = c(FALSE, TRUE, NA)),
-    sets = mutate(convergence_cs, feature_converged = c(NA, TRUE, TRUE)))
-  arrow::write_parquet(filter(convergence_summary, batch_id == "batch_000001"), "1 summary.parquet")
-  arrow::write_parquet(filter(convergence_cs, batch_id == "batch_000002"), "2 cs.parquet")
-  aggregate()
-  check_convergence()
-  for (kind in c("summary", "sets")) {
-    for (invalid_flag in list(TRUE, "FALSE", 0)) {
-      arguments <- list(idx = convergence_index, sum = convergence_summary, sets = convergence_cs)
-      arguments[[if (kind == "summary") "sum" else "sets"]] <-
-        mutate(arguments[[if (kind == "summary") "sum" else "sets"]], feature_converged = invalid_flag)
-      do.call(emit, arguments)
-      error(aggregate(), "feature_converged|logical|boolean")
-    }
-  }
-  emit()
-  for (kind in c("summary", "cs")) {
-    empty <- if (kind == "summary") summary[FALSE, ] else cs[FALSE, ]
-    arrow::write_parquet(mutate(empty, feature_converged = character()), paste0("2 ", kind, ".parquet"))
-    error(aggregate(), "feature_converged|logical|boolean")
-    emit()
-  }
-  # Missing legacy metadata stays missing, including when all files are old.
-  legacy_summary <- select(summary, -phenotype_residual_SD)
-  emit(sum = legacy_summary)
-  aggregate()
-  legacy <- arrow::read_parquet("aggregate/susie.parquet")
-  stopifnot("phenotype_residual_SD" %in% names(legacy),
-    is.double(legacy$phenotype_residual_SD), all(is.na(legacy$phenotype_residual_SD)))
-  emit()
-  arrow::write_parquet(filter(legacy_summary, batch_id == "batch_000002"), "2 summary.parquet")
-  aggregate()
-  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, 1.25))
-  # Both schemas can have rows; an old outcome must not inherit a new outcome's SD.
-  other_summary <- bind_cols(own[3L, ], select(summary, -all_of(names(own)))) %>%
-    mutate(molecular_trait_id = "c", variant = "1_20_A_G", position = 20L,
-           cs_id = "c_1", phenotype_residual_SD = 2.5)
-  other_cs <- bind_cols(own[3L, ], select(cs, -all_of(names(own)))) %>%
-    mutate(molecular_trait_id = "c", cs_id = "c_1")
-  emit(idx = mutate(index, credible_set_count = if_else(outcome_id == "c", 1L, credible_set_count)),
-       sum = bind_rows(summary, other_summary), sets = bind_rows(cs, other_cs))
-  arrow::write_parquet(legacy_summary, "1 summary.parquet")
-  aggregate()
-  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD,
-                      c(NA_real_, 2.5)))
-  for (invalid_scale in list("1.25", Inf, -1)) {
-    emit(sum = mutate(summary, phenotype_residual_SD = invalid_scale))
-    error(aggregate(), "phenotype_residual_SD|numeric|finite|nonnegative")
-  }
-  emit()
-  arrow::write_parquet(mutate(summary[FALSE, ], phenotype_residual_SD = character()), "2 summary.parquet")
-  error(aggregate(), "phenotype_residual_SD|numeric|schema")
-  for (valid_scale in c(0, NA_real_)) {
-    emit(sum = mutate(summary, phenotype_residual_SD = valid_scale))
-    aggregate()
-    stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, valid_scale))
-  }
-  emit()
-  # IDs decoded from quoted BED fields must survive compact TSV aggregation.
-  quote_id <- function(table) table %>%
-    mutate(across(any_of(c("gene_id", "outcome_id", "phenotype_id", "molecular_trait_id")),
-                  ~ replace(.x, .x == "a" | .x == "A", 'a"quoted')))
-  readr::write_tsv(quote_id(wanted), "expected.tsv", quote = "needed")
-  emit(idx = quote_id(index), sum = quote_id(summary),
-       sets = quote_id(cs), diag = quote_id(diagnostic))
-  aggregate()
-  stopifnot(identical(read_tsv("aggregate/outcome_index.tsv")$phenotype_id,
-                      c('a"quoted', "b", "c")),
-            identical(read_tsv("aggregate/covariate_explained_variants.tsv")$molecular_trait_id,
-                      'a"quoted'))
-  readr::write_tsv(wanted, "expected.tsv")
-  # Additional features can belong to this gene while being on another chromosome.
-  for (variant_id in c("2_10_A_G", "chr2_10_A_G", "chr2_10_A_G_extra",
-                       "chrchr2_10_A_G", "CHRchr2_10_A_G")) {
-    emit(sum = mutate(summary, variant = variant_id, chromosome = "2"))
-    aggregate()
-    retained <- arrow::read_parquet("aggregate/susie.parquet")
-    stopifnot(identical(retained$variant, variant_id), retained$chromosome == "2",
-              retained$outcome_id == "a")
-  }
-  # Variant chromosome metadata must agree with the ID, not the gene chromosome.
-  for (invalid_summary in list(
-    mutate(summary, variant = "chr2_10_A_G"),
-    mutate(summary, chromosome = NA_character_),
-    mutate(summary, variant = NA_character_),
-    mutate(summary, variant = "chr2"),
-    mutate(summary, variant = "chr2_missing_A_G"),
-    mutate(summary, variant = "chr2_10__G"),
-    mutate(summary, variant = "chr2_10_A_"),
-    mutate(summary, variant = "chr_10_A_G"))) {
-    emit(sum = invalid_summary)
-    error(aggregate(), "chromosome|variant|ID|autosome")
-  }
-  emit()
-  # A complete status index cannot hide missing or unrelated high-purity variants.
-  summary_cases <- list(
-    missing_high_purity_summary = list(sum = summary[FALSE, ]),
-    unknown_summary_set = list(sum = mutate(summary, cs_id = "unknown")),
-    wrong_set_owner = list(sum = mutate(summary, outcome_id = "b", phenotype_id = "b",
-                                        molecular_trait_id = "b")),
-    summary_for_low_purity_set = list(sets = mutate(cs, low_purity = TRUE)),
-    missing_set_member = list(sets = mutate(cs, cs_size = 2), sum = mutate(summary, cs_size = 2L)),
-    wrong_summary_size = list(sum = mutate(summary, cs_size = 2L)),
-    wrong_summary_flag = list(sum = mutate(summary, has_covariate_explained_variant = TRUE))
-  )
-  accepted_cases <- names(summary_cases)[vapply(summary_cases, function(arguments) {
-    do.call(emit, arguments)
-    result <- tryCatch({
-      aggregate()
-      NULL
-    }, error = identity)
-    !inherits(result, "error")
-  }, logical(1))]
-  if (length(accepted_cases)) stop("Aggregator accepted invalid credible-set summaries: ",
-                                  paste(accepted_cases, collapse = ", "))
-  # Low-purity sets remain in the index and CS table, with no summary variant rows.
-  emit(sum = summary[FALSE, ], sets = mutate(cs, low_purity = TRUE))
-  aggregate()
-  stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 0L,
-            nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 1L)
-  # A multi-variant set is valid only with all distinct variant rows present.
-  two_variant_summary <- bind_rows(summary, mutate(summary, variant = "1_12_A_T", position = 12L)) %>%
-    mutate(cs_size = 2L)
-  emit(sum = two_variant_summary, sets = mutate(cs, cs_size = 2))
-  aggregate()
-  stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 2L,
-    identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, c(1.25, 1.25)))
-  for (bad_scale in c(2, NA_real_)) {
-    inconsistent <- two_variant_summary
-    inconsistent$phenotype_residual_SD[[2L]] <- bad_scale
-    emit(sum = inconsistent, sets = mutate(cs, cs_size = 2))
-    error(aggregate(), "phenotype_residual_SD|inconsistent")
-  }
-  emit()
-  # Historical empty schemas have numeric ID/boolean columns; nonempty data stay numeric.
-  empty_cs <- bind_cols(own[FALSE, ], InitEmptyCS())
-  arrow::write_parquet(empty_cs, "2 cs.parquet")
-  aggregate()
-  stopifnot(is.numeric(arrow::read_parquet("aggregate/credible_sets.parquet")$cs_log10bf))
-  emit(idx = index[-3, ])
-  error(aggregate(), "missing|empty|batch")
-  emit(idx = bind_rows(index, index[1, ]))
-  error(aggregate(), "duplicate")
-  emit(idx = mutate(index, status = "FAILED"))
-  error(aggregate(), "FAILED")
-  emit(sum = mutate(summary, phenotype_id = "foreign"))
-  error(aggregate(), "ownership|foreign|expected")
-  emit(sets = select(cs, -low_purity))
-  error(aggregate(), "schema|column")
-  emit(sets = mutate(cs, has_covariate_explained_variant = "FALSE"))
-  error(aggregate(), "logical|boolean|type")
-  emit(idx = mutate(index, converged = TRUE))
-  error(aggregate(), "converged|status")
-  emit(diag = mutate(diagnostic, gene_id = "foreign"))
-  error(aggregate(), "ownership|foreign")
-  emit(idx = mutate(index, chromosome = "chr2"))
-  error(aggregate(), "chromosome")
-  emit(sum = mutate(summary, variant = 123))
-  error(aggregate(), "schema|text|ID")
-  emit(idx = mutate(index, seed = 3e9))
-  error(aggregate(), "seed")
-  # All-empty summaries are valid only with complete, successful zero-CS statuses.
-  zero_index <- mutate(index, credible_set_count = 0L)
-  emit(idx = zero_index, sum = summary[FALSE, ], sets = empty_cs, diag = diagnostic[FALSE, ])
-  aggregate()
-  stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 0L,
-            nrow(read_tsv("aggregate/outcome_index.tsv")) == 3L,
-            is.double(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD),
-            is.logical(arrow::read_parquet("aggregate/susie.parquet")$feature_converged),
-            is.logical(arrow::read_parquet("aggregate/credible_sets.parquet")$feature_converged))
-  emit(idx = zero_index, sum = select(summary[FALSE, ], -phenotype_residual_SD),
-       sets = empty_cs, diag = diagnostic[FALSE, ])
-  aggregate()
-  stopifnot(is.double(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD))
-  emit(idx = zero_index[-2, ], sum = summary[FALSE, ], sets = empty_cs, diag = diagnostic[FALSE, ])
-  error(aggregate(), "Missing|missing")
-  emit(idx = bind_rows(zero_index, zero_index[1, ]), sum = summary[FALSE, ],
-       sets = empty_cs, diag = diagnostic[FALSE, ])
-  error(aggregate(), "duplicate|Duplicate")
-  emit()
-  malformed <- readLines("1 index.tsv")
-  malformed[[2]] <- paste0(malformed[[2]], "\textra-field")
-  writeLines(malformed, "1 index.tsv")
-  error(aggregate(), "parse|column|schema")
-  emit()
-  unlink("1 summary.parquet")
-  error(aggregate(), "read|exist|local")
-  error(aggregatePgenBatches("gs://bucket/expected.tsv", character(), character(),
-                            character(), character(), "bad"), "localization")
   error(planPgenBatches("gs://bucket/phenotype.bed", "small.tsv", "chr1", 5,
                        "bad"), "localization")
-  # The command entrypoints must pass named paths, including spaces, unchanged.
+
+  # The command entrypoints preserve named paths, including spaces and repeats.
   chr_path <- file.path(root, "chromosomes file.txt")
   writeLines("chr1", chr_path)
   previous_functions <- Sys.getenv("SUSIER_FUNCTIONS_PATH", unset = NA_character_)
@@ -484,19 +327,18 @@ run_pgen_batch_tests <- function(repo_dir) {
                                 "--output-dir", "cli plan"))
   stopifnot(nrow(read_tsv("cli plan/expected_outcomes.tsv")) == 101L)
   emit()
-  writeLines(c("1 summary.parquet", "2 summary.parquet"), "summaries list.txt")
-  writeLines(c("1 cs.parquet", "2 cs.parquet"), "sets list.txt")
-  writeLines(c("1 index.tsv", "2 index.tsv"), "indices list.txt")
-  writeLines(c("1 diagnostic.tsv", "2 diagnostic.tsv"), "diagnostics list.txt")
+  writeLines(c("2 summary.parquet", "1 summary.parquet", "1 summary.parquet"), "summaries list.txt")
+  writeLines(c("2 cs.parquet", "1 cs.parquet", "1 cs.parquet"), "sets list.txt")
+  writeLines(c("2 index.tsv", "1 index.tsv", "1 index.tsv"), "indices list.txt")
+  writeLines(c("2 diagnostic.tsv", "1 diagnostic.tsv", "1 diagnostic.tsv"), "diagnostics list.txt")
   run_cli("aggregate_pgen_susie.R", c("--expected-outcomes", "expected.tsv",
       "--summary-files", "summaries list.txt", "--credible-set-files", "sets list.txt",
       "--index-files", "indices list.txt", "--diagnostic-files", "diagnostics list.txt",
       "--output-dir", "cli aggregate"))
-  stopifnot(nrow(read_tsv("cli aggregate/outcome_index.tsv")) == 3L)
-  error(aggregatePgenBatches("expected.tsv", c("gs://bucket/a.parquet", "2 summary.parquet"),
-                            c("1 cs.parquet", "2 cs.parquet"),
-                            c("1 index.tsv", "2 index.tsv"),
-                            c("1 diagnostic.tsv", "2 diagnostic.tsv"), "bad"), "localization")
+  stopifnot(identical(arrow::read_parquet("cli aggregate/susie.parquet"),
+                      bind_rows(summary_tables[c(2, 1, 1)])))
+  check_tsv("cli aggregate/outcome_index.tsv", bind_rows(index_tables[c(2, 1, 1)]))
+  message("PGEN batch planning and simple aggregation tests passed")
 }
 
 if (sys.nframe() == 0L) {

@@ -205,11 +205,11 @@ All credible sets from a fit that did not converge have `feature_converged = fal
 These rows remain in the outputs. Filter on `feature_converged` when an analysis
 requires converged fits. This flag does not describe credible-set purity.
 
-Aggregation takes convergence from the validated outcome index, so it can add
-the flag to older Parquets without another fit. A supplied flag must agree with
-the index. Formatting an old saved fit with no convergence field records a
-missing flag until an outcome index supplies that value. Empty outputs retain a
-logical column. Shared checkpointed-workflow schemas are unchanged.
+Aggregation fills missing convergence flags from the supplied outcome index.
+It keeps supplied flags. Unknown or conflicting index values leave the missing
+flag unknown. Formatting an old saved fit with no convergence field records a
+missing flag. Empty outputs retain a logical column. Shared checkpointed
+workflow schemas are unchanged.
 
 The `pip` column in primary and full variant tables is the native fitted
 SuSiE variant PIP across effects. It is copied from the saved fit's `pip`
@@ -232,29 +232,30 @@ The exporter uses predictor indices to assign credible-set membership. Equal
 labels therefore do not create extra membership rows. The output columns stay
 the same.
 
-Aggregation keeps all rows with repeated variant labels and reports a warning
-with the source file, outcome, and row counts. It does not combine or remove
-their PIPs or effect estimates. Older exports can contain extra rows from a
-join on variant labels. Those rows are also kept. If repeated labels prevent
-an exact check of the physical members, aggregation warns about this limit.
-Definite credible-set size errors still stop aggregation. To correct extra
-membership rows in an old export, format its saved RDS fit again. This does
-not require another model fit. To combine existing batch files as supplied,
-run aggregation again with the updated image.
+Aggregation reads the supplied tables and concatenates their rows in file-list
+order. It keeps repeated labels, repeated rows, and repeated file paths. It does
+not check outcome ownership, fit status, credible-set counts or membership,
+variant labels, PIPs, scales, or agreement between metadata fields. Missing
+columns receive missing values when the tables are combined. Supplied columns
+and values stay in the output. Files must be readable, and their column types
+must be compatible with table binding and Parquet writing.
+
+Older exports can contain extra rows from a join on variant labels. Aggregation
+keeps those rows too. To correct extra membership rows in an old export, format
+its saved RDS fit again. This does not require another model fit.
 
 Each chromosome manifest has one row per gene. Its columns are `chromosome`, `gene_id`, `gene_key`, `batch_id`, `rds_uri`, `summary_parquet_uri`, `lbf_parquet_uri`, `full_parquet_uri`, `covariate_explained_variants_uri`, `variant_position_summary_uri`, `outcome_index_uri`, `log_uri`, and `provenance_uri`. Chromosome values use `1` through `22`. Original gene IDs are preserved. A gene with several outcomes has one row and one RDS containing those outcome fits. Genes with no credible sets or nonconverged outcomes remain in the manifests; their linked outcome index gives the per-outcome status.
 
-The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The manifest locations remain output-only string metadata. The full files are supplied separately as typed `Array[File]` inputs, so Cromwell localizes them before the aggregate command reads them. RDS, LBF, and log locations in the metadata lists are not opened. The aggregate task checks all nine manifest roles and writes the manifests alongside the combined tables.
+The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The manifest locations remain output-only string metadata. The full files are supplied separately as typed `Array[File]` inputs, so Cromwell localizes them before the aggregate command reads them. RDS, LBF, and log locations in the metadata lists are not opened. The manifest writer matches artifact names to the supplied gene keys. Missing artifact locations remain missing. It does not check fit status or gene ownership.
 
 For a direct call to `aggregate_pgen_susie.R`, supply all five optional metadata-list arguments together: `--gene-rds-uris-file`, `--gene-parquet-uris-file`, `--gene-tsv-uris-file`, `--gene-log-uris-file`, and `--gene-provenance-uris-file`. Each argument names a local newline-delimited list of completed output locations. These list contents are metadata, never file inputs to open. The WDL creates all five lists during command rendering. Direct CLI calls without them keep their previous outputs. Use an image containing the updated aggregation script when running the updated WDL.
 
 The main workflow also supplies `--full-susie-files`, a task-local list of
 localized full-result files. The aggregator writes one Parquet file through
-bounded Arrow batches. It preserves the native columns and adds outcome
-ownership from the validated index. It checks every expected gene file,
-including empty files, and rejects missing files, repeated file paths, foreign
-outcomes, and incompatible inputs. Repeated variant labels are retained. The
-final file appears only after all inputs pass validation.
+bounded Arrow batches. It preserves the native columns and adds missing outcome
+metadata from the supplied index. Unknown or conflicting index values stay
+missing. Supplied ownership columns stay unchanged. The final file appears
+only after all supplied inputs have been read and the combined file is written.
 
 Aggregation does not recover rows absent from the source full files. The current
 formatter can write an empty full file for an outcome with no retained credible
@@ -278,8 +279,8 @@ Rscript aggregate_pgen_susie.R \
   --output-dir aggregate
 ```
 
-The list needs one readable local path per line and one full file per expected
-gene. URI strings inside that list are rejected. The full-only mode does not
+The list needs one readable local path per line. URI strings inside that list
+are rejected. The full-only mode does not
 open genotypes or invoke PLINK or SuSiE. Ordinary direct aggregation without
 `--full-susie-files` keeps its previous outputs.
 
@@ -315,7 +316,11 @@ An explicitly associated additional variant keeps its supplied chromosome, inclu
 
 Each gene's provenance records scientific files by argument role, with explicit presence and SHA256 values. This includes optional ancestry, variant-list, and additional-genotype files. Preparation records the source triplet once; each worker verifies only its own subset and companion inputs. The record includes MAF, effective variant-filter mode, cis distance, phenotype selection, missing-code policy, seed settings, package versions, and SHA256 values for the pipeline scripts and functions. Variant lists take precedence over ancestry MAF. The image reference comes from the typed WDL image input; local runs record `local` unless `SUSIER_RUNTIME_IMAGE` is set. Upstream source SHAs come from the image environment when available. An image tag records the requested reference; use a digest for a fixed image identity.
 
-The aggregator reads explicit batch summary, credible-set, index, and diagnostic Files. It does not read gene RDS files. It rejects missing or duplicate outcomes, failed statuses, foreign outcomes, unreadable inputs, and incompatible table schemas. Fits that did not converge remain visible in the index.
+The aggregator reads explicit batch summary, credible-set, index, and diagnostic
+Files. It does not read gene RDS files. It combines the supplied rows without
+scientific consistency checks. Fits that did not converge and failed statuses
+remain visible in the index. File-read, table-binding, and write errors still
+stop the command.
 
 Cromwell retries operate on complete batch tasks. There is no durable checkpoint for a completed gene within a preempted batch. A restarted batch repeats its genes. Use smaller batches when the cost of repeating a batch is too high.
 

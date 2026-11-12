@@ -68,21 +68,23 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     })
     warnings
   }
-  # Reversed file order includes an empty first file and must retain native values.
+  # Keep the supplied file order, including an empty first file.
   stopifnot(identical(aggregate(rev(paths)), output))
   actual <- arrow::read_parquet(output)
-  expected <- dplyr::bind_rows(tables[1:2])
+  expected <- dplyr::bind_rows(tables[c(2L, 1L)])
+  forward_expected <- dplyr::bind_rows(tables[1:2])
   stopifnot(identical(actual[names(expected)], expected),
     all(c("batch_id", "gene_id", "outcome_id", "phenotype_id", "gene_key") %in% names(actual)),
     all(actual$molecular_trait_id == actual$outcome_id),
     identical(actual$phenotype_id, index$phenotype_id[match(actual$outcome_id, index$outcome_id)]),
     sum(is.na(actual$cs_index)) == 6L,
-    identical(actual$X_column_scale_factors, expected$X_column_scale_factors),
-    identical(actual$pip, expected$pip),
-    identical(actual$phenotype_residual_SD, c(2, 2, 2, 0, 0, 1.5, 1.5, 1.5)),
-    identical(actual$feature_converged, c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)))
+    identical(actual$phenotype_residual_SD, c(1.5, 1.5, 1.5, 2, 2, 2, 0, 0)),
+    identical(actual$feature_converged, c(TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, TRUE)))
+  aggregate()
+  forward <- arrow::read_parquet(output)
+  stopifnot(identical(forward[names(forward_expected)], forward_expected))
 
-  # Repeated labels within and across record batches retain all native values.
+  # Equal labels and differing values are ordinary rows, within or across batches.
   differing_row <- tables[[1L]][1L, ] |>
     dplyr::mutate(pip = .9, z = -3, posterior_mean = -.4, posterior_sd = .6,
                   alpha1 = .8, mu_1 = -.7, mu2_1 = .9, source_marker = "different")
@@ -96,36 +98,48 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     repeated_tables <- tables
     repeated_tables[[1L]] <- repeated_cases[[case]]
     write_tables(repeated_tables)
-    warnings <- capture_warnings(aggregate(batch_size = 2L))
+    stopifnot(length(capture_warnings(aggregate(batch_size = 2L))) == 0L)
     retained <- arrow::read_parquet(output)
     expected_repeated <- dplyr::bind_rows(repeated_tables[1:2])
-    stopifnot(identical(retained[names(expected_repeated)], expected_repeated),
-      any(grepl(paths[[1L]], warnings, fixed = TRUE)),
-      any(grepl("batch=batch1", warnings, fixed = TRUE)),
-      any(grepl("outcome=outcome1", warnings, fixed = TRUE)),
-      any(grepl("repeated_row_count=1", warnings, fixed = TRUE)))
+    stopifnot(identical(retained[names(expected_repeated)], expected_repeated))
   }
   write_tables()
-  aggregate()
 
-  # Mixed old and new files use the index, including logical NA from old fits.
+  # Repeated paths, subsets, aliases, and arbitrary names retain their rows.
+  aggregate(c(paths[[2L]], paths[[1L]], paths[[2L]], paths[[3L]]))
+  repeated_paths <- dplyr::bind_rows(tables[c(2L, 1L, 2L)])
+  stopifnot(identical(arrow::read_parquet(output)[names(repeated_paths)], repeated_paths))
+  alias_dir <- file.path(root, "aliases")
+  dir.create(alias_dir)
+  alias <- file.path(alias_dir, basename(paths[[1L]]))
+  stopifnot(file.symlink(paths[[1L]], alias))
+  aggregate(c(paths[[1L]], alias))
+  duplicated_source <- dplyr::bind_rows(tables[c(1L, 1L)])
+  stopifnot(identical(arrow::read_parquet(output)[names(duplicated_source)], duplicated_source))
+  foreign <- file.path(root, "arbitrary subset.parquet")
+  stopifnot(file.copy(paths[[1L]], foreign))
+  aggregate(foreign)
+  stopifnot(identical(arrow::read_parquet(output)[names(tables[[1L]])], tables[[1L]]))
+  aggregate(paths[[3L]])
+  stopifnot(nrow(arrow::read_parquet(output)) == 0L)
+
+  # Supplied convergence values stay intact; only missing values use the index.
   convergence_tables <- tables
-  convergence_tables[[1L]]$feature_converged <- c(NA, FALSE, FALSE, TRUE, NA)
+  convergence_tables[[1L]]$feature_converged <- c(NA, TRUE, FALSE, FALSE, NA)
   convergence_tables[[3L]]$feature_converged <- logical()
   write_tables(convergence_tables)
   aggregate()
   mixed_convergence <- arrow::read_parquet(output)
-  stopifnot(identical(mixed_convergence$feature_converged, actual$feature_converged),
-    identical(mixed_convergence[names(expected)], expected))
-  write_tables()
+  stopifnot(identical(mixed_convergence$feature_converged,
+    c(FALSE, TRUE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE)),
+    identical(mixed_convergence[names(forward_expected)], forward_expected))
 
-  # Old files retain an explicit missing scale; mixing old and new does not infer one.
+  # Missing legacy scale columns become numeric NA. Existing values are copied.
   legacy_tables <- lapply(tables, function(table) dplyr::select(table, -phenotype_residual_SD))
   write_tables(legacy_tables)
   aggregate()
   legacy <- arrow::read_parquet(output)
-  stopifnot("phenotype_residual_SD" %in% names(legacy),
-    is.double(legacy$phenotype_residual_SD), all(is.na(legacy$phenotype_residual_SD)))
+  stopifnot(is.double(legacy$phenotype_residual_SD), all(is.na(legacy$phenotype_residual_SD)))
   mixed_tables <- tables
   mixed_tables[[1L]] <- legacy_tables[[1L]]
   write_tables(mixed_tables)
@@ -133,132 +147,142 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
   mixed <- arrow::read_parquet(output)
   stopifnot(is.double(mixed$phenotype_residual_SD),
     identical(mixed$phenotype_residual_SD, c(rep(NA_real_, 5), 1.5, 1.5, 1.5)))
-  write_tables()
 
-  # Keep the chromosome aliases accepted by the compact aggregation path.
-  for (variant_id in c("2_104_A_G", "chr2_104_A_G", "chr2_104_A_G_extra",
-      "chrchr2_104_A_G", "CHRchr2_104_A_G")) {
-    for (chromosome in c("2", "chr2", "chrchr2", "CHRchr2")) {
-      aliased <- tables
-      aliased[[1L]]$variant[[4L]] <- variant_id
-      aliased[[1L]]$chromosome[[4L]] <- chromosome
-      write_tables(aliased)
-      aggregate()
-      retained <- arrow::read_parquet(output)
-      stopifnot(retained$variant[[4L]] == variant_id,
-        retained$chromosome[[4L]] == chromosome)
-    }
-  }
+  # An absent optional column must use the supplied column type in other files.
+  character_scale <- tables
+  character_scale[[1L]] <- dplyr::select(character_scale[[1L]], -phenotype_residual_SD)
+  character_scale[[2L]]$phenotype_residual_SD <- as.character(character_scale[[2L]]$phenotype_residual_SD)
+  character_scale[[3L]] <- dplyr::select(character_scale[[3L]], -phenotype_residual_SD)
+  write_tables(character_scale)
+  aggregate()
+  character_merged <- arrow::read_parquet(output)
+  character_expected <- dplyr::bind_rows(character_scale[1:2])
+  stopifnot(identical(character_merged[names(character_expected)], character_expected),
+    identical(character_merged$phenotype_residual_SD, c(rep(NA_character_, 5), rep("1.5", 3L))))
+
+  # Use the column union. Missing native or extra columns receive NA values.
+  union_tables <- tables
+  union_tables[[1L]] <- dplyr::select(union_tables[[1L]], -alpha2, -X_column_scale_factors)
+  union_tables[[2L]] <- union_tables[[2L]] |>
+    dplyr::select(-source_marker) |>
+    dplyr::mutate(extra_annotation = c("first", "second", "third"))
+  write_tables(union_tables)
+  aggregate()
+  union_expected <- dplyr::bind_rows(union_tables[1:2])
+  stopifnot(identical(arrow::read_parquet(output)[names(union_expected)], union_expected))
+  arbitrary <- tibble::tibble(source_note = c("first", "second"), pip = c(-2, 3))
+  arbitrary_path <- file.path(root, "table without native fields.parquet")
+  arrow::write_parquet(arbitrary, arbitrary_path)
+  aggregate(arbitrary_path)
+  arbitrary_merged <- arrow::read_parquet(output)
+  stopifnot(identical(arbitrary_merged[names(arbitrary)], arbitrary),
+    all(is.na(arbitrary_merged$gene_id)), all(is.na(arbitrary_merged$feature_converged)))
+
+  # Scientific inconsistencies do not prevent a merge or change source values.
+  inconsistent <- tables
+  inconsistent[[1L]] <- inconsistent[[1L]] |>
+    dplyr::mutate(molecular_trait_id = c("outcome1", "outcome3", "unknown", NA, ""),
+      variant = c("not a variant", "chrX_999_T_C", "same", "same", "same"),
+      chromosome = "different", position = "not a coordinate", ref = "T", alt = "C",
+      pip = c(-1, 2, NA_real_, Inf, .25), X_column_scale_factors = c(0, -1, Inf, NA_real_, 1),
+      phenotype_residual_SD = c(2, -1, Inf, NA_real_, 3),
+      cs_id = "unrelated CS", cs_index = "not native", low_purity = FALSE)
+  permissive_index <- index |>
+    dplyr::mutate(status = "FAILED", credible_set_count = -1L,
+      chromosome = "X", gene_key = "supplied key")
+  write_index(permissive_index)
+  write_tables(inconsistent)
+  stopifnot(length(capture_warnings(aggregate())) == 0L)
+  retained <- arrow::read_parquet(output)
+  inconsistent_expected <- dplyr::bind_rows(inconsistent[1:2])
+  stopifnot(identical(retained[names(inconsistent_expected)], inconsistent_expected),
+    identical(retained$gene_id[1:2], c("gene A", "gene B")),
+    all(is.na(retained$gene_id[3:5])), all(is.na(retained$feature_converged[3:5])))
+
+  # Conflicting index duplicates cannot multiply rows or supply guessed metadata.
+  ambiguous_index <- dplyr::bind_rows(index, index[1L, ] |>
+    dplyr::mutate(gene_id = "other gene", phenotype_id = "other phenotype", converged = TRUE))
+  write_index(ambiguous_index)
+  write_tables()
+  stopifnot(length(capture_warnings(aggregate())) == 0L)
+  ambiguous <- arrow::read_parquet(output)
+  stopifnot(identical(ambiguous[names(forward_expected)], forward_expected),
+    all(is.na(ambiguous$feature_converged[1:3])), all(is.na(ambiguous$gene_id[1:3])),
+    identical(ambiguous$feature_converged[4:8], rep(TRUE, 5L)))
+
+  # Preserve source ownership and metadata, including supplied NA values.
+  supplied <- tables
+  supplied[[1L]] <- supplied[[1L]] |>
+    dplyr::mutate(batch_id = c("source batch", NA, "source batch", "source batch", "source batch"),
+      gene_id = "source gene", outcome_id = "source outcome", phenotype_id = "source phenotype",
+      gene_key = "source key", status = "source status", converged = FALSE,
+      credible_set_count = 99L, extra_metadata = "keep this")
+  write_index()
+  write_tables(supplied)
+  aggregate()
+  retained <- arrow::read_parquet(output)
+  stopifnot(identical(retained[1:5, names(supplied[[1L]])], supplied[[1L]]),
+    identical(retained$batch_id[6:8], rep("batch2", 3L)),
+    all(is.na(retained$extra_metadata[6:8])))
+
+  # A sparse index can provide convergence without ownership metadata.
+  write_index(dplyr::select(index, outcome_id, converged))
+  write_tables()
+  aggregate()
+  sparse <- arrow::read_parquet(output)
+  stopifnot(identical(sparse[names(forward_expected)], forward_expected),
+    all(is.na(sparse$gene_id)), identical(sparse$outcome_id, sparse$molecular_trait_id),
+    identical(sparse$feature_converged, c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)))
+  write_index(index[0L, ])
+  aggregate()
+  no_index_rows <- arrow::read_parquet(output)
+  stopifnot(identical(no_index_rows[names(forward_expected)], forward_expected),
+    all(is.na(no_index_rows$gene_id)), all(is.na(no_index_rows$feature_converged)))
+  write_index()
   write_tables()
   aggregate()
 
-  # Required local files include empty genes. Repeated paths and foreign names fail.
-  expect_error(aggregate(paths[-3L]), "missing|exactly|gene")
-  expect_error(aggregate(c(paths[1:2], paths[[2L]])), "duplicate")
-  alias_dir <- file.path(root, "aliases")
-  dir.create(alias_dir)
-  alias <- file.path(alias_dir, basename(paths[[3L]]))
-  stopifnot(file.symlink(paths[[3L]], alias))
-  expect_error(aggregate(c(paths, alias)), "duplicate")
-  expect_error(aggregate(c(paths[1:2], "gs://bucket/empty.parquet")), "localization")
-  foreign <- file.path(root, "foreign.full_susie.parquet")
-  file.copy(paths[[3L]], foreign)
-  expect_error(aggregate(c(paths[1:2], foreign)), "foreign|basename|gene")
-  expect_error(aggregatePgenFullSusie("gs://bucket/index.tsv", paths, output), "localization")
-  expect_error(aggregate(batch_size = 0L), "batch_size")
-  expect_error(aggregate(destination = "gs://bucket/full.parquet"), "local")
-
-  check_bad_table <- function(table, pattern, gene = 1L) {
-    broken <- tables
-    broken[[gene]] <- table
-    write_tables(broken)
-    expect_error(aggregate(), pattern)
-    write_tables()
-  }
-  check_bad_table(dplyr::mutate(tables[[1L]], feature_converged = "FALSE"), "feature_converged|bool|logical")
-  check_bad_table(dplyr::mutate(tables[[1L]], feature_converged = 0), "feature_converged|bool|logical")
-  check_bad_table(dplyr::mutate(tables[[3L]], feature_converged = character()), "feature_converged|bool|logical", 3L)
-  # A conflict in a later record batch must preserve the complete output.
-  previous_convergence_output <- readBin(output, "raw", n = file.info(output)$size)
-  conflicting <- convergence_tables
-  conflicting[[1L]]$feature_converged[[3L]] <- TRUE
-  write_tables(conflicting)
-  expect_error(aggregate(batch_size = 2L), "feature_converged|converged")
-  stopifnot(identical(readBin(output, "raw", n = file.info(output)$size), previous_convergence_output),
-    identical(list.files(dirname(output)), "full_susie.parquet"))
-  write_tables()
-  # Scales must be numeric and valid even on empty tables. One outcome can span batches.
-  check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = "2"), "phenotype_residual_SD|numeric|schema")
-  check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = Inf), "phenotype_residual_SD|finite")
-  check_bad_table(dplyr::mutate(tables[[1L]], phenotype_residual_SD = -1), "phenotype_residual_SD|negative|nonnegative")
-  check_bad_table(dplyr::mutate(tables[[3L]], phenotype_residual_SD = character()), "phenotype_residual_SD|numeric|schema", 3L)
-  # Row three is in the next batch; preserve the previous complete output on failure.
-  previous_sd_output <- readBin(output, "raw", n = file.info(output)$size)
-  for (bad_scale in c(3, NA_real_)) {
-    broken <- tables
-    broken[[1L]]$phenotype_residual_SD[[3L]] <- bad_scale
-    write_tables(broken)
-    expect_error(aggregate(batch_size = 2L), "phenotype_residual_SD|inconsistent")
-    stopifnot(identical(readBin(output, "raw", n = file.info(output)$size), previous_sd_output),
-      identical(list.files(dirname(output)), "full_susie.parquet"))
-  }
-  missing_tables <- lapply(tables, function(table) dplyr::mutate(table, phenotype_residual_SD = rep(NA_real_, nrow(table))))
-  write_tables(missing_tables)
-  aggregate()
-  stopifnot(all(is.na(arrow::read_parquet(output)$phenotype_residual_SD)))
-  write_tables()
-  aggregate()
-  check_bad_table(dplyr::select(tables[[1L]], -X_column_scale_factors), "schema|column")
-  check_bad_table(dplyr::mutate(tables[[2L]], posterior_mean = as.character(posterior_mean)), "schema|type|numeric", 2L)
-  check_bad_table(dplyr::mutate(tables[[1L]], molecular_trait_id = "outcome3"), "ownership|foreign|gene")
-  check_bad_table(dplyr::mutate(tables[[1L]], chromosome = "2"), "chromosome")
-  check_bad_table(dplyr::mutate(tables[[1L]], alt = "C"), "alt|allele")
-  check_bad_table(dplyr::mutate(tables[[1L]], ref = "T"), "ref|allele")
-  check_bad_table(dplyr::mutate(tables[[1L]], X_column_scale_factors = 0), "scale")
-  check_bad_table(dplyr::mutate(tables[[1L]], X_column_scale_factors = Inf), "scale")
-  check_bad_table(tables[[1L]][0L, ], "missing|credible|rows")
-  check_bad_table(dplyr::mutate(tables[[3L]], pip = character()), "schema|type|numeric", 3L)
-
-  # A late row error must not replace an earlier complete output or leave a partial file.
+  # I/O failures preserve the complete output and remove any temporary output.
   previous <- readBin(output, "raw", n = file.info(output)$size)
-  broken <- tables
-  broken[[2L]]$X_column_scale_factors[[3L]] <- NA_real_
-  write_tables(broken)
-  expect_error(aggregate(), "scale")
-  stopifnot(identical(readBin(output, "raw", n = file.info(output)$size), previous),
-    identical(list.files(dirname(output)), "full_susie.parquet"))
-  write_tables()
-  bad_index <- dplyr::mutate(index, gene_key = "gene-incorrect")
-  write_index(bad_index)
-  expect_error(aggregate(), "gene_key|hash")
-  write_index(dplyr::bind_rows(index, index[1L, ]))
-  expect_error(aggregate(), "duplicate")
-  write_index(dplyr::mutate(index, status = "FAILED"))
-  expect_error(aggregate(), "status|FAILED")
+  check_unchanged_output <- function() {
+    stopifnot(identical(readBin(output, "raw", n = file.info(output)$size), previous),
+      identical(list.files(dirname(output), all.files = TRUE, no.. = TRUE), "full_susie.parquet"))
+  }
+  expect_error(aggregate(c(paths[[1L]], file.path(root, "missing later.parquet"))), "local|missing|read|exist")
+  check_unchanged_output()
+  corrupt <- file.path(root, "corrupt later.parquet")
+  bytes <- readBin(paths[[2L]], "raw", n = file.info(paths[[2L]])$size)
+  bytes[5:20] <- as.raw(255L)
+  writeBin(bytes, corrupt)
+  expect_error(aggregate(c(paths[[1L]], corrupt)), ".")
+  check_unchanged_output()
+  expect_error(aggregate(c(paths[[1L]], "gs://bucket/later.parquet")), "localization")
+  expect_error(aggregatePgenFullSusie("gs://bucket/index.tsv", paths, output), "localization")
+  for (size in list(0L, 1.5, Inf, NA_real_, "2")) expect_error(aggregate(batch_size = size), "batch_size")
+  expect_error(aggregate(destination = "gs://bucket/full.parquet"), "local")
+  expect_error(aggregate(destination = paths[[1L]]), "replace|overwrite|input")
+  expect_error(aggregate(destination = index_file), "replace|overwrite|input")
+  check_unchanged_output()
 
-  # Empty schema differences are accepted only on the known legacy columns.
-  write_index(dplyr::mutate(index, credible_set_count = 0L))
+  # Empty native schemas remain compatible with old and new optional columns.
   empties <- rep(list(dplyr::mutate(InitEmptyVariantDf(), phenotype_residual_SD = double())), length(paths))
   write_tables(empties)
   aggregate()
   empty <- arrow::read_parquet(output)
-  stopifnot(nrow(empty) == 0L,
-    identical(names(empty), c(names(empties[[1L]]), "feature_converged",
-      "batch_id", "gene_id", "outcome_id", "phenotype_id", "gene_key")),
+  stopifnot(nrow(empty) == 0L, all(names(empties[[1L]]) %in% names(empty)),
     is.double(empty$phenotype_residual_SD), is.logical(empty$feature_converged))
-  # Entirely empty legacy files still emit the optional numeric scale column.
-  write_tables(lapply(empties, function(table) dplyr::select(table, -phenotype_residual_SD)))
-  aggregate()
-  empty_legacy <- arrow::read_parquet(output)
-  stopifnot(nrow(empty_legacy) == 0L, is.double(empty_legacy$phenotype_residual_SD),
-    is.logical(empty_legacy$feature_converged))
-  # An integer optional column is numeric and is normalized without loosening other types.
   mixed_empty <- empties
+  mixed_empty[[1L]] <- dplyr::select(mixed_empty[[1L]], -phenotype_residual_SD)
   mixed_empty[[2L]]$phenotype_residual_SD <- integer()
-  mixed_empty[[3L]] <- dplyr::select(mixed_empty[[3L]], -phenotype_residual_SD)
+  mixed_empty[[2L]]$position <- character()
+  mixed_empty[[2L]]$low_purity <- logical()
+  mixed_empty[[3L]]$extra_empty_metadata <- character()
   write_tables(mixed_empty)
   aggregate()
-  stopifnot(is.double(arrow::read_parquet(output)$phenotype_residual_SD))
+  empty_union <- arrow::read_parquet(output)
+  stopifnot(nrow(empty_union) == 0L, "extra_empty_metadata" %in% names(empty_union),
+    is.numeric(empty_union$phenotype_residual_SD), is.logical(empty_union$feature_converged))
+  write_tables(empties)
 
   # The CLI must treat cloud output locations as metadata while opening local Files.
   write_index(dplyr::mutate(index, credible_set_count = 0L))
@@ -317,6 +341,49 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     show_col_types = FALSE)
   stopifnot(identical(manifest$full_parquet_uri,
     paste0(cloud_prefix, unique(index$gene_key), ".full_susie.parquet")))
+
+  # The normal CLI merges supplied rows despite failed/duplicate index entries
+  # and unrelated expected-input content. Output URI lists remain metadata.
+  writeLines("readable placeholder", expected_file)
+  cli_summaries <- lapply(seq_along(compact_paths), function(i) {
+    batch <- unique(index$batch_id)[[i]]
+    own <- dplyr::filter(index, batch_id == batch)
+    failed <- dplyr::mutate(own, status = "FAILED", converged = NA,
+      credible_set_count = -1L, seed = 1L, reason = "supplied status")
+    readr::write_tsv(dplyr::bind_rows(failed, failed[1L, ]), compact_paths[[i]][["index"]])
+    row <- InitEmptyInCSVariantDf(TRUE)[NA_integer_, ] |>
+      dplyr::mutate(molecular_trait_id = own$outcome_id[[1L]],
+        variant = "supplied label", pip = -2, source_marker = paste0("source", i))
+    summary <- dplyr::bind_cols(
+      dplyr::select(own[1L, ], batch_id, gene_id, outcome_id, phenotype_id), row)
+    arrow::write_parquet(summary, compact_paths[[i]][["summary"]])
+    summary
+  })
+  pgen_values <- list("pgen-chromosomes-file" = "2",
+    "pgen-uris-file" = paste0(cloud_prefix, "chr2.pgen"),
+    "pvar-uris-file" = paste0(cloud_prefix, "chr2.pvar"),
+    "psam-uris-file" = paste0(cloud_prefix, "chr2.psam"))
+  pgen_args <- unlist(lapply(names(pgen_values), function(name) {
+    c(paste0("--", name), list_file(pgen_values[[name]], name))
+  }), use.names = FALSE)
+  relaxed_args <- args
+  relaxed_dir <- file.path(root, "cli supplied metadata")
+  relaxed_args[[match("--output-dir", relaxed_args) + 1L]] <- relaxed_dir
+  code <- system2(file.path(R.home("bin"), "Rscript"),
+    shQuote(c(file.path(scripts_dir, "aggregate_pgen_susie.R"),
+      relaxed_args, metadata_args, pgen_args)), stdout = log, stderr = log)
+  if (!identical(code, 0L)) stop(paste(readLines(log, warn = FALSE), collapse = "\n"))
+  cli_expected <- dplyr::bind_rows(cli_summaries)
+  cli_actual <- arrow::read_parquet(file.path(relaxed_dir, "susie.parquet"))
+  cli_index <- readr::read_tsv(file.path(relaxed_dir, "outcome_index.tsv"),
+    show_col_types = FALSE)
+  pgen_manifest <- readr::read_tsv(file.path(relaxed_dir, "pgen_manifest.tsv"),
+    col_types = "cccc", show_col_types = FALSE)
+  stopifnot(identical(cli_actual[names(cli_expected)], cli_expected),
+    nrow(cli_index) == 6L, all(cli_index$status == "FAILED"),
+    file.exists(file.path(relaxed_dir, "gene_manifests", "chr1.gene_outputs.tsv")),
+    identical(pgen_manifest$chromosome, "2"),
+    identical(pgen_manifest$pgen, pgen_values[["pgen-uris-file"]]))
 
   # Full-only mode consumes existing files directly, without compact input tables.
   write_index()

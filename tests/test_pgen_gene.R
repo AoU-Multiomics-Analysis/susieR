@@ -220,6 +220,7 @@ run_pgen_gene_tests <- function(repo_dir) {
   run_named_test("PGEN fits impute on the first read without repeating R imputation", {
     reads <- new.env(parent = emptyenv())
     reads$native <- 0L
+    reads$raw <- 0L
     reads$hardcall <- 0L
     reads$legacy <- 0L
     record <- function(field) substitute({
@@ -227,7 +228,12 @@ run_pgen_gene_tests <- function(repo_dir) {
       .read_counter[[key]] <- .read_counter[[key]] + 1L
     }, list(counter = reads, key = field))
     imputation_environment <- environment(finemapPhenotype)
-    suppressMessages(trace("ReadList", tracer = record("native"),
+    native_counter <- substitute({
+      .read_counter <- counter
+      .read_key <- if (meanimpute) "native" else "raw"
+      .read_counter[[.read_key]] <- .read_counter[[.read_key]] + 1L
+    }, list(counter = reads))
+    suppressMessages(trace("ReadList", tracer = native_counter,
       where = asNamespace("pgenlibr"), print = FALSE))
     suppressMessages(trace("ReadIntList", tracer = record("hardcall"),
       where = asNamespace("pgenlibr"), print = FALSE))
@@ -237,6 +243,7 @@ run_pgen_gene_tests <- function(repo_dir) {
       # This window has no entirely missing variants, so no native retry is needed.
       invisible(compare_path(trait = "trait2", distance = 70L))
       stopifnot(reads$native == 1L, reads$hardcall == 0L,
+                reads$raw == 1L,
                 reads$legacy == 1L) # R imputation runs only in the reference fit.
     }, finally = {
       suppressMessages(untrace("ReadList", where = asNamespace("pgenlibr")))
@@ -268,6 +275,30 @@ run_pgen_gene_tests <- function(repo_dir) {
     tryCatch(expect_error_message(finemapPgenPhenotype("trait1", se, subset_reader,
       covariates, 200L, "NA", ancestry, 0.1), "complete"),
       finally = closePgenReader(subset_reader))
+  })
+  run_named_test("native-first counts retain physical duplicate labels through filtering", {
+    duplicate_positions <- positions
+    duplicate_positions[[5L]] <- positions[[1L]]
+    duplicate_pvar <- file.path(temp, "duplicate-counts.pvar")
+    writeLines(c("#CHROM\tPOS\tID\tREF\tALT",
+      paste("1", duplicate_positions, ids, "A", "G", sep = "\t")), duplicate_pvar)
+    duplicate_reader <- openPgenReader(paths[[1L]], duplicate_pvar, paths[[3L]])
+    tryCatch({
+      fitted <- finemapPgenPhenotype("trait1", se, duplicate_reader, covariates, 200L, "NA")
+      duplicate_rows <- fitted$variant_id == ids[[1L]]
+      expect_identical_value(fitted$cohort_an[duplicate_rows], c(200, 198),
+                             "duplicate rows keep different observed sample counts")
+      expected_alt <- rowSums(raw[c(1L, 5L), phenotype_samples, drop = FALSE], na.rm = TRUE)
+      expected_mac <- unname(pmin(expected_alt, c(200, 198) - expected_alt))
+      expect_identical_value(fitted$cohort_mac[duplicate_rows], expected_mac,
+                             "duplicate rows keep different observed allele counts")
+      allowlist <- file.path(temp, "duplicate-counts-allowlist.tsv")
+      readr::write_tsv(tibble(variant = ids[c(1L, 8L)]), allowlist)
+      listed <- finemapPgenPhenotype("trait1", se, duplicate_reader, covariates, 200L,
+                                     "NA", variant_list = allowlist)
+      expect_identical_value(listed$variant_id, ids[c(1L, 8L)], "existing first-match list order")
+      expect_identical_value(listed$cohort_an, c(200, 200), "list uses the matching physical rows")
+    }, finally = closePgenReader(duplicate_reader))
   })
   run_named_test("additional samples and genotype/response dense fallback retain every field", {
     additional_samples <- phenotype_samples[seq_len(80L)]
@@ -520,7 +551,8 @@ run_pgen_gene_tests <- function(repo_dir) {
     tables <- formatSusieOutputs(results, tibble(phenotype_id = "old", region = "chr1_-100_300"))
     stopifnot(identical(tables$in_cs_variant_df,
                         mutate(InitEmptyInCSVariantDf(TRUE, include_phenotype_residual_sd = TRUE,
-                                                     include_cohort_maf = TRUE),
+                                                     include_cohort_maf = TRUE,
+                                                     include_cohort_counts = TRUE),
                                feature_converged = logical())),
               identical(tables$lbf_df, InitEmptyLbfDf()),
               identical(tables$variant_df,

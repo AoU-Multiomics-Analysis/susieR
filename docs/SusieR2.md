@@ -230,10 +230,32 @@ dosage representation. An entirely missing legacy row, or a feature outside
 the diploid dosage range, has unknown MAF. Additional features must encode ALT
 copy counts for this allele-frequency interpretation to apply.
 
-The column is carried through per-gene, batch, and combined compact files.
-Older fits or compact files without recorded MAF receive numeric missing
-values. The full variant, LBF, and credible-set table schemas stay unchanged.
-Recording MAF does not change model inputs, PIPs, credible sets, or effects.
+The compact variant Parquets also contain numeric `cohort_an` and `cohort_mac`:
+
+- `cohort_an` is twice the number of samples with an observed diploid dosage.
+- `cohort_mac` is the smaller of the observed ALT dosage sum and
+  `cohort_an` minus that sum. It can be fractional for dosage-valued inputs.
+
+These counts use the final samples in each fit, before mean imputation,
+centering, or covariate adjustment. NA and -1 are missing calls and do not
+contribute to either count. A retained row with no observed calls has AN=0 and
+MAC=0, while its MAF is unknown. A nonmissing value outside the diploid dosage
+range gives unknown counts. Native PGEN preparation keeps its current mean
+imputation and all-missing exclusions. A bounded raw-dosage read records counts
+for each new block; cache hits reuse the count vectors.
+
+Counts use the same genotype representation as the fit and `cohort_maf`.
+Native-first and cached PGEN paths use stored dosages. Legacy hardcall paths,
+including additional-genotype fits, count their observed hardcalls. When native
+imputation replaces a hardcall row with stored dosages, its counts come from the
+observed stored dosages. This records the predictors actually fitted without
+changing their values or mixing count and MAF representations.
+
+All three columns are carried through per-gene, batch, and combined compact
+variant files. Older fits or compact files receive numeric missing values for
+each absent field. Counts cannot be recovered from old MAF values or an imputed
+matrix. Full variant, LBF, and credible-set table schemas stay unchanged.
+Recording this metadata does not change model inputs, PIPs, credible sets, or effects.
 
 **Output correction, 2026-11-09:** Earlier exporters put the assigned effect's
 alpha value in `pip`. Full-table variants outside retained credible sets

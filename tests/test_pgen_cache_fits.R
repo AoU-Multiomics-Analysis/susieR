@@ -158,6 +158,8 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   compare_model_values <- function(actual, reference, exact = FALSE) {
     expect_identical_value(actual$variant_id, reference$variant_id, "fit variant order")
     expect_identical_value(actual$cohort_maf, reference$cohort_maf, "fit cohort MAF order")
+    expect_identical_value(actual$cohort_an, reference$cohort_an, "fit observed AN order")
+    expect_identical_value(actual$cohort_mac, reference$cohort_mac, "fit observed MAC order")
     expect_identical_value(actual$sets$cs, reference$sets$cs, "credible-set memberships")
     expect_identical_value(actual$sets$cs_index, reference$sets$cs_index, "credible-set effects")
     expect_identical_value(actual$converged, reference$converged, "fit convergence status")
@@ -317,6 +319,11 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
       expected <- unname(pmin(alt_af, 1 - alt_af))
       stopifnot(is.double(fitted$cohort_maf), length(fitted$cohort_maf) == nrow(selected),
                 isTRUE(all.equal(fitted$cohort_maf, expected, tolerance = 1e-15)))
+      expected_an <- unname(as.double(2 * rowSums(!is.na(selected))))
+      observed_alt <- rowSums(selected, na.rm = TRUE)
+      expected_mac <- unname(as.double(pmin(observed_alt, expected_an - observed_alt)))
+      expect_identical_value(fitted$cohort_an, expected_an, "fit observed AN before imputation")
+      expect_identical_value(fitted$cohort_mac, expected_mac, "fit observed MAC before imputation")
     }
   })
   run_named_test("cache model comparison bounds prior optimizer roundoff", {

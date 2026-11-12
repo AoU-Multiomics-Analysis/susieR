@@ -156,7 +156,7 @@ run_pgen_batch_tests <- function(repo_dir) {
     region = "chr1:6-16", pip = .9, z = 4, cs_min_r2 = .8, cs_avg_r2 = .9, cs_size = 1L,
     posterior_mean = .4, posterior_sd = .1, cs_log10bf = 3,
     has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25,
-    cohort_maf = 0.125))
+    cohort_maf = 0.125, cohort_an = 8, cohort_mac = 1))
   cs <- bind_cols(own[1, ], tibble(molecular_trait_id = "a", cs_id = "a_1", cs_index = "1",
     region = "chr1:6-16", cs_log10bf = 3, cs_avg_r2 = .9, cs_min_r2 = .8, cs_size = 1,
     low_purity = FALSE, has_covariate_explained_variant = FALSE))
@@ -164,11 +164,13 @@ run_pgen_batch_tests <- function(repo_dir) {
     input_scale = 1, residual_sd = 0, residual_sd_ratio = 0)
   summary_tables <- list(
     bind_rows(summary, summary, mutate(summary, pip = .2, z = -2, posterior_mean = -.3,
-                              phenotype_residual_SD = 2.5, cohort_maf = 0.375)) %>%
+                              phenotype_residual_SD = 2.5, cohort_maf = 0.375,
+                              cohort_an = 0, cohort_mac = 0)) %>%
       mutate(feature_converged = c(TRUE, TRUE, FALSE), first_note = c("first", "first", "different")),
     mutate(summary, molecular_trait_id = "foreign", outcome_id = "outside",
       phenotype_id = "foreign", gene_id = "unlisted gene", cs_id = "unknown set",
-      cs_size = 99L, cohort_maf = 0.25, feature_converged = TRUE, second_note = "second"))
+      cs_size = 99L, cohort_maf = 0.25, cohort_an = 12, cohort_mac = 2.5,
+      feature_converged = TRUE, second_note = "second"))
   cs_tables <- list(
     bind_rows(cs, cs, mutate(cs, cs_size = -5, low_purity = TRUE)) %>%
       mutate(feature_converged = c(FALSE, FALSE, TRUE)),
@@ -272,6 +274,32 @@ run_pgen_batch_tests <- function(repo_dir) {
     is.double(old_maf_output$cohort_maf),
     !"cohort_maf" %in% names(arrow::read_parquet("aggregate/credible_sets.parquet")))
 
+  # Counts remain row metadata, including zero and fractional values. Each
+  # absent field receives numeric NA without an index or MAF reconstruction.
+  for (missing_counts in list("cohort_an", "cohort_mac", c("cohort_an", "cohort_mac"))) {
+    mixed_counts <- list(select(summary_tables[[1L]], -all_of(missing_counts)),
+                         summary_tables[[2L]])
+    emit(sums = mixed_counts)
+    without_warnings(aggregate())
+    mixed_counts_output <- arrow::read_parquet("aggregate/susie.parquet")
+    stopifnot(identical(mixed_counts_output, bind_rows(mixed_counts)))
+    for (column in missing_counts) {
+      stopifnot(identical(mixed_counts_output[[column]],
+                          c(rep(NA_real_, 3L), summary_tables[[2L]][[column]])))
+    }
+    old_counts <- lapply(summary_tables, function(table) select(table, -all_of(missing_counts)))
+    emit(sums = old_counts)
+    without_warnings(aggregate())
+    old_counts_output <- arrow::read_parquet("aggregate/susie.parquet")
+    expected_counts <- bind_rows(old_counts)
+    for (column in missing_counts) expected_counts[[column]] <- rep(NA_real_, nrow(expected_counts))
+    stopifnot("All old compact inputs must receive each absent numeric count" =
+                identical(old_counts_output, expected_counts))
+    for (column in c("cohort_an", "cohort_mac")) stopifnot(is.double(old_counts_output[[column]]))
+    stopifnot(!any(c("cohort_an", "cohort_mac") %in%
+                    names(arrow::read_parquet("aggregate/credible_sets.parquet"))))
+  }
+
   # Fill absent metadata only. Conflicting or unknown index values stay unknown.
   metadata_index <- tibble(outcome_id = c("a", "a", "b", "conflict", "conflict"),
     converged = c(TRUE, TRUE, FALSE, TRUE, FALSE),
@@ -310,6 +338,7 @@ run_pgen_batch_tests <- function(repo_dir) {
   empty <- arrow::read_parquet("aggregate/susie.parquet")
   stopifnot(nrow(empty) == 0L, is.double(empty$phenotype_residual_SD),
     is.logical(empty$feature_converged), is.double(empty$cohort_maf),
+    identical(empty$cohort_an, double()), identical(empty$cohort_mac, double()),
     nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 0L)
   check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables))
 

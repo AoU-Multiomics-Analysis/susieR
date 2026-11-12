@@ -3,6 +3,7 @@ run_pgen_reader_tests <- function(repo_dir) {
   source(file.path(repo_dir, "tests", "test_helpers.R"), local = TRUE)
   functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH",
                                unset = file.path(repo_dir, "R", "utils"))
+  source(file.path(functions_path, "SusieFunctions.R"), local = TRUE)
   source(file.path(functions_path, "PgenFunctions.R"), local = TRUE)
   if (!exists("openPgenReader", mode = "function")) {
     stop("Missing reader function: openPgenReader", call. = FALSE)
@@ -103,6 +104,15 @@ run_pgen_reader_tests <- function(repo_dir) {
     expect_error_message(readPgenWindow(reader, "1", 100, 110, 1), "as_double")
     expect_error_message(readPgenWindow(reader, "1", 100, 110,
                                         c(TRUE, FALSE)), "as_double")
+    for (invalid_counts in list(NA, 1, c(TRUE, FALSE), logical())) {
+      expect_error_message(readPgenVariants(reader, 1L, include_cohort_counts = invalid_counts),
+                           "include_cohort_counts")
+    }
+    empty_counts <- readPgenVariants(reader, integer(), include_cohort_counts = TRUE)
+    expect_identical_value(empty_counts$cohort_an, double(), "empty indexed AN")
+    expect_identical_value(empty_counts$cohort_mac, double(), "empty indexed MAC")
+    stopifnot(!"cohort_an" %in% names(readPgenVariants(reader, integer())),
+              !"cohort_mac" %in% names(readPgenVariants(reader, integer())))
   })
   run_named_test("sample subsets, literal IDs and single dimensions", {
     subset_ids <- c("s1", "001", "NA")

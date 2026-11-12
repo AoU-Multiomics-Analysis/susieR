@@ -520,12 +520,15 @@ run_pgen_gene_tests <- function(repo_dir) {
     expect_error_message(aggregate_run(), "Invalid numeric column: fine_mapping_seconds")
     negative_index <- batch_index
     negative_index$data_loading_seconds[[1L]] <- -1
+    # This valid duration does not round-trip bit-for-bit through readr TSV.
+    # Use the same timing tolerance as the positive-duration check above.
+    negative_index$data_loading_seconds[[2L]] <- .012345678901234567
     readr::write_tsv(negative_index, aggregate_inputs[[4L]])
     negative_files <- aggregate_run()
     negative_combined <- readr::read_tsv(negative_files[["index"]], show_col_types = FALSE)
     stopifnot(negative_combined$data_loading_seconds[[1L]] == -1,
-              identical(negative_combined$data_loading_seconds,
-                        negative_index$data_loading_seconds))
+              all(abs(negative_combined$data_loading_seconds -
+                        negative_index$data_loading_seconds) < 1e-9))
     reversed <- runPgenGene("gene/α", rev(outcomes), reader, file.path(temp, "reverse"), 13L, "NA")
     reverse_fits <- readRDS(reversed$files[["rds"]])
     for (id in names(outcomes)) expect_identical_value(fits[[id]], reverse_fits[[id]], "order-independent fit")

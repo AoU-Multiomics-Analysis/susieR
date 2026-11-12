@@ -110,6 +110,27 @@ run_gene_manifest_cli_tests <- function(repo_dir = ".") {
   }
   actual_uris <- unlist(result[grepl("_uri$", names(result))], use.names = FALSE)
   stopifnot(length(actual_uris) == 27L, setequal(actual_uris, unlist(uris, use.names = FALSE)))
+  # Metadata output also accepts repeated index files and failed outcome rows.
+  failed_index <- index |> dplyr::mutate(status = "FAILED", converged = !converged)
+  for (i in seq_len(2L)) {
+    readr::write_tsv(dplyr::filter(failed_index, batch_id == paste0("batch_", i)),
+      batch_paths[[i]][["index"]])
+  }
+  writeLines(vapply(batch_paths[c(1, 2, 1)], `[[`, character(1), "index"),
+    file.path(root, "index.list"))
+  repeated <- file.path(root, "repeated failed with metadata")
+  invoke("repeated_failed_metadata", c(metadata_args, "--output-dir", repeated))
+  repeated_index <- readr::read_tsv(file.path(repeated, "outcome_index.tsv"),
+    col_types = readr::cols(.default = readr::col_character()), show_col_types = FALSE)
+  stopifnot(nrow(repeated_index) == 7L, all(repeated_index$status == "FAILED"),
+    identical(repeated_index$outcome_id, c("outcome1", "outcome2", "outcome3", "outcome4",
+                                           "outcome1", "outcome2", "outcome3")))
+  repeated_files <- list.files(file.path(repeated, "gene_manifests"), full.names = TRUE)
+  repeated_genes <- dplyr::bind_rows(lapply(repeated_files, readr::read_tsv,
+    col_types = readr::cols(.default = readr::col_character()), show_col_types = FALSE))
+  stopifnot(nrow(repeated_genes) == 3L, setequal(repeated_genes$gene_id, unique(gene_ids)),
+    setequal(unlist(repeated_genes[grepl("_uri$", names(repeated_genes))], use.names = FALSE),
+      unlist(uris, use.names = FALSE)))
   invoke("partial", c(metadata_args[1:2], "--output-dir", file.path(root, "partial")),
     error = "all five")
   wrong_list <- metadata_args

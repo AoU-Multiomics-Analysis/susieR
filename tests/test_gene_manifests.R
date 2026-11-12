@@ -53,7 +53,7 @@ run_gene_manifest_tests <- function(repo_dir) {
             identical(basename(unname(files)), c("chr1.gene_outputs.tsv", "chr2.gene_outputs.tsv")),
             all(file.exists(files)))
   read_manifest <- function(path) readr::read_tsv(path,
-    col_types = readr::cols(.default = readr::col_character()), show_col_types = FALSE)
+    col_types = readr::cols(.default = readr::col_character()), na = "NA", show_col_types = FALSE)
   chr1 <- read_manifest(files[["1"]])
   chr2 <- read_manifest(files[["2"]])
   stopifnot(identical(names(chr1), c("chromosome", "gene_id", "gene_key", "batch_id", names(suffixes))),
@@ -67,6 +67,15 @@ run_gene_manifest_tests <- function(repo_dir) {
     stopifnot("Every artifact URI must remain unchanged and belong to its gene" =
                 identical(combined[[column]], artifacts[[column]]))
   }
+  # Output metadata remains available for repeated and failed outcome rows.
+  repeated_index <- bind_rows(index, index[1L, ]) %>% mutate(status = "FAILED", converged = FALSE)
+  readr::write_tsv(repeated_index, index_file)
+  repeated_arguments <- arguments
+  repeated_arguments$output_dir <- file.path(root, "repeated failed manifests")
+  repeated_files <- do.call(writeChromosomeGeneManifests, repeated_arguments)
+  repeated_rows <- bind_rows(lapply(repeated_files, read_manifest))
+  stopifnot(nrow(repeated_rows) == 3L, setequal(repeated_rows$gene_id, genes$gene_id))
+  readr::write_tsv(index, index_file)
   # Gene IDs and output-only URI text may contain literal quotes.
   quoted_gene <- 'gene"quoted'
   quoted_key <- paste0("gene-", digest::digest(charToRaw(quoted_gene),
@@ -104,21 +113,8 @@ run_gene_manifest_tests <- function(repo_dir) {
   for (chromosome in names(files)) {
     stopifnot(identical(readLines(guarded_files[[chromosome]]), readLines(files[[chromosome]])))
   }
-  # Rejected inputs must not produce a partial set of chromosome manifests.
-  check_rejected <- function(candidate, pattern) {
-    candidate$output_dir <- file.path(root, "rejected manifests")
-    unlink(candidate$output_dir, recursive = TRUE)
-    result <- tryCatch(do.call(writeChromosomeGeneManifests, candidate), error = identity)
-    if (!inherits(result, "error")) return("accepted invalid input")
-    if (!grepl(pattern, conditionMessage(result), ignore.case = TRUE)) {
-      return(paste("unexpected error:", conditionMessage(result)))
-    }
-    if (length(list.files(candidate$output_dir, pattern = "gene_outputs[.]tsv$"))) {
-      return("wrote partial manifests before rejecting input")
-    }
-    NULL
-  }
-  invalid_indices <- list(
+  # Gene metadata is written without checks on scientific status or identity.
+  accepted_indices <- list(
     empty_index = index[FALSE, ],
     missing_identity_column = dplyr::select(index, -gene_key),
     duplicate_outcome_row = dplyr::bind_rows(index, index[1, ]),
@@ -126,64 +122,84 @@ run_gene_manifest_tests <- function(repo_dir) {
     duplicate_phenotype_id = dplyr::mutate(index, phenotype_id = c("trait1", "trait1", "trait3", "trait4")),
     absent_gene_id = dplyr::mutate(index, gene_id = replace(gene_id, 1, NA_character_)),
     blank_batch_id = dplyr::mutate(index, batch_id = replace(batch_id, 1, "")),
-    multiline_gene_id = dplyr::mutate(index, gene_id = replace(gene_id, 1, "bad\nID")),
+    multiline_gene_id = dplyr::mutate(index, gene_id = replace(gene_id, 1, "gene\nID")),
     wrong_gene_key = dplyr::mutate(index, gene_key = replace(gene_key, 1, genes$gene_key[[2]])),
     split_gene_batch = dplyr::mutate(index, batch_id = replace(batch_id, 3, "batch_4")),
     split_gene_chromosome = dplyr::mutate(index, chromosome = replace(chromosome, 3, "chr1")),
-    unsupported_chromosome = dplyr::mutate(index, chromosome = replace(chromosome, 1, "chr23")),
+    other_chromosome = dplyr::mutate(index, chromosome = replace(chromosome, 1, "chr23")),
+    chromosome_path_text = dplyr::mutate(index, chromosome = replace(chromosome, 1, "../outside/path")),
     failed_outcome = dplyr::mutate(index, status = replace(status, 1, "FAILED")),
     unknown_status = dplyr::mutate(index, status = replace(status, 1, "SKIPPED")),
     missing_status = dplyr::mutate(index, status = replace(status, 1, NA_character_)),
     inconsistent_convergence = dplyr::mutate(index, converged = replace(converged, 1, FALSE)),
-    missing_convergence = dplyr::mutate(index, converged = replace(converged, 1, NA)))
-  failures <- character()
-  for (name in names(invalid_indices)) {
+    missing_convergence = dplyr::mutate(index, converged = replace(converged, 1, NA)),
+    all_identity_columns_missing = tibble::tibble(other_metadata = c("first", "second")))
+  expected_counts <- c(0L, 3L, 3L, 3L, 3L, 4L, 4L, 4L, 4L, 4L, 4L, 4L, 4L,
+                       3L, 3L, 3L, 3L, 3L, 1L)
+  for (i in seq_along(accepted_indices)) {
     candidate <- arguments
-    readr::write_tsv(invalid_indices[[name]], index_file)
-    failure <- check_rejected(candidate, "index|schema|column|duplicate|gene|batch|chromosome|autosome|status|converged|boolean")
-    if (!is.null(failure)) failures[[name]] <- failure
+    candidate$output_dir <- file.path(root, paste0("accepted ", names(accepted_indices)[[i]]))
+    value <- accepted_indices[[i]]
+    readr::write_tsv(value, index_file, quote = "needed")
+    written <- do.call(writeChromosomeGeneManifests, candidate)
+    if (!nrow(value)) {
+      stopifnot(is.character(written), length(written) == 0L)
+      next
+    }
+    actual <- bind_rows(lapply(written, read_manifest))
+    stopifnot(nrow(actual) == expected_counts[[i]], all(file.exists(written)),
+      all(dirname(normalizePath(written)) == normalizePath(candidate$output_dir)),
+      all(!grepl("[/\\\\]", basename(written))))
+    for (column in c("gene_id", "gene_key", "batch_id")) {
+      if (column %in% names(value)) stopifnot(setequal(actual[[column]], value[[column]]))
+      else stopifnot(all(is.na(actual[[column]])))
+    }
+    if (!"gene_key" %in% names(value)) {
+      stopifnot(all(is.na(unlist(actual[names(suffixes)], use.names = FALSE))))
+    }
   }
   readr::write_tsv(index, index_file)
-  if (length(failures)) {
-    stop("Invalid outcome indices were not rejected safely: ",
-         paste(paste(names(failures), failures, sep = " = "), collapse = "; "), call. = FALSE)
-  }
-  invalid_artifacts <- list()
+
+  # Missing, repeated, foreign, and unmatched artifact locations remain metadata.
+  artifact_cases <- list()
   changed <- arguments
   changed$gene_rds_uris <- changed$gene_rds_uris[-1]
-  invalid_artifacts$missing_rds <- changed
+  artifact_cases$missing_rds <- changed
   changed <- arguments
   changed$gene_parquet_uris <- changed$gene_parquet_uris[-1]
-  invalid_artifacts$missing_parquet_role <- changed
+  artifact_cases$missing_parquet_role <- changed
   changed <- arguments
   changed$gene_rds_uris <- c(changed$gene_rds_uris, changed$gene_rds_uris[[1]])
-  invalid_artifacts$duplicate_uri <- changed
+  artifact_cases$duplicate_uri <- changed
   changed <- arguments
-  changed$gene_rds_uris <- c(changed$gene_rds_uris, sub("missing-bucket", "another-bucket", changed$gene_rds_uris[[1]]))
-  invalid_artifacts$duplicate_role_at_another_location <- changed
+  changed$gene_rds_uris <- c(changed$gene_rds_uris,
+    sub("missing-bucket", "another-bucket", changed$gene_rds_uris[[1]]))
+  artifact_cases$ambiguous_role <- changed
   changed <- arguments
   changed$gene_parquet_uris[[1]] <- "gs://missing-bucket/gene-foreign.parquet"
-  invalid_artifacts$foreign_gene <- changed
+  artifact_cases$foreign_gene <- changed
   changed <- arguments
   changed$gene_tsv_uris[[1]] <- "gs://missing-bucket/unrelated.tsv"
-  invalid_artifacts$unknown_suffix <- changed
+  artifact_cases$unknown_suffix <- changed
   changed <- arguments
   changed$gene_log_uris[[1]] <- changed$gene_provenance_uris[[1]]
   changed$gene_provenance_uris[[1]] <- arguments$gene_log_uris[[1]]
-  invalid_artifacts$wrong_artifact_group <- changed
-  for (value in list(NA_character_, "", "bad\nlocation", "bad\tlocation", 123, NULL, character())) {
+  artifact_cases$other_artifact_group <- changed
+  for (value in list(NA_character_, "", "line\nlocation", "tab\tlocation", 123, NULL, character())) {
     changed <- arguments
     changed["gene_rds_uris"] <- list(value)
-    invalid_artifacts[[paste0("malformed_rds_vector_", length(invalid_artifacts) + 1L)]] <- changed
+    artifact_cases[[paste0("unmatched_rds_", length(artifact_cases) + 1L)]] <- changed
   }
-  failures <- character()
-  for (name in names(invalid_artifacts)) {
-    failure <- check_rejected(invalid_artifacts[[name]], "artifact|URI|metadata|role|group|duplicate|missing|foreign")
-    if (!is.null(failure)) failures[[name]] <- failure
+  for (name in names(artifact_cases)) {
+    candidate <- artifact_cases[[name]]
+    candidate$output_dir <- file.path(root, paste0("artifact case ", name))
+    written <- do.call(writeChromosomeGeneManifests, candidate)
+    actual <- bind_rows(lapply(written, read_manifest))
+    stopifnot(nrow(actual) == 3L, setequal(actual$gene_id, genes$gene_id))
+    if (name %in% c("missing_rds", "ambiguous_role")) {
+      stopifnot(is.na(actual$rds_uri[actual$gene_key == genes$gene_key[[3L]]]))
+    }
+    if (startsWith(name, "unmatched_rds_")) stopifnot(all(is.na(actual$rds_uri)))
   }
-  if (length(failures)) {
-    stop("Invalid artifact metadata was not rejected safely: ",
-         paste(paste(names(failures), failures, sep = " = "), collapse = "; "), call. = FALSE)
-  }
-  message("Chromosome gene manifest identity and URI preservation checks passed.")
+  message("Chromosome gene manifest metadata merge checks passed.")
 }

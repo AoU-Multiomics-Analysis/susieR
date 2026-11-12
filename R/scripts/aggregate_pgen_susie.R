@@ -67,18 +67,6 @@ pgen_metadata <- if (all(has_pgen_metadata)) {
   setNames(lapply(opt[pgen_metadata_names], read_uri_metadata),
            c("chromosomes", "pgen_uris", "pvar_uris", "psam_uris"))
 } else NULL
-if (!is.null(pgen_metadata)) {
-  expected <- pgenReadTextTable(opt$expected_outcomes)
-  pgenRequireColumns(expected, c("batch_id", "chromosome"), "Expected outcomes")
-  expected_batches <- expected |>
-    dplyr::distinct(batch_id, chromosome)
-  if (any(vapply(pgen_metadata, length, integer(1)) != nrow(expected_batches))) {
-    stop("Each PGEN output metadata list length must match the expected batch count", call. = FALSE)
-  }
-  if (!identical(pgenAutosome(pgen_metadata$chromosomes), pgenAutosome(expected_batches$chromosome))) {
-    stop("PGEN output metadata chromosomes do not match the expected batch order", call. = FALSE)
-  }
-}
 message("Aggregating PGEN SuSiE batch summaries")
 files <- aggregatePgenBatches(
   expected_outcomes = opt$expected_outcomes,

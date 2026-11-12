@@ -227,6 +227,21 @@ model fit. Primary summary tables alone do not contain enough information to
 recover the native PIPs. Existing downloaded files are not changed by this
 code correction.
 
+Separate PGEN predictors can have the same `chromosome_position_ref_alt` label.
+The exporter uses predictor indices to assign credible-set membership. Equal
+labels therefore do not create extra membership rows. The output columns stay
+the same.
+
+Aggregation keeps all rows with repeated variant labels and reports a warning
+with the source file, outcome, and row counts. It does not combine or remove
+their PIPs or effect estimates. Older exports can contain extra rows from a
+join on variant labels. Those rows are also kept. If repeated labels prevent
+an exact check of the physical members, aggregation warns about this limit.
+Definite credible-set size errors still stop aggregation. To correct extra
+membership rows in an old export, format its saved RDS fit again. This does
+not require another model fit. To combine existing batch files as supplied,
+run aggregation again with the updated image.
+
 Each chromosome manifest has one row per gene. Its columns are `chromosome`, `gene_id`, `gene_key`, `batch_id`, `rds_uri`, `summary_parquet_uri`, `lbf_parquet_uri`, `full_parquet_uri`, `covariate_explained_variants_uri`, `variant_position_summary_uri`, `outcome_index_uri`, `log_uri`, and `provenance_uri`. Chromosome values use `1` through `22`. Original gene IDs are preserved. A gene with several outcomes has one row and one RDS containing those outcome fits. Genes with no credible sets or nonconverged outcomes remain in the manifests; their linked outcome index gives the per-outcome status.
 
 The manifests use the completed gene output locations supplied by Cromwell. On Terra these are cloud URIs; local CLI tests can use local output paths. The manifest locations remain output-only string metadata. The full files are supplied separately as typed `Array[File]` inputs, so Cromwell localizes them before the aggregate command reads them. RDS, LBF, and log locations in the metadata lists are not opened. The aggregate task checks all nine manifest roles and writes the manifests alongside the combined tables.
@@ -237,8 +252,9 @@ The main workflow also supplies `--full-susie-files`, a task-local list of
 localized full-result files. The aggregator writes one Parquet file through
 bounded Arrow batches. It preserves the native columns and adds outcome
 ownership from the validated index. It checks every expected gene file,
-including empty files, and rejects missing, duplicate, foreign, or incompatible
-inputs. The final file appears only after all inputs pass validation.
+including empty files, and rejects missing files, repeated file paths, foreign
+outcomes, and incompatible inputs. Repeated variant labels are retained. The
+final file appears only after all inputs pass validation.
 
 Aggregation does not recover rows absent from the source full files. The current
 formatter can write an empty full file for an outcome with no retained credible

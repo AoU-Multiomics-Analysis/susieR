@@ -60,6 +60,14 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     stopifnot(inherits(result, "error"), grepl(pattern, conditionMessage(result), ignore.case = TRUE))
     invisible(result)
   }
+  capture_warnings <- function(expr) {
+    warnings <- character()
+    withCallingHandlers(force(expr), warning = function(condition) {
+      warnings <<- c(warnings, conditionMessage(condition))
+      invokeRestart("muffleWarning")
+    })
+    warnings
+  }
   # Reversed file order includes an empty first file and must retain native values.
   stopifnot(identical(aggregate(rev(paths)), output))
   actual <- arrow::read_parquet(output)
@@ -73,6 +81,32 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
     identical(actual$pip, expected$pip),
     identical(actual$phenotype_residual_SD, c(2, 2, 2, 0, 0, 1.5, 1.5, 1.5)),
     identical(actual$feature_converged, c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)))
+
+  # Repeated labels within and across record batches retain all native values.
+  differing_row <- tables[[1L]][1L, ] |>
+    dplyr::mutate(pip = .9, z = -3, posterior_mean = -.4, posterior_sd = .6,
+                  alpha1 = .8, mu_1 = -.7, mu2_1 = .9, source_marker = "different")
+  repeated_cases <- list(
+    identical_across_batches = dplyr::bind_rows(tables[[1L]], tables[[1L]][1L, ]),
+    differing_across_batches = dplyr::bind_rows(tables[[1L]], differing_row),
+    repeated_within_batch = dplyr::bind_rows(tables[[1L]][1L, ], differing_row,
+                                            tables[[1L]][-1L, ])
+  )
+  for (case in names(repeated_cases)) {
+    repeated_tables <- tables
+    repeated_tables[[1L]] <- repeated_cases[[case]]
+    write_tables(repeated_tables)
+    warnings <- capture_warnings(aggregate(batch_size = 2L))
+    retained <- arrow::read_parquet(output)
+    expected_repeated <- dplyr::bind_rows(repeated_tables[1:2])
+    stopifnot(identical(retained[names(expected_repeated)], expected_repeated),
+      any(grepl(paths[[1L]], warnings, fixed = TRUE)),
+      any(grepl("batch=batch1", warnings, fixed = TRUE)),
+      any(grepl("outcome=outcome1", warnings, fixed = TRUE)),
+      any(grepl("repeated_row_count=1", warnings, fixed = TRUE)))
+  }
+  write_tables()
+  aggregate()
 
   # Mixed old and new files use the index, including logical NA from old fits.
   convergence_tables <- tables
@@ -182,7 +216,6 @@ run_pgen_full_aggregation_tests <- function(repo_dir = ".") {
   check_bad_table(dplyr::mutate(tables[[1L]], ref = "T"), "ref|allele")
   check_bad_table(dplyr::mutate(tables[[1L]], X_column_scale_factors = 0), "scale")
   check_bad_table(dplyr::mutate(tables[[1L]], X_column_scale_factors = Inf), "scale")
-  check_bad_table(dplyr::bind_rows(tables[[1L]], tables[[1L]][1L, ]), "duplicate")
   check_bad_table(tables[[1L]][0L, ], "missing|credible|rows")
   check_bad_table(dplyr::mutate(tables[[3L]], pip = character()), "schema|type|numeric", 3L)
 

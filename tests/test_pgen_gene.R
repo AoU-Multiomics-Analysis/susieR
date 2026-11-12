@@ -487,10 +487,14 @@ run_pgen_gene_tests <- function(repo_dir) {
     invalid_index$fine_mapping_seconds <- c("invalid", "1")
     readr::write_tsv(invalid_index, aggregate_inputs[[4L]])
     expect_error_message(aggregate_run(), "Invalid numeric column: fine_mapping_seconds")
-    invalid_index <- batch_index
-    invalid_index$data_loading_seconds[[1L]] <- -1
-    readr::write_tsv(invalid_index, aggregate_inputs[[4L]])
-    expect_error_message(aggregate_run(), "Invalid outcome index timing")
+    negative_index <- batch_index
+    negative_index$data_loading_seconds[[1L]] <- -1
+    readr::write_tsv(negative_index, aggregate_inputs[[4L]])
+    negative_files <- aggregate_run()
+    negative_combined <- readr::read_tsv(negative_files[["index"]], show_col_types = FALSE)
+    stopifnot(negative_combined$data_loading_seconds[[1L]] == -1,
+              identical(negative_combined$data_loading_seconds,
+                        negative_index$data_loading_seconds))
     reversed <- runPgenGene("gene/α", rev(outcomes), reader, file.path(temp, "reverse"), 13L, "NA")
     reverse_fits <- readRDS(reversed$files[["rds"]])
     for (id in names(outcomes)) expect_identical_value(fits[[id]], reverse_fits[[id]], "order-independent fit")
@@ -515,7 +519,8 @@ run_pgen_gene_tests <- function(repo_dir) {
     results <- list(old = fit)
     tables <- formatSusieOutputs(results, tibble(phenotype_id = "old", region = "chr1_-100_300"))
     stopifnot(identical(tables$in_cs_variant_df,
-                        mutate(InitEmptyInCSVariantDf(TRUE, include_phenotype_residual_sd = TRUE),
+                        mutate(InitEmptyInCSVariantDf(TRUE, include_phenotype_residual_sd = TRUE,
+                                                     include_cohort_maf = TRUE),
                                feature_converged = logical())),
               identical(tables$lbf_df, InitEmptyLbfDf()),
               identical(tables$variant_df,

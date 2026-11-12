@@ -87,11 +87,12 @@ run_susie_phenotype_residual_sd_tests <- function(repo_dir = ".") {
                 same_sd(saved$gene1$phenotype_residual_SD))
     for (table in c("summary", "full")) {
       reloaded <- arrow::read_parquet(files[[table]])
+      expected_tail <- c("phenotype_residual_SD",
+                         if (table == "summary") "cohort_maf", "feature_converged")
       stopifnot("Both Parquets must repeat a numeric phenotype SD" =
                   nrow(reloaded) > 0L && same_sd(reloaded$phenotype_residual_SD),
                 "Recorded phenotype scale must precede the convergence annotation" =
-                  identical(tail(names(reloaded), 2L),
-                            c("phenotype_residual_SD", "feature_converged")))
+                  identical(tail(names(reloaded), length(expected_tail)), expected_tail))
     }
   }
 

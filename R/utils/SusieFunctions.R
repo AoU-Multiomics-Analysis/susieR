@@ -77,6 +77,19 @@ standardize_rows <- function(mat) {
   mat
 }
 
+# Record frequency from complete, uncentered diploid ALT dosages. Generic
+# additional features outside this encoding have unknown allele frequency.
+cohortMafFromDosages <- function(mat) {
+  if (!nrow(mat)) return(numeric())
+  frequency <- rowMeans(mat) / 2
+  ranges <- matrixStats::rowRanges(mat)
+  maf <- pmin(frequency, 1 - frequency)
+  known <- is.finite(ranges[, 1L]) & is.finite(ranges[, 2L]) &
+    ranges[, 1L] >= 0 & ranges[, 2L] <= 2 & is.finite(maf)
+  maf[!known] <- NA_real_
+  unname(as.double(maf))
+}
+
 normalize_chr <- function(chr) {
   stringr::str_remove(as.character(chr), "^(?i:chr)+")
 }
@@ -369,8 +382,12 @@ prepareReusableGenotype <- function(phenotype_ids,
     stop("No variant with alt alleles")
   }
   gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
+  all_missing <- matrixStats::rowCounts(gt_matrix, value = NA_real_) +
+    matrixStats::rowCounts(gt_matrix, value = -1, na.rm = TRUE) == ncol(gt_matrix)
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
   variant_names <- rownames(gt_matrix)
+  cohort_maf <- cohortMafFromDosages(gt_matrix)
+  cohort_maf[all_missing] <- NA_real_
 
   message("Standardizing reusable genotype matrix")
   gt_std <- standardize_rows(gt_matrix)
@@ -386,6 +403,7 @@ prepareReusableGenotype <- function(phenotype_ids,
   list(
     gt_hat = gt_hat,
     variant_names = variant_names,
+    cohort_maf = cohort_maf,
     variant_info = parse_variant_ids(variant_names),
     sample_ids = sample_ids,
     covariate_adjustment = adjustment,
@@ -584,6 +602,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
       fitted <- timed_fit(gt_hat, expression_vector, legacy = reusable_genotype$dense,
                               covariate_explained_variants = explained_variants)
       fitted$variant_id = variant_names
+      fitted$cohort_maf <- reusable_genotype$cohort_maf[variant_idx]
       return(fitted)
     }
   }
@@ -662,6 +681,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   }
   # Impute missing values using row means and keep variant IDs before matrix
   # operations drop or reorder row names.
+  all_missing <- if (genotypes_imputed) rep(FALSE, nrow(gt_matrix)) else {
+    matrixStats::rowCounts(gt_matrix, value = NA_real_) +
+      matrixStats::rowCounts(gt_matrix, value = -1, na.rm = TRUE) == ncol(gt_matrix)
+  }
   if (!genotypes_imputed) {
     gt_matrix <- if (is.null(genotype_imputer)) {
       impute_matrix_rowmean(gt_matrix, missing_value = -1)
@@ -673,6 +696,10 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     stop("No variant with alt alleles")
   }
   variant_names <- rownames(gt_matrix)
+  cohort_maf <- cohortMafFromDosages(gt_matrix)
+  # The native imputer removes entirely missing rows. The R imputer keeps
+  # zero-filled rows, whose observed frequency must remain unknown.
+  if (length(all_missing) == nrow(gt_matrix)) cohort_maf[all_missing] <- NA_real_
   reportVariantDirectionCounts(
     variant_names,
     gene_meta,
@@ -722,6 +749,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   fitted <- timed_fit(gt_hat, expression_vector, legacy = legacy,
                           covariate_explained_variants = explained_variants)
   fitted$variant_id = variant_names
+  fitted$cohort_maf <- cohort_maf
   return(fitted)
 }
 

@@ -157,6 +157,7 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   }
   compare_model_values <- function(actual, reference, exact = FALSE) {
     expect_identical_value(actual$variant_id, reference$variant_id, "fit variant order")
+    expect_identical_value(actual$cohort_maf, reference$cohort_maf, "fit cohort MAF order")
     expect_identical_value(actual$sets$cs, reference$sets$cs, "credible-set memberships")
     expect_identical_value(actual$sets$cs_index, reference$sets$cs_index, "credible-set effects")
     expect_identical_value(actual$converged, reference$converged, "fit convergence status")
@@ -308,6 +309,16 @@ run_pgen_cache_fit_tests <- function(repo_dir) {
   })
 
   references <- stats::setNames(lapply(phenotype_ids, fit), phenotype_ids)
+  run_named_test("fit cohort MAF uses selected samples before genotype adjustment", {
+    for (id in phenotype_ids) {
+      fitted <- references[[id]]$result
+      selected <- genotypes[match(fitted$variant_id, variant_ids), selected_samples, drop = FALSE]
+      alt_af <- rowMeans(selected, na.rm = TRUE) / 2
+      expected <- unname(pmin(alt_af, 1 - alt_af))
+      stopifnot(is.double(fitted$cohort_maf), length(fitted$cohort_maf) == nrow(selected),
+                isTRUE(all.equal(fitted$cohort_maf, expected, tolerance = 1e-15)))
+    }
+  })
   run_named_test("cache model comparison bounds prior optimizer roundoff", {
     reference <- references$left$result
     rounded <- reference

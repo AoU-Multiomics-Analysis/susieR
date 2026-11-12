@@ -218,12 +218,31 @@ run_pgen_qc_manifest_tests <- function(repo_dir = ".") {
   short_args <- unlist(lapply(names(output_metadata), function(name) {
     c(paste0("--", gsub("_", "-", name)), write_list(output_metadata[[name]][-1L], paste0("short ", name)))
   }), use.names = FALSE)
+  # Output metadata can describe fewer entries or a different chromosome order
+  # from the outcome index. It must not filter the supplied scientific tables.
+  short_output <- file.path(root, "missing batch metadata")
   invoke("aggregate_pgen_susie.R", "missing batch metadata", c(aggregate_args, short_args,
-    "--output-dir", file.path(root, "missing batch metadata")), "batch|length")
+    "--output-dir", short_output))
+  short_manifest <- readPgenManifest(file.path(short_output, "pgen_manifest.tsv"))
+  stopifnot(identical(short_manifest, tibble::tibble(chromosome = c("2", "3", "4", "5"),
+    pgen = output_triplets$pgen[2:5], pvar = output_triplets$pvar[2:5],
+    psam = output_triplets$psam[2:5])))
   bad_args <- metadata_args
   bad_args[[2L]] <- write_list(c("2", "3", "2", "4", "5"), "wrong batch chromosomes")
+  reordered_output <- file.path(root, "wrong batch chromosomes")
   invoke("aggregate_pgen_susie.R", "wrong batch chromosomes", c(aggregate_args, bad_args,
-    "--output-dir", file.path(root, "wrong batch chromosomes")), "batch.*chromosome|chromosome.*batch")
+    "--output-dir", reordered_output))
+  reordered_manifest <- readPgenManifest(file.path(reordered_output, "pgen_manifest.tsv"))
+  stopifnot(identical(reordered_manifest, tibble::tibble(chromosome = c("2", "3", "4", "5"),
+    pgen = output_triplets$pgen[c(1L, 2L, 4L, 5L)],
+    pvar = output_triplets$pvar[c(1L, 2L, 4L, 5L)],
+    psam = output_triplets$psam[c(1L, 2L, 4L, 5L)])))
+  for (output in c(short_output, reordered_output)) {
+    for (name in c("susie.parquet", "credible_sets.parquet", "outcome_index.tsv", "covariate_explained_variants.tsv")) {
+      stopifnot(identical(digest::digest(file = file.path(plain, name), algo = "sha256"),
+                         digest::digest(file = file.path(output, name), algo = "sha256")))
+    }
+  }
   stopifnot(!file.exists("PWNED"))
   passed <- TRUE
   message("PGEN QC metadata tests passed: unique selected triplets, batch indices, CLI validation, and reusable URI manifests")

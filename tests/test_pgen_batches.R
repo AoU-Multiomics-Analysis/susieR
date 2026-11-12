@@ -155,7 +155,8 @@ run_pgen_batch_tests <- function(repo_dir) {
     chromosome = "1", position = 10L, ref = "A", alt = "G", cs_id = "a_1", cs_index = "1",
     region = "chr1:6-16", pip = .9, z = 4, cs_min_r2 = .8, cs_avg_r2 = .9, cs_size = 1L,
     posterior_mean = .4, posterior_sd = .1, cs_log10bf = 3,
-    has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25))
+    has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25,
+    cohort_maf = 0.125))
   cs <- bind_cols(own[1, ], tibble(molecular_trait_id = "a", cs_id = "a_1", cs_index = "1",
     region = "chr1:6-16", cs_log10bf = 3, cs_avg_r2 = .9, cs_min_r2 = .8, cs_size = 1,
     low_purity = FALSE, has_covariate_explained_variant = FALSE))
@@ -163,11 +164,11 @@ run_pgen_batch_tests <- function(repo_dir) {
     input_scale = 1, residual_sd = 0, residual_sd_ratio = 0)
   summary_tables <- list(
     bind_rows(summary, summary, mutate(summary, pip = .2, z = -2, posterior_mean = -.3,
-                              phenotype_residual_SD = 2.5)) %>%
+                              phenotype_residual_SD = 2.5, cohort_maf = 0.375)) %>%
       mutate(feature_converged = c(TRUE, TRUE, FALSE), first_note = c("first", "first", "different")),
     mutate(summary, molecular_trait_id = "foreign", outcome_id = "outside",
       phenotype_id = "foreign", gene_id = "unlisted gene", cs_id = "unknown set",
-      cs_size = 99L, feature_converged = TRUE, second_note = "second"))
+      cs_size = 99L, cohort_maf = 0.25, feature_converged = TRUE, second_note = "second"))
   cs_tables <- list(
     bind_rows(cs, cs, mutate(cs, cs_size = -5, low_purity = TRUE)) %>%
       mutate(feature_converged = c(FALSE, FALSE, TRUE)),
@@ -255,6 +256,22 @@ run_pgen_batch_tests <- function(repo_dir) {
   without_warnings(aggregate())
   stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet"), bind_rows(mixed_text_sd)))
 
+  # MAF remains row metadata. Old files receive unknown values without a lookup.
+  mixed_maf <- list(select(summary_tables[[1L]], -cohort_maf), summary_tables[[2L]])
+  emit(sums = mixed_maf)
+  without_warnings(aggregate())
+  mixed_maf_output <- arrow::read_parquet("aggregate/susie.parquet")
+  stopifnot(identical(mixed_maf_output, bind_rows(mixed_maf)),
+    identical(mixed_maf_output$cohort_maf, c(NA_real_, NA_real_, NA_real_, 0.25)))
+  old_maf <- lapply(summary_tables, function(table) select(table, -cohort_maf))
+  emit(sums = old_maf)
+  without_warnings(aggregate())
+  old_maf_output <- arrow::read_parquet("aggregate/susie.parquet")
+  stopifnot("All old compact inputs must receive numeric unknown MAF" =
+    identical(old_maf_output, bind_rows(old_maf) %>% mutate(cohort_maf = NA_real_)),
+    is.double(old_maf_output$cohort_maf),
+    !"cohort_maf" %in% names(arrow::read_parquet("aggregate/credible_sets.parquet")))
+
   # Fill absent metadata only. Conflicting or unknown index values stay unknown.
   metadata_index <- tibble(outcome_id = c("a", "a", "b", "conflict", "conflict"),
     converged = c(TRUE, TRUE, FALSE, TRUE, FALSE),
@@ -263,8 +280,10 @@ run_pgen_batch_tests <- function(repo_dir) {
   metadata_summary <- tibble(molecular_trait_id = c("a", "a", "b", "conflict", "unknown",
                                                     "without convergence"),
     variant = "same label", pip = c(.1, .2, .3, .4, .5, .6),
-    feature_converged = c(NA, FALSE, NA, NA, NA, NA))
-  metadata_summary2 <- tibble(molecular_trait_id = "b", variant = "other label", pip = .7)
+    feature_converged = c(NA, FALSE, NA, NA, NA, NA),
+    cohort_maf = c(.1, .2, .3, .4, .5, NA_real_))
+  metadata_summary2 <- tibble(molecular_trait_id = "b", variant = "other label", pip = .7,
+                            cohort_maf = .35)
   metadata_cs <- tibble(molecular_trait_id = c("a", "b", "conflict", "unknown", "without convergence"),
     cs_id = c("a", "b", "c", "d", "e"))
   metadata_cs2 <- tibble(molecular_trait_id = "a", cs_id = "explicit", feature_converged = FALSE)
@@ -290,7 +309,7 @@ run_pgen_batch_tests <- function(repo_dir) {
   without_warnings(aggregate())
   empty <- arrow::read_parquet("aggregate/susie.parquet")
   stopifnot(nrow(empty) == 0L, is.double(empty$phenotype_residual_SD),
-    is.logical(empty$feature_converged),
+    is.logical(empty$feature_converged), is.double(empty$cohort_maf),
     nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 0L)
   check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables))
 

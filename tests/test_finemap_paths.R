@@ -140,6 +140,7 @@ run_finemap_path_tests <- function(repo_dir = ".") {
   phenotype <- 1.2 * genotype[8L, ] - genotype[32L, ] + rnorm(180L, sd = 0.5)
   phenotype_2 <- genotype[15L, ] + rnorm(180L, sd = 0.5)
   genotype[4L, ] <- 0
+  genotype[5L, ] <- -1
   genotype[2L, 3L] <- -1
   genotype[6L, 4L] <- NA_real_
   make_se <- function(positions_for_traits = c(1000200L, 1000250L)) {
@@ -165,10 +166,15 @@ run_finemap_path_tests <- function(repo_dir = ".") {
     gt <- raw_genotypes[, samples, drop = FALSE]
     gt <- gt[rowSums(round(gt, 0), na.rm = TRUE) != 0, , drop = FALSE]
     gt[gt == -1] <- NA_real_
+    all_missing <- rowSums(!is.na(gt)) == 0L
     means <- rowMeans(gt, na.rm = TRUE)
     means[is.na(means)] <- 0
     missing <- which(is.na(gt), arr.ind = TRUE)
     gt[missing] <- means[missing[, 1L]]
+    frequency <- rowMeans(gt) / 2
+    expected_maf <- pmin(frequency, 1 - frequency)
+    invalid <- apply(gt, 1L, function(row) any(!is.finite(row) | row < 0 | row > 2))
+    expected_maf[all_missing | invalid] <- NA_real_
     x <- hat %*% t(gt - rowMeans(gt))
     if (!is.null(selected_variants)) x <- x[, selected_variants, drop = FALSE]
     fitted <- susieR::susie(x, y, L = 10,
@@ -178,17 +184,20 @@ run_finemap_path_tests <- function(repo_dir = ".") {
                             compute_univariate_zscore = TRUE, min_abs_corr = 0.5)
     fitted$phenotype_residual_SD <- stats::sd(drop(y))
     fitted$variant_id <- colnames(x)
+    fitted$cohort_maf <- unname(expected_maf[match(colnames(x), rownames(gt))])
     fitted
   }
   compare_fit <- function(reference, actual) {
     stopifnot(identical(reference$variant_id, actual$variant_id),
+              isTRUE(all.equal(reference$cohort_maf, actual$cohort_maf, tolerance = 1e-12)),
               isTRUE(all.equal(reference$phenotype_residual_SD,
                                actual$phenotype_residual_SD, tolerance = 1e-12)),
               identical(reference$sets$cs, actual$sets$cs),
               identical(reference$converged, actual$converged),
               identical(attributes(reference$z), attributes(actual$z)),
+              identical(is.na(reference$z), is.na(actual$z)),
               max(abs(reference$pip - actual$pip)) < 1e-8,
-              max(abs(reference$z - actual$z)) < 1e-9)
+              max(abs(reference$z - actual$z), na.rm = TRUE) < 1e-9)
   }
   covariates_reordered <- covariates[rev(sample_ids), , drop = FALSE]
   set.seed(159L)
@@ -197,6 +206,8 @@ run_finemap_path_tests <- function(repo_dir = ".") {
   set.seed(159L)
   actual <- finemapPhenotype("gene1", se, genotype, covariates_reordered, 1000L)
   compare_fit(expected, actual)
+  stopifnot("An entirely missing legacy predictor must not report observed MAF zero" =
+              is.na(actual$cohort_maf[match(rownames(genotype)[[5L]], actual$variant_id)]))
   assert_flag_table(actual$covariate_explained_variants)
   stopifnot(identical(expected_rng, .Random.seed))
 

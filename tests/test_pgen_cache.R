@@ -1,5 +1,56 @@
+# Prepared cache state tests do not require an installed PGEN reader.
+run_pgen_cache_state_tests <- function(repo_dir) {
+  source(file.path(repo_dir, "tests", "test_helpers.R"), local = TRUE)
+  functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH", file.path(repo_dir, "R", "utils"))
+  source(file.path(functions_path, "PgenCacheFunctions.R"), local = TRUE)
+  samples <- c("s3", "s1")
+  reader <- new.env(parent = emptyenv())
+  class(reader) <- "PgenReader"
+  reader$closed <- FALSE
+  reader$sample_ids <- samples
+  reader$pgen_path <- "prepared-cache-state.pgen"
+  reader$variants <- data.frame(variant_id = c("unused", "duplicate", "v3", "unused",
+                                              "duplicate", "unused", "unused", "v8"))
+  cache <- new.env(parent = emptyenv())
+  class(cache) <- "PgenGenotypeCache"
+  cache$reader <- reader
+  cache$pgen_path <- reader$pgen_path
+  cache$sample_ids <- samples
+  cache$mode <- "whole"
+  cache$initialized <- TRUE
+  cache$cleared <- FALSE
+  cache$cache_hits <- cache$exclusion_hits <- cache$variants_evicted <- 0L
+  cache$excluded_indices <- integer()
+  cache$plan <- list(window_indices = list(left = c(2L, 3L, 5L), right = c(3L, 5L, 8L),
+                                           empty = integer()))
+  cache$blocks <- list(
+    list(indices = c(5L, 2L), gt_hat = matrix(c(5, -5, 2, -2), nrow = 2L),
+         cohort_maf = c(.375, .125), flagged_indices = integer(),
+         diagnostics = .pgenCacheEmptyDiagnostics()),
+    list(indices = c(8L, 3L), gt_hat = matrix(c(8, -8, 3, -3), nrow = 2L),
+         cohort_maf = c(.5, .25), flagged_indices = integer(),
+         diagnostics = .pgenCacheEmptyDiagnostics()))
+  run_named_test("cached MAF follows physical predictors with repeated labels", {
+    left <- getPgenGenotypeCacheWindow(cache, "left")
+    expect_identical_value(left$cohort_maf, c(.125, .25, .375), "left physical MAF order")
+    expect_identical_value(left$variant_names, c("duplicate", "v3", "duplicate"))
+    right <- getPgenGenotypeCacheWindow(cache, "right")
+    expect_identical_value(right$cohort_maf, c(.25, .375, .5), "right physical MAF order")
+  })
+  run_named_test("rolling eviction keeps MAF aligned with resident genotype columns", {
+    cache$mode <- "rolling"
+    left <- getPgenGenotypeCacheWindow(cache, "left")
+    expect_identical_value(left$cohort_maf, c(.125, .25, .375), "evicted window MAF")
+    expect_identical_value(cache$blocks[[2L]]$cohort_maf, .25, "retained block MAF")
+    empty <- getPgenGenotypeCacheWindow(cache, "empty")
+    expect_identical_value(empty$cohort_maf, numeric(), "empty window MAF")
+  })
+  invisible(TRUE)
+}
+
 # Real PGEN files test cache selection, physical variant mapping, and reuse.
 run_pgen_cache_tests <- function(repo_dir) {
+  run_pgen_cache_state_tests(repo_dir)
   source(file.path(repo_dir, "tests", "test_helpers.R"), local = TRUE)
   functions_path <- Sys.getenv("SUSIER_FUNCTIONS_PATH", file.path(repo_dir, "R", "utils"))
   for (filename in c("SusieFunctions.R", "PgenFunctions.R", "PgenCacheFunctions.R")) {
@@ -17,6 +68,7 @@ run_pgen_cache_tests <- function(repo_dir) {
   calls[4L, 7L] <- NA_real_
   calls[5L, match(selected, samples)] <- NA_real_
   calls[6L, ] <- 0
+  calls[7L, ] <- c(2, 0, 2, 1, 2, 0, 2, 1)
   colnames(calls) <- samples
   positions <- c(10L, 100L, 140L, 110L, 120L, 130L, 150L, 160L, 170L, 180L, 190L, 200L)
   files <- file.path(directory, c("calls.pgen", "calls.pvar", "calls.psam"))
@@ -97,7 +149,8 @@ run_pgen_cache_tests <- function(repo_dir) {
     x <- t(mat - rowMeans(mat))
     x <- x - input_design %*% solve(crossprod(input_design)) %*% crossprod(input_design, x)
     dimnames(x) <- list(selected, reader$variants$variant_id[indices])
-    list(x = x, indices = as.integer(indices))
+    alt_af <- rowMeans(mat) / 2
+    list(x = x, indices = as.integer(indices), maf = unname(pmin(alt_af, 1 - alt_af)))
   }
   run_named_test("whole cache prepares each physical variant once and matches R", {
     plan <- planPgenGenotypeCache(reader, worklist, selected, mode = "whole")
@@ -108,8 +161,15 @@ run_pgen_cache_tests <- function(repo_dir) {
       expected <- reference(plan$window_indices[[id]])
       stopifnot(isTRUE(all.equal(result$gt_hat, expected$x, tolerance = 1e-13)))
       expect_identical_value(result$variant_indices, expected$indices)
+      stopifnot(isTRUE(all.equal(result$cohort_maf, expected$maf, tolerance = 1e-15)))
       stopifnot(!result$guard_required)
     }
+    first <- getPgenGenotypeCacheWindow(cache, "A")
+    stopifnot(isTRUE(all.equal(first$cohort_maf[first$variant_indices == 2L], 5 / 12,
+                              tolerance = 1e-15)))
+    high_alt <- getPgenGenotypeCacheWindow(cache, "B")
+    stopifnot(isTRUE(all.equal(high_alt$cohort_maf[high_alt$variant_indices == 7L], 1 / 6,
+                              tolerance = 1e-15)))
     summary <- pgenGenotypeCacheSummary(cache)
     stopifnot(summary$variants_read == 8, summary$variants_prepared == 6,
               summary$excluded_variants == 2, summary$cache_hits > 0,
@@ -128,6 +188,7 @@ run_pgen_cache_tests <- function(repo_dir) {
         expected <- reference(plan$window_indices[[id]])
         stopifnot(isTRUE(all.equal(result$gt_hat, expected$x, tolerance = 1e-13)))
         expect_identical_value(result$variant_indices, expected$indices)
+        stopifnot(isTRUE(all.equal(result$cohort_maf, expected$maf, tolerance = 1e-15)))
       }
     })
     # The native retry removes all-missing physical row 5 only. Later reads
@@ -213,6 +274,8 @@ run_pgen_cache_tests <- function(repo_dir) {
               pgenGenotypeCacheSummary(cache)$resident_variants == 598)
     expect_identical_value(result$variant_indices, as.integer(keep))
     stopifnot(sum(result$variant_names == "chr1_299_A_G") == 2L)
+    stopifnot(isTRUE(all.equal(result$cohort_maf[result$variant_names == "chr1_299_A_G"],
+                              c(5 / 12, 1 / 3), tolerance = 1e-15)))
     # A disjoint/new portion was prepared with the union and needs no new reads.
     observed <- observe_reads(getPgenGenotypeCacheWindow(cache, "right"))
     stopifnot(length(observed$indices) == 0L)

@@ -761,7 +761,7 @@ extractResults <- function(susie_object){
     susie_object$sets$purity$cs_log10bf[index] = log10(exp(susie_object$lbf[cs_id]))
     if (!is_overlapped) {
       cs_list[[index]] = dplyr::tibble(cs_id = paste0("L", cs_id),
-                                       variant_id = susie_object$variant_id[cs_variants])
+                                       .predictor_index = cs_variants)
       added_variants = append(added_variants, cs_variants)
     }
   }
@@ -804,6 +804,7 @@ extractResults <- function(susie_object){
   # Preserve the native variant PIP, including the fit's own prior threshold.
   # A credible-set assignment does not restrict the effects used in this PIP.
   posterior_df = dplyr::tibble(variant_id = rownames(alpha_mat), 
+                               .predictor_index = seq_len(nrow(alpha_mat)),
                                pip = susie_object$pip,
                                z = susie_object$z[,1],
                                posterior_mean = mean_vec, 
@@ -816,7 +817,10 @@ extractResults <- function(susie_object){
 
   if(nrow(df) > 0 && nrow(purity_df) > 0 && ncol(lbf_df) > 10){ #ncol(lbf_df) <= 10 only if the number of variants in the region is < 10
     cs_df = purity_df
-    variant_df = dplyr::left_join(posterior_df, df, by = "variant_id") %>%
+    # Variant labels can repeat across physical predictors. Native CS members
+    # use predictor column indices, so keep these indices until after the join.
+    variant_df = dplyr::left_join(posterior_df, df, by = ".predictor_index") %>%
+      dplyr::select(-.predictor_index) %>%
       dplyr::left_join(cs_df, by = "cs_id") %>%
       dplyr::mutate(has_covariate_explained_variant =
                       dplyr::coalesce(has_covariate_explained_variant, FALSE))

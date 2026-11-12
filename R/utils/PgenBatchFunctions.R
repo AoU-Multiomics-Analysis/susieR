@@ -586,6 +586,21 @@ pgenCheckFeatureConverged <- function(table, converged, label) {
   table
 }
 
+# Labels can identify more than one physical predictor. Keep log examples short.
+.pgenVariantLogText <- function(value) {
+  short <- if (nchar(value) > 96L) paste0(substr(value, 1L, 93L), "...") else value
+  encodeString(short)
+}
+
+.pgenWarnRepeatedVariantLabels <- function(source_file, kind, batch_id, outcome_id,
+                                           count, examples) {
+  warning("Retaining repeated variant labels in ", kind,
+    "; source=", encodeString(source_file), "; batch=", encodeString(batch_id),
+    "; outcome=", encodeString(outcome_id), "; repeated_row_count=", count,
+    "; examples=", paste(vapply(examples, .pgenVariantLogText, character(1)), collapse = ", "),
+    ". All rows and values are retained.", call. = FALSE)
+}
+
 aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_files,
                                 index_files, diagnostic_files, output_dir) {
   message("Checking localized batch files and expected outcomes")
@@ -684,11 +699,6 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
       }
       text_columns <- intersect(c("molecular_trait_id", "variant", "ref", "alt", "cs_id", "region"), names(table))
       for (column in text_columns) pgenCheckIds(table[[column]], paste(kind, "text schema", column))
-      if (nrow(table) && "variant" %in% names(table)) {
-        row_key <- paste0(pgenOwnershipKey(table), ":", nchar(table$variant), ":", table$variant)
-        if (kind == "summary") row_key <- paste0(row_key, ":", nchar(table$cs_id), ":", table$cs_id)
-        if (anyDuplicated(row_key)) stop(kind, " contains duplicate rows", call. = FALSE)
-      }
       for (column in intersect(c("low_purity", "has_covariate_explained_variant"), names(table))) {
         if (!is.logical(table[[column]]) || anyNA(table[[column]])) {
           stop(kind, " requires a nonmissing logical boolean column: ", column, call. = FALSE)
@@ -699,6 +709,17 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
                          "credible sets" = c("cs_log10bf", "cs_avg_r2", "cs_min_r2", "cs_size"),
                          diagnostics = c("input_scale", "residual_sd", "residual_sd_ratio"))
       if (any(!vapply(table[numbers], is.numeric, logical(1)))) stop(kind, " requires numeric schema columns", call. = FALSE)
+      if (nrow(table) && kind %in% c("summary", "diagnostics")) {
+        row_key <- paste0(table_keys, ":", nchar(table$variant, type = "bytes"), ":", table$variant)
+        if (kind == "summary") row_key <- paste0(row_key, ":", nchar(table$cs_id, type = "bytes"), ":", table$cs_id)
+        repeated <- duplicated(row_key)
+        source_file <- if (kind == "summary") summary_files[[i]] else diagnostic_files[[i]]
+        for (outcome_id in unique(table$outcome_id[repeated])) {
+          rows <- repeated & table$outcome_id == outcome_id
+          .pgenWarnRepeatedVariantLabels(source_file, kind, seen_batches[[i]], outcome_id,
+            sum(rows), head(unique(table$variant[rows]), 3L))
+        }
+      }
       switch(kind, summary = { summaries[[i]] <- table },
              "credible sets" = { sets[[i]] <- table }, diagnostics = { diagnostics[[i]] <- table })
     }
@@ -716,8 +737,8 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
   if (nrow(cs) && anyDuplicated(paste0(cs_keys, ":", nchar(cs$cs_id), ":", cs$cs_id))) {
     stop("Duplicate credible set rows", call. = FALSE)
   }
-  # The formatter emits every member of each retained high-purity set. Overlapped
-  # sets were already removed from both tables by extractResults().
+  # Overlapped sets were removed by extractResults(). Legacy labels can name
+  # more than one physical predictor, so label counts alone can be ambiguous.
   set_key <- function(table) {
     if (!nrow(table)) return(character())
     paste0(pgenOwnershipKey(table), ":", nchar(table$cs_id, type = "bytes"), ":", table$cs_id)
@@ -738,8 +759,19 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
   }
   members <- tibble::tibble(set_row = set_match, variant = summary$variant) %>% dplyr::distinct()
   member_counts <- tabulate(members$set_row, nbins = nrow(cs))
-  if (any(member_counts[!cs$low_purity] != cs$cs_size[!cs$low_purity])) {
+  row_counts <- tabulate(set_match, nbins = nrow(cs))
+  if (any(member_counts[!cs$low_purity] > cs$cs_size[!cs$low_purity]) ||
+      any(row_counts[!cs$low_purity] < cs$cs_size[!cs$low_purity])) {
     stop("Summary has missing or excess distinct variants for a high-purity credible set", call. = FALSE)
+  }
+  for (set_row in which(!cs$low_purity & row_counts > member_counts)) {
+    source_file <- summary_files[[match(cs$batch_id[[set_row]], seen_batches)]]
+    warning("Cannot verify the physical member count for a credible set with repeated variant labels",
+      "; source=", encodeString(source_file), "; batch=", encodeString(cs$batch_id[[set_row]]),
+      "; outcome=", encodeString(cs$outcome_id[[set_row]]),
+      "; cs_id=", .pgenVariantLogText(cs$cs_id[[set_row]]),
+      "; cs_size=", cs$cs_size[[set_row]], "; distinct_label_count=", member_counts[[set_row]],
+      "; row_count=", row_counts[[set_row]], ". All rows and values are retained.", call. = FALSE)
   }
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   files <- c(summary = file.path(output_dir, "susie.parquet"),
@@ -973,6 +1005,8 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
     # Cross-batch duplicate keys are limited to the current gene, then released.
     seen_variants <- new.env(hash = TRUE, parent = emptyenv())
     seen_residual_sd <- new.env(hash = TRUE, parent = emptyenv())
+    repeated_counts <- numeric(nrow(own_index))
+    repeated_examples <- vector("list", nrow(own_index))
     dataset <- arrow::open_dataset(full_susie_files[[i]], format = "parquet")
     batch_reader <- arrow::Scanner$create(dataset, use_threads = FALSE,
       batch_size = batch_size,
@@ -1027,9 +1061,12 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
       }
       row_keys <- paste0(nchar(table$molecular_trait_id, type = "bytes"), ":",
         table$molecular_trait_id, nchar(table$variant, type = "bytes"), ":", table$variant)
-      if (anyDuplicated(row_keys) || any(vapply(row_keys, exists, logical(1),
-          envir = seen_variants, inherits = FALSE))) {
-        stop("Full-SuSiE contains duplicate outcome variant rows", call. = FALSE)
+      repeated <- duplicated(row_keys) | vapply(row_keys, exists, logical(1),
+        envir = seen_variants, inherits = FALSE)
+      repeated_counts <- repeated_counts + tabulate(owner[repeated], nbins = nrow(own_index))
+      for (outcome_row in unique(owner[repeated])) {
+        repeated_examples[[outcome_row]] <- head(unique(c(repeated_examples[[outcome_row]],
+          table$variant[repeated & owner == outcome_row])), 3L)
       }
       for (row_key in row_keys) assign(row_key, TRUE, envir = seen_variants)
       seen_outcomes <- union(seen_outcomes, table$molecular_trait_id)
@@ -1042,6 +1079,11 @@ aggregatePgenFullSusie <- function(outcome_index_file, full_susie_files, output_
     batch_reader <- NULL
     if (any(!own_index$outcome_id[own_index$credible_set_count > 0] %in% seen_outcomes)) {
       stop("Full-SuSiE is missing rows for an outcome with credible sets", call. = FALSE)
+    }
+    for (outcome_row in which(repeated_counts > 0)) {
+      .pgenWarnRepeatedVariantLabels(full_susie_files[[i]], "full-SuSiE",
+        own_index$batch_id[[outcome_row]], own_index$outcome_id[[outcome_row]],
+        repeated_counts[[outcome_row]], repeated_examples[[outcome_row]])
     }
     rm(seen_variants, seen_residual_sd, dataset)
     message("Aggregated full-SuSiE gene ", genes$gene_id[[i]])

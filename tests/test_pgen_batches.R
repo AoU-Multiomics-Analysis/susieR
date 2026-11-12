@@ -179,6 +179,14 @@ run_pgen_batch_tests <- function(repo_dir) {
     "expected.tsv", c("1 summary.parquet", "2 summary.parquet"),
     c("1 cs.parquet", "2 cs.parquet"), c("1 index.tsv", "2 index.tsv"),
     c("1 diagnostic.tsv", "2 diagnostic.tsv"), "aggregate", ...)
+  capture_warnings <- function(expr) {
+    warnings <- character()
+    withCallingHandlers(force(expr), warning = function(condition) {
+      warnings <<- c(warnings, conditionMessage(condition))
+      invokeRestart("muffleWarning")
+    })
+    warnings
+  }
   emit()
   aggregate()
   stopifnot(nrow(arrow::read_parquet("aggregate/susie.parquet")) == 1,
@@ -186,6 +194,57 @@ run_pgen_batch_tests <- function(repo_dir) {
             identical(read_tsv("aggregate/outcome_index.tsv")$status, index$status),
             nrow(read_tsv("aggregate/covariate_explained_variants.tsv")) == 1,
             identical(arrow::read_parquet("aggregate/susie.parquet")$phenotype_residual_SD, 1.25))
+  # A label is not a physical predictor ID. Keep equal and differing rows in order.
+  differing_row <- mutate(summary, pip = .2, z = -2, posterior_mean = -.3,
+                          posterior_sd = .2)
+  repeated_cases <- list(
+    identical_rows = bind_rows(summary, summary),
+    differing_values = bind_rows(summary, differing_row),
+    two_physical_members = mutate(bind_rows(summary, differing_row), cs_size = 2L),
+    legacy_join_expansion = mutate(bind_rows(summary, summary, differing_row,
+                                             differing_row), cs_size = 2L)
+  )
+  for (case in names(repeated_cases)) {
+    repeated <- repeated_cases[[case]]
+    emit(sum = repeated, sets = mutate(cs, cs_size = repeated$cs_size[[1L]]))
+    warnings <- capture_warnings(aggregate())
+    retained <- arrow::read_parquet("aggregate/susie.parquet")
+    stopifnot(identical(retained[names(repeated)], repeated),
+      any(grepl("1 summary.parquet", warnings, fixed = TRUE)),
+      any(grepl("batch_000001", warnings, fixed = TRUE)),
+      any(grepl("outcome=a", warnings, fixed = TRUE)),
+      any(grepl(paste0("repeated_row_count=", nrow(repeated) - 1L), warnings, fixed = TRUE)),
+      any(grepl("physical member count", warnings, fixed = TRUE)))
+  }
+  repeated_diagnostic <- bind_rows(diagnostic, diagnostic,
+    mutate(diagnostic, input_scale = 2, residual_sd = .1, residual_sd_ratio = .05))
+  emit(diag = repeated_diagnostic)
+  warnings <- capture_warnings(aggregate())
+  stopifnot(identical(tibble::as_tibble(read_tsv("aggregate/covariate_explained_variants.tsv")),
+                      repeated_diagnostic),
+    any(grepl("1 diagnostic.tsv", warnings, fixed = TRUE)),
+    any(grepl("outcome=a", warnings, fixed = TRUE)),
+    any(grepl("repeated_row_count=2", warnings, fixed = TRUE)))
+  # Long labels must stay complete in data and remain short in warning examples.
+  long_variant <- paste0("1_10_A_G_", strrep("long", 300L))
+  long_rows <- mutate(bind_rows(summary, summary), variant = long_variant)
+  emit(sum = long_rows)
+  warnings <- capture_warnings(aggregate())
+  stopifnot(identical(arrow::read_parquet("aggregate/susie.parquet")$variant,
+                      rep(long_variant, 2L)),
+    !any(grepl(long_variant, warnings, fixed = TRUE)),
+    max(nchar(warnings)) < 700L)
+  # Repeated labels cannot hide a definite excess or shortage of CS members.
+  emit(sum = bind_rows(summary, summary, mutate(summary, variant = "1_12_A_T",
+                                                position = 12L)))
+  suppressWarnings(error(aggregate(), "missing|excess"))
+  emit(sum = mutate(bind_rows(summary, differing_row), cs_size = 3L),
+       sets = mutate(cs, cs_size = 3L))
+  suppressWarnings(error(aggregate(), "missing|excess"))
+  emit(idx = mutate(index, credible_set_count = if_else(outcome_id == "a", 2L, credible_set_count)),
+       sets = bind_rows(cs, cs))
+  error(aggregate(), "Duplicate credible set")
+  emit()
   # Backfill old files from the index, including retained NONCONVERGED sets.
   convergence_index <- index %>%
     mutate(status = if_else(outcome_id == "a", "NONCONVERGED", "CONVERGED"),
@@ -371,10 +430,6 @@ run_pgen_batch_tests <- function(repo_dir) {
   error(aggregate(), "ownership|foreign")
   emit(idx = mutate(index, chromosome = "chr2"))
   error(aggregate(), "chromosome")
-  emit(sum = bind_rows(summary, summary))
-  error(aggregate(), "duplicate|Duplicate")
-  emit(diag = bind_rows(diagnostic, diagnostic))
-  error(aggregate(), "duplicate|Duplicate")
   emit(sum = mutate(summary, variant = 123))
   error(aggregate(), "schema|text|ID")
   emit(idx = mutate(index, seed = 3e9))
@@ -442,4 +497,9 @@ run_pgen_batch_tests <- function(repo_dir) {
                             c("1 cs.parquet", "2 cs.parquet"),
                             c("1 index.tsv", "2 index.tsv"),
                             c("1 diagnostic.tsv", "2 diagnostic.tsv"), "bad"), "localization")
+}
+
+if (sys.nframe() == 0L) {
+  args <- commandArgs(trailingOnly = TRUE)
+  run_pgen_batch_tests(normalizePath(if (length(args)) args[[1L]] else ".", mustWork = TRUE))
 }

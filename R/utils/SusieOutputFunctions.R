@@ -46,7 +46,7 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   empty_lbf_df <- InitEmptyLbfDf()
   empty_in_cs_variant_df <- InitEmptyInCSVariantDf(
     include_covariate_diagnostics = TRUE, include_phenotype_residual_sd = TRUE,
-    include_cohort_maf = TRUE
+    include_cohort_maf = TRUE, include_cohort_counts = TRUE
   )
   empty_cs_df <- InitEmptyCS()
   covariate_explained_variants <- dplyr::bind_rows(
@@ -67,9 +67,14 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   # before CS filtering; repeated labels must not join or expand these rows.
   variant_df <- purrr::imap_dfr(res$variant_df, function(variant_table, outcome_id) {
     if (is.null(variant_table)) return(NULL)
-    cohort_maf <- results[[outcome_id]]$cohort_maf
-    if (is.null(cohort_maf)) cohort_maf <- rep(NA_real_, nrow(variant_table))
-    dplyr::mutate(variant_table, cohort_maf = unname(as.double(cohort_maf)))
+    cohort_value <- function(column) {
+      value <- results[[outcome_id]][[column]]
+      if (is.null(value)) value <- rep(NA_real_, nrow(variant_table))
+      unname(as.double(value))
+    }
+    dplyr::mutate(variant_table, cohort_maf = cohort_value("cohort_maf"),
+                  cohort_an = cohort_value("cohort_an"),
+                  cohort_mac = cohort_value("cohort_mac"))
   }, .id = "phenotype_id")
   if (nrow(variant_df) > 0L) {
     variant_df <- variant_df %>%
@@ -109,7 +114,7 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
                        chromosome = chr, position = pos, ref, alt, cs_id, cs_index,
                        region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean,
                        posterior_sd, cs_log10bf, has_covariate_explained_variant,
-                       phenotype_residual_SD, cohort_maf)
+                       phenotype_residual_SD, cohort_maf, cohort_an, cohort_mac)
   } else {
     in_cs_variant_df <- empty_in_cs_variant_df
     cs_df <- empty_cs_df

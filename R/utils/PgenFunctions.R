@@ -198,8 +198,22 @@ openPgenReader <- function(pgen_path, pvar_path, psam_path, sample_ids = NULL) {
 
 # Decode physical variant indices. Return retained indices as well as values so
 # duplicate variant names and all-missing exclusions cannot change row mapping.
+.pgenReadCohortCounts <- function(pgen, indices) {
+  counts <- list(cohort_an = double(length(indices)), cohort_mac = double(length(indices)))
+  if (!length(indices)) return(counts)
+  for (start in seq.int(1L, length(indices), by = 256L)) {
+    block <- seq.int(start, min(start + 255L, length(indices)))
+    observed <- pgenlibr::ReadList(pgen, indices[block], meanimpute = FALSE)
+    current <- cohortAlleleCountsFromDosages(t(observed))
+    counts$cohort_an[block] <- current$cohort_an
+    counts$cohort_mac[block] <- current$cohort_mac
+  }
+  counts
+}
+
 readPgenVariants <- function(reader, variant_indices, sample_ids = NULL,
-                             as_double = TRUE, missing_code = "NA", meanimpute = TRUE) {
+                             as_double = TRUE, missing_code = "NA", meanimpute = TRUE,
+                             include_cohort_counts = FALSE) {
   if (!is.environment(reader) || !inherits(reader, "PgenReader")) {
     stop("reader must be a PgenReader", call. = FALSE)
   }
@@ -223,6 +237,10 @@ readPgenVariants <- function(reader, variant_indices, sample_ids = NULL,
   }
   if (!is.logical(meanimpute) || length(meanimpute) != 1L || is.na(meanimpute)) {
     stop("meanimpute must be TRUE or FALSE", call. = FALSE)
+  }
+  if (!is.logical(include_cohort_counts) || length(include_cohort_counts) != 1L ||
+      is.na(include_cohort_counts)) {
+    stop("include_cohort_counts must be TRUE or FALSE", call. = FALSE)
   }
   if (!is.character(missing_code) || length(missing_code) != 1L ||
       is.na(missing_code) || !missing_code %in% c("NA", "-1")) {
@@ -251,8 +269,14 @@ readPgenVariants <- function(reader, variant_indices, sample_ids = NULL,
   if (!length(indices)) {
     result <- matrix(if (meanimpute || as_double) numeric() else integer(),
       nrow = 0L, ncol = length(selected_ids), dimnames = list(NULL, selected_ids))
-    return(list(genotypes = result, variant_indices = integer()))
+    decoded <- list(genotypes = result, variant_indices = integer())
+    if (include_cohort_counts) {
+      decoded <- c(decoded, list(cohort_an = double(), cohort_mac = double()))
+    }
+    return(decoded)
   }
+  requested_indices <- indices
+  cohort_counts <- if (include_cohort_counts) .pgenReadCohortCounts(pgen, indices) else NULL
   if (meanimpute) {
     repeat {
       genotypes <- tryCatch(pgenlibr::ReadList(pgen, indices, meanimpute = TRUE), error = identity)
@@ -278,7 +302,13 @@ readPgenVariants <- function(reader, variant_indices, sample_ids = NULL,
   dimnames(result) <- list(if (length(indices)) region$variant_id else NULL, selected_ids)
   if (!meanimpute && missing_code == "-1") result[is.na(result)] <- -1L
   if (as_double && !meanimpute) storage.mode(result) <- "double"
-  list(genotypes = result, variant_indices = indices)
+  decoded <- list(genotypes = result, variant_indices = indices)
+  if (include_cohort_counts) {
+    retained <- match(indices, requested_indices)
+    decoded$cohort_an <- cohort_counts$cohort_an[retained]
+    decoded$cohort_mac <- cohort_counts$cohort_mac[retained]
+  }
+  decoded
 }
 
 # Window reads keep the existing matrix-only interface and empty-window error.

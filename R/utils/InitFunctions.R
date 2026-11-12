@@ -84,7 +84,8 @@ empty_lbf_df
 # diagnostics; the checkpointed formatter keeps its existing output columns.
 InitEmptyInCSVariantDf <- function(include_covariate_diagnostics = FALSE,
                                   include_phenotype_residual_sd = FALSE,
-                                  include_cohort_maf = FALSE) {
+                                  include_cohort_maf = FALSE,
+                                  include_cohort_counts = FALSE) {
 empty_in_cs_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
   variant = character(),
@@ -116,6 +117,11 @@ if (include_phenotype_residual_sd) {
 }
 if (include_cohort_maf) {
   empty_in_cs_variant_df <- dplyr::mutate(empty_in_cs_variant_df, cohort_maf = numeric())
+}
+if (include_cohort_counts) {
+  empty_in_cs_variant_df <- dplyr::mutate(
+    empty_in_cs_variant_df, cohort_an = numeric(), cohort_mac = numeric()
+  )
 }
 empty_in_cs_variant_df
 }

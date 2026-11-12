@@ -4,7 +4,11 @@
 filterMAF <- function(genotype_matrix,
                       ancestry_df,
                       MAF_threshold = 0,
-                      variant_list = NULL) {
+                      variant_list = NULL,
+                      return_indices = FALSE) {
+    if (!is.logical(return_indices) || length(return_indices) != 1L || is.na(return_indices)) {
+      stop("return_indices must be TRUE or FALSE", call. = FALSE)
+    }
     # If no variant list is specified, compute MAFs from the dosage matrix per
     # ancestry and keep variants passing in at least one non-admixed ancestry.
     if (is.null(variant_list) && MAF_threshold > 0 && !is.null(ancestry_df))  {
@@ -32,6 +36,7 @@ filterMAF <- function(genotype_matrix,
         filter(value > MAF_threshold) %>% 
         distinct(name) %>% 
         pull(name)
+    row_indices <- match(MAF_calculations, rownames(genotype_matrix))
     filtered_genotype_matrix <- genotype_matrix[MAF_calculations,]
     }else if (!is.null(variant_list)){
         message('Filtering genotype matrix by external  variant set')
@@ -42,13 +47,18 @@ filterMAF <- function(genotype_matrix,
                                             pull(variants)
         rownames(genotype_matrix) <- genotype_df_variant_names
         valid_variants <- intersect(rownames(genotype_matrix),variant_df)
+        row_indices <- match(valid_variants, rownames(genotype_matrix))
         filtered_genotype_matrix <- genotype_matrix[valid_variants,]
     } else {
         message('No filtering parameters supplied, returning original genotype matrix')
         filtered_genotype_matrix <- genotype_matrix
+        row_indices <- seq_len(nrow(genotype_matrix))
     }
 
-    return(filtered_genotype_matrix) 
+    if (return_indices) {
+      return(list(genotypes = filtered_genotype_matrix, row_indices = as.integer(row_indices)))
+    }
+    return(filtered_genotype_matrix)
 }
 
 
@@ -88,6 +98,22 @@ cohortMafFromDosages <- function(mat) {
     ranges[, 1L] >= 0 & ranges[, 2L] <= 2 & is.finite(maf)
   maf[!known] <- NA_real_
   unname(as.double(maf))
+}
+
+# Count observed alleles before imputation. Preserve fractional ALT dosages and
+# mark generic features outside diploid dosage encoding as unknown.
+cohortAlleleCountsFromDosages <- function(mat) {
+  if (!nrow(mat)) return(list(cohort_an = double(), cohort_mac = double()))
+  sentinel <- matrixStats::rowCounts(mat, value = -1, na.rm = TRUE)
+  missing <- matrixStats::rowCounts(mat, value = NA_real_) + sentinel
+  an <- 2 * (ncol(mat) - missing)
+  alt <- rowSums(mat, na.rm = TRUE) + sentinel
+  invalid <- rowSums(mat < 0, na.rm = TRUE) > sentinel |
+    rowSums(mat > 2, na.rm = TRUE) > 0
+  mac <- pmin(alt, an - alt)
+  an[invalid] <- NA_real_
+  mac[invalid] <- NA_real_
+  list(cohort_an = unname(as.double(an)), cohort_mac = unname(as.double(mac)))
 }
 
 normalize_chr <- function(chr) {
@@ -384,6 +410,7 @@ prepareReusableGenotype <- function(phenotype_ids,
   gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
   all_missing <- matrixStats::rowCounts(gt_matrix, value = NA_real_) +
     matrixStats::rowCounts(gt_matrix, value = -1, na.rm = TRUE) == ncol(gt_matrix)
+  cohort_counts <- cohortAlleleCountsFromDosages(gt_matrix)
   gt_matrix <- impute_matrix_rowmean(gt_matrix, missing_value = -1)
   variant_names <- rownames(gt_matrix)
   cohort_maf <- cohortMafFromDosages(gt_matrix)
@@ -404,6 +431,8 @@ prepareReusableGenotype <- function(phenotype_ids,
     gt_hat = gt_hat,
     variant_names = variant_names,
     cohort_maf = cohort_maf,
+    cohort_an = cohort_counts$cohort_an,
+    cohort_mac = cohort_counts$cohort_mac,
     variant_info = parse_variant_ids(variant_names),
     sample_ids = sample_ids,
     covariate_adjustment = adjustment,
@@ -496,7 +525,7 @@ fitSusieModel <- function(X, y, legacy = FALSE,
 
 # Fine-map one phenotype by loading local cis dosages, residualizing expression
 # and genotypes against covariates, then fitting susieR.
-finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL,timing_callback = NULL,genotype_imputer = NULL,genotypes_imputed = FALSE){
+finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_distance,ancestry_data = NULL,MAF = 0,variant_list = NULL,additional_genotypes = NULL,reusable_genotype = NULL,variant_report_file = NULL,timing_callback = NULL,genotype_imputer = NULL,genotypes_imputed = FALSE,cohort_counts = NULL){
   if (!is.null(timing_callback) && !is.function(timing_callback)) {
     stop("timing_callback must be a function or NULL", call. = FALSE)
   }
@@ -603,6 +632,12 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
                               covariate_explained_variants = explained_variants)
       fitted$variant_id = variant_names
       fitted$cohort_maf <- reusable_genotype$cohort_maf[variant_idx]
+      fitted$cohort_an <- if (is.null(reusable_genotype$cohort_an)) {
+        rep(NA_real_, length(variant_names))
+      } else reusable_genotype$cohort_an[variant_idx]
+      fitted$cohort_mac <- if (is.null(reusable_genotype$cohort_mac)) {
+        rep(NA_real_, length(variant_names))
+      } else reusable_genotype$cohort_mac[variant_idx]
       return(fitted)
     }
   }
@@ -655,6 +690,15 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   gt_matrix = genotype_matrix[,names(expression_vector)]
   rm(genotype_matrix)
   gc()
+  count_names <- c("cohort_an", "cohort_mac")
+  if (!is.null(cohort_counts)) {
+    if (!is.list(cohort_counts) || !all(count_names %in% names(cohort_counts)) ||
+        any(vapply(cohort_counts[count_names], function(values) {
+          !is.numeric(values) || length(values) != nrow(gt_matrix)
+        }, logical(1)))) {
+      stop("cohort_counts must contain numeric AN and MAC for each physical genotype row")
+    }
+  }
  # #Exclude variants with no alternative alleles
   #message('Filtering variants with no alt alleles')
   #gt_matrix = gt_matrix[rowSums(round(gt_matrix,0), na.rm = TRUE) != 0,]
@@ -672,6 +716,14 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   nonzero_idx <- which(rowSums(round(gt_matrix,0), na.rm = TRUE) != 0)
   if (length(nonzero_idx) == 0) stop("No variant with alt alleles")
   gt_matrix <- gt_matrix[nonzero_idx, , drop = FALSE]
+  cohort_counts <- if (!is.null(cohort_counts)) {
+    lapply(cohort_counts[count_names], function(values) unname(as.double(values[nonzero_idx])))
+  } else if (!genotypes_imputed) {
+    cohortAlleleCountsFromDosages(gt_matrix)
+  } else {
+    # Missing calls cannot be reconstructed from an already imputed matrix.
+    setNames(rep(list(rep(NA_real_, nrow(gt_matrix))), length(count_names)), count_names)
+  }
   if (isTRUE(getOption("susier.memory_debug", FALSE))) {
     message("DEBUG: before imputation (local objects and sizes):")
     debug_list_locals(environment(), top_n = 100)
@@ -685,6 +737,7 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
     matrixStats::rowCounts(gt_matrix, value = NA_real_) +
       matrixStats::rowCounts(gt_matrix, value = -1, na.rm = TRUE) == ncol(gt_matrix)
   }
+  pre_impute_names <- rownames(gt_matrix)
   if (!genotypes_imputed) {
     gt_matrix <- if (is.null(genotype_imputer)) {
       impute_matrix_rowmean(gt_matrix, missing_value = -1)
@@ -694,6 +747,25 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
   }
   if (!nrow(gt_matrix)) {
     stop("No variant with alt alleles")
+  }
+  imputer_counts <- attr(gt_matrix, "cohort_counts", exact = TRUE)
+  if (!is.null(imputer_counts)) {
+    cohort_counts <- imputer_counts
+    attr(gt_matrix, "cohort_counts") <- NULL
+  } else if (length(cohort_counts$cohort_an) != nrow(gt_matrix)) {
+    # Existing custom imputers can remove entirely missing rows. Use that known
+    # physical row mask; do not join repeated labels or alter the model matrix.
+    if (identical(rownames(gt_matrix), pre_impute_names[!all_missing])) {
+      cohort_counts <- lapply(cohort_counts, function(values) values[!all_missing])
+    } else {
+      cohort_counts <- setNames(rep(list(rep(NA_real_, nrow(gt_matrix))), length(count_names)), count_names)
+    }
+  }
+  if (!all(count_names %in% names(cohort_counts)) ||
+      any(vapply(cohort_counts[count_names], function(values) {
+        !is.numeric(values) || length(values) != nrow(gt_matrix)
+      }, logical(1)))) {
+    stop("Genotype imputation changed rows without aligned cohort counts")
   }
   variant_names <- rownames(gt_matrix)
   cohort_maf <- cohortMafFromDosages(gt_matrix)
@@ -750,6 +822,8 @@ finemapPhenotype <- function(phenotype_id, se, genotype_file, covariates, cis_di
                           covariate_explained_variants = explained_variants)
   fitted$variant_id = variant_names
   fitted$cohort_maf <- cohort_maf
+  fitted$cohort_an <- unname(as.double(cohort_counts$cohort_an))
+  fitted$cohort_mac <- unname(as.double(cohort_counts$cohort_mac))
   return(fitted)
 }
 

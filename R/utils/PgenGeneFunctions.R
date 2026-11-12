@@ -1,8 +1,13 @@
 # Impute after the existing hardcall filters and fit sample selection. ReadList
 # uses stored dosages; this path expects integer-valued hardcall dosages.
-imputePgenHardcalls <- function(reader, mat, missing_value = -1) {
+imputePgenHardcalls <- function(reader, mat, missing_value = -1,
+                               include_cohort_counts = FALSE) {
   if (!inherits(reader, "PgenReader") || isTRUE(reader$closed)) {
     stop("Native imputation requires an open PgenReader", call. = FALSE)
+  }
+  if (!is.logical(include_cohort_counts) || length(include_cohort_counts) != 1L ||
+      is.na(include_cohort_counts)) {
+    stop("include_cohort_counts must be TRUE or FALSE", call. = FALSE)
   }
   missing_counts <- matrixStats::rowCounts(mat, value = NA_real_) +
     matrixStats::rowCounts(mat, value = missing_value, na.rm = TRUE)
@@ -14,8 +19,12 @@ imputePgenHardcalls <- function(reader, mat, missing_value = -1) {
     mat <- mat[keep, , drop = FALSE]
     missing_counts <- missing_counts[keep]
   }
+  cohort_counts <- if (include_cohort_counts) cohortAlleleCountsFromDosages(mat) else NULL
   missing_rows <- which(missing_counts > 0L & missing_counts < ncol(mat))
-  if (!length(missing_rows)) return(mat)
+  if (!length(missing_rows)) {
+    if (include_cohort_counts) attr(mat, "cohort_counts") <- cohort_counts
+    return(mat)
+  }
 
   variant_ids <- rownames(mat)[missing_rows]
   metadata_ids <- reader$variants$variant_id
@@ -39,10 +48,16 @@ imputePgenHardcalls <- function(reader, mat, missing_value = -1) {
   # Small read blocks limit temporary matrices. No genotypes persist between fits.
   for (start in seq.int(1L, length(missing_rows), by = 256L)) {
     block <- seq.int(start, min(start + 255L, length(missing_rows)))
+    if (include_cohort_counts) {
+      current <- .pgenReadCohortCounts(pgen, as.integer(variant_indices[block]))
+      cohort_counts$cohort_an[missing_rows[block]] <- current$cohort_an
+      cohort_counts$cohort_mac[missing_rows[block]] <- current$cohort_mac
+    }
     native <- pgenlibr::ReadList(pgen, as.integer(variant_indices[block]),
                                meanimpute = TRUE)
     mat[missing_rows[block], ] <- t(native[sample_order, , drop = FALSE])
   }
+  if (include_cohort_counts) attr(mat, "cohort_counts") <- cohort_counts
   mat
 }
 
@@ -120,6 +135,8 @@ finemapPreparedPgenPhenotype <- function(phenotype_id, se, reader, covariates,
   timing_stage <- NULL
   fitted$variant_id <- window$variant_names
   fitted$cohort_maf <- window$cohort_maf
+  fitted$cohort_an <- window$cohort_an
+  fitted$cohort_mac <- window$cohort_mac
   fitted
 }
 
@@ -181,24 +198,38 @@ finemapPgenPhenotype <- function(phenotype_id, se, reader, covariates,
     message("Mean-imputing with pgenlibr on the first read across ",
             length(feature_samples), " selected samples")
   }
-  raw <- readPgenWindow(reader, metadata$chromosome[[1L]], max(1, start), end,
+  cohort_counts <- NULL
+  raw <- if (native_first) {
+    indices <- .pgenWindowIndices(reader, metadata$chromosome[[1L]], max(1, start), end)
+    decoded <- readPgenVariants(reader, indices, sample_ids = feature_samples,
+      as_double = TRUE, meanimpute = TRUE, include_cohort_counts = TRUE)
+    if (!length(decoded$variant_indices)) stop("No variant with alt alleles", call. = FALSE)
+    cohort_counts <- list(cohort_an = decoded$cohort_an, cohort_mac = decoded$cohort_mac)
+    decoded$genotypes
+  } else readPgenWindow(reader, metadata$chromosome[[1L]], max(1, start), end,
                         as_double = TRUE,
                         missing_code = if (is.null(additional_genotypes)) "NA" else missing_code,
                         meanimpute = native_first, sample_ids = feature_samples)
   message("PGEN window dimensions: ", nrow(raw), " variants x ", ncol(raw), " samples")
-  filtered <- filterMAF(raw, ancestry_data, MAF_threshold = MAF, variant_list = variant_list)
+  filtered <- if (native_first) {
+    selected <- filterMAF(raw, ancestry_data, MAF_threshold = MAF,
+                          variant_list = variant_list, return_indices = TRUE)
+    cohort_counts <- purrr::map(cohort_counts, ~ .x[selected$row_indices])
+    selected$genotypes
+  } else filterMAF(raw, ancestry_data, MAF_threshold = MAF, variant_list = variant_list)
   message("PGEN variants after MAF/list filtering: ", nrow(filtered))
   if (!is.null(timing_callback)) timing_callback("data_loading", "complete")
   loading <- FALSE
   genotype_imputer <- if (!native_first && is.null(additional_genotypes)) {
-    function(mat, missing_value) imputePgenHardcalls(reader, mat, missing_value)
+    function(mat, missing_value) imputePgenHardcalls(reader, mat, missing_value,
+                                                  include_cohort_counts = TRUE)
   } else NULL
   finemapPhenotype(phenotype_id, se, filtered, covariates, cis_distance,
                    ancestry_data = ancestry_data, MAF = MAF, variant_list = variant_list,
                    additional_genotypes = additional_genotypes,
                    variant_report_file = variant_report_file, timing_callback = timing_callback,
                    genotype_imputer = genotype_imputer,
-                   genotypes_imputed = native_first)
+                   genotypes_imputed = native_first, cohort_counts = cohort_counts)
 }
 
 .pgenGeneId <- function(value, label) {

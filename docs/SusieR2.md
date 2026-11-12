@@ -218,6 +218,24 @@ separate effect probabilities. A variant's `cs_index` does not select or
 change its PIP. Full tables also retain native PIPs for variants outside
 retained credible sets.
 
+The compact variant Parquets also contain numeric `cohort_maf`. This is the
+minor allele frequency across the samples used in that feature's fit. For
+diploid ALT dosages, it is `min(mean(dosage) / 2, 1 - mean(dosage) / 2)`. It uses
+the uncentered dosage matrix before covariate adjustment. It pools the selected
+samples across ancestries and includes any sample restriction from additional
+genotypes. It is separate from the ancestry MAF filter and the input PGEN QC.
+
+The value is recorded during genotype preparation, with no additional genotype
+reads. Mean imputation preserves the observed mean for the same sample set and
+dosage representation. An entirely missing legacy row, or a feature outside
+the diploid dosage range, has unknown MAF. Additional features must encode ALT
+copy counts for this allele-frequency interpretation to apply.
+
+The column is carried through per-gene, batch, and combined compact files.
+Older fits or compact files without recorded MAF receive numeric missing
+values. The full variant, LBF, and credible-set table schemas stay unchanged.
+Recording MAF does not change model inputs, PIPs, credible sets, or effects.
+
 **Output correction, 2026-11-09:** Earlier exporters put the assigned effect's
 alpha value in `pip`. Full-table variants outside retained credible sets
 received missing PIPs. Those exports need to be regenerated from the original

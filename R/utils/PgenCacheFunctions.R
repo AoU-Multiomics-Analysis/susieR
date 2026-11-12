@@ -171,6 +171,7 @@ createPgenGenotypeCache <- function(reader, plan, sample_ids, covariates_matrix)
     excluded <- setdiff(requested, retained)
     cache$excluded_indices <- union(cache$excluded_indices, excluded)
     if (!length(retained)) next
+    cohort_maf <- cohortMafFromDosages(mat)
     values <- t(mat - rowMeans(mat))
     residuals <- values - cache$projection %*% crossprod(cache$covariates_matrix, values)
     input_scale <- pmax(matrixStats::colSds(values), abs(colMeans(values)))
@@ -182,7 +183,7 @@ createPgenGenotypeCache <- function(reader, plan, sample_ids, covariates_matrix)
       residual_sd = unname(residual_sd[flagged]),
       residual_sd_ratio = unname(residual_sd[flagged] / input_scale[flagged]))
     cache$blocks[[length(cache$blocks) + 1L]] <- list(
-      indices = as.integer(retained), gt_hat = residuals,
+      indices = as.integer(retained), gt_hat = residuals, cohort_maf = cohort_maf,
       flagged_indices = as.integer(retained[flagged]), diagnostics = diagnostics)
     cache$variants_prepared <- cache$variants_prepared + length(retained)
     resident_bytes <- 8 * length(cache$sample_ids) * length(.pgenCacheResidentIndices(cache))
@@ -200,6 +201,7 @@ createPgenGenotypeCache <- function(reader, plan, sample_ids, covariates_matrix)
     if (!all(retain)) {
       block$indices <- block$indices[retain]
       block$gt_hat <- block$gt_hat[, retain, drop = FALSE]
+      block$cohort_maf <- block$cohort_maf[retain]
       keep_flags <- block$flagged_indices %in% block$indices
       block$flagged_indices <- block$flagged_indices[keep_flags]
       block$diagnostics <- block$diagnostics[keep_flags, , drop = FALSE]
@@ -239,6 +241,7 @@ getPgenGenotypeCacheWindow <- function(cache, outcome_id) {
   names <- cache$reader$variants$variant_id[indices]
   result <- matrix(0, nrow = length(cache$sample_ids), ncol = length(indices),
     dimnames = list(cache$sample_ids, names))
+  cohort_maf <- rep(NA_real_, length(indices))
   diagnostics <- list()
   guard <- FALSE
   for (block in cache$blocks) {
@@ -246,6 +249,7 @@ getPgenGenotypeCacheWindow <- function(cache, outcome_id) {
     if (!length(in_window)) next
     target <- match(block$indices[in_window], indices)
     result[, target] <- block$gt_hat[, in_window, drop = FALSE]
+    cohort_maf[target] <- block$cohort_maf[in_window]
     flags <- block$flagged_indices %in% indices
     if (any(flags)) {
       guard <- TRUE
@@ -258,7 +262,7 @@ getPgenGenotypeCacheWindow <- function(cache, outcome_id) {
     explained <- explained[order(match(explained$variant_id, names)), , drop = FALSE]
   }
   list(gt_hat = result, variant_indices = as.integer(indices), variant_names = names,
-    covariate_explained_variants = explained, guard_required = guard)
+    cohort_maf = cohort_maf, covariate_explained_variants = explained, guard_required = guard)
 }
 
 pgenGenotypeCacheSummary <- function(cache) {

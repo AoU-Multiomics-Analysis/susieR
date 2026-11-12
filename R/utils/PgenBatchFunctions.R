@@ -550,6 +550,7 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
   lookup <- .pgenAggregateLookup(index)
   summary <- .pgenAddAggregateMetadata(
     .pgenBindAggregateTables(lapply(summary_files, read_parquet)), lookup)
+  if (!"cohort_maf" %in% names(summary)) summary$cohort_maf <- rep(NA_real_, nrow(summary))
   cs <- .pgenAddAggregateMetadata(
     .pgenBindAggregateTables(lapply(credible_set_files, read_parquet)), lookup, residual_sd = FALSE)
   diagnostic <- .pgenBindAggregateTables(lapply(diagnostic_files, pgenReadTextTable,

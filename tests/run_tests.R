@@ -28,6 +28,7 @@ test_files <- c(
   "test_covariate_reader.R", "test_susie_performance.R", "test_susie_fit_caches.R",
   "test_marginal_stat_reuse.R", "test_susie_native_fallback.R", "test_finemap_paths.R",
   "test_covariate_explained_outputs.R", "test_susie_output_pip.R",
+  "test_cohort_maf_dosages.R", "test_susie_cohort_maf_output.R",
   "test_susie_duplicate_variant_labels.R",
   "test_susie_phenotype_residual_sd.R",
   "test_susie_feature_convergence.R",
@@ -56,6 +57,8 @@ if (isTRUE(fit_helpers$.susieFitSourceSupported(asNamespace("susieR")))) {
 }
 run_finemap_path_tests(repo_dir)
 run_covariate_explained_output_tests(repo_dir)
+run_cohort_maf_dosage_tests(repo_dir)
+run_susie_cohort_maf_output_tests(repo_dir)
 run_susie_output_pip_tests(repo_dir)
 run_susie_duplicate_variant_label_tests(repo_dir)
 run_susie_phenotype_residual_sd_tests(repo_dir)

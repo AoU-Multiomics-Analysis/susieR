@@ -119,6 +119,7 @@ finemapPreparedPgenPhenotype <- function(phenotype_id, se, reader, covariates,
   timing_event(timing_stage, "complete")
   timing_stage <- NULL
   fitted$variant_id <- window$variant_names
+  fitted$cohort_maf <- window$cohort_maf
   fitted
 }
 

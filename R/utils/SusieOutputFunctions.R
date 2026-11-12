@@ -45,7 +45,8 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   empty_variant_df <- InitEmptyVariantDf(include_phenotype_residual_sd = TRUE)
   empty_lbf_df <- InitEmptyLbfDf()
   empty_in_cs_variant_df <- InitEmptyInCSVariantDf(
-    include_covariate_diagnostics = TRUE, include_phenotype_residual_sd = TRUE
+    include_covariate_diagnostics = TRUE, include_phenotype_residual_sd = TRUE,
+    include_cohort_maf = TRUE
   )
   empty_cs_df <- InitEmptyCS()
   covariate_explained_variants <- dplyr::bind_rows(
@@ -62,7 +63,14 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   )
   if (is.null(extracted_results)) extracted_results <- purrr::map(results, extractResults)
   res <- purrr::transpose(extracted_results)
-  variant_df <- purrr::map_df(res$variant_df, identity, .id = "phenotype_id")
+  # Extraction rows retain physical predictor order. Attach compact metadata
+  # before CS filtering; repeated labels must not join or expand these rows.
+  variant_df <- purrr::imap_dfr(res$variant_df, function(variant_table, outcome_id) {
+    if (is.null(variant_table)) return(NULL)
+    cohort_maf <- results[[outcome_id]]$cohort_maf
+    if (is.null(cohort_maf)) cohort_maf <- rep(NA_real_, nrow(variant_table))
+    dplyr::mutate(variant_table, cohort_maf = unname(as.double(cohort_maf)))
+  }, .id = "phenotype_id")
   if (nrow(variant_df) > 0L) {
     variant_df <- variant_df %>%
       dplyr::left_join(region_df, by = "phenotype_id") %>%
@@ -101,7 +109,7 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
                        chromosome = chr, position = pos, ref, alt, cs_id, cs_index,
                        region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean,
                        posterior_sd, cs_log10bf, has_covariate_explained_variant,
-                       phenotype_residual_SD)
+                       phenotype_residual_SD, cohort_maf)
   } else {
     in_cs_variant_df <- empty_in_cs_variant_df
     cs_df <- empty_cs_df

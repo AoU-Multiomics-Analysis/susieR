@@ -53,7 +53,7 @@ receive numeric NA, including empty all-old inputs.
 
 - [x] Run local output, batch, lint and repository validation checks.
 - [x] Get independent review and address material findings.
-- [ ] Commit and push the feature to PR #83; update its title and description.
+- [x] Commit and push the feature to PR #83; update its title and description.
 - [ ] Check GitHub Actions, including installed PGEN tests, and report results.
 
 ## Verification record
@@ -65,3 +65,8 @@ PGEN gene checks require the installed CI image; no local image was built.
 
 Independent review found no material issues and separately passed output and
 batch suites plus the diff check.
+
+The first full CI run caught a dropped names attribute on the existing region
+vector. A local caller regression reproduced the failure with reused native fits.
+Preserving the original region names made that regression and the output suite
+pass. Repository validation and R lint also passed after the fix.

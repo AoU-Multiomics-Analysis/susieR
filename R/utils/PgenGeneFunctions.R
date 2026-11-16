@@ -480,7 +480,8 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
   regions <- purrr::imap_dfr(outcomes, function(outcome, outcome_id) {
     metadata <- as.data.frame(SummarizedExperiment::rowData(outcome$se)) |>
       dplyr::filter(.data$phenotype_id == .env$outcome$phenotype_id)
-    tibble::tibble(phenotype_id = outcome_id, region = outcome$region,
+    tibble::tibble(phenotype_id = outcome_id,
+      region = stats::setNames(outcome$region, outcome_id),
       feature_chromosome = as.character(metadata$chromosome[[1L]]),
       feature_position = as.double(metadata$phenotype_pos[[1L]]))
   })

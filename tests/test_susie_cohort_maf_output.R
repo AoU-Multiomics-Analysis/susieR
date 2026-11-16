@@ -165,6 +165,29 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
         "Export must keep fit metadata and scientific values unchanged")
   check(identical(.Random.seed, seed_before), "Export must keep the RNG state unchanged")
 
+  # Exercise caller metadata without a genotype reader. Reuse native fits at
+  # the fit boundary, then compare the complete compact return with direct export.
+  sys.source(file.path(functions_path, "PgenGeneFunctions.R"), envir = helpers)
+  helpers$finemapPgenPhenotype <- function(phenotype_id, ...) results[[phenotype_id]]
+  feature_data <- SummarizedExperiment::SummarizedExperiment(
+    assays = list(counts = matrix(0, nrow = 2L, ncol = 1L)),
+    rowData = data.frame(phenotype_id = c("gene_maf", "gene_old"),
+      chromosome = c("1", "chr2"), phenotype_pos = c(100, 100)))
+  outcomes <- stats::setNames(lapply(names(results), function(id) {
+    list(phenotype_id = id, se = feature_data, covariates = NULL,
+         cis_distance = 1000, region = "chr1_1_2000")
+  }), c("output / α", "output_old"))
+  gene <- helpers$runPgenGene("distance_metadata", outcomes, reader = NULL,
+    output_root = output_dir, base_seed = 13L, missing_code = "NA")
+  expected_regions <- tibble::tibble(phenotype_id = names(outcomes),
+    region = stats::setNames(rep("chr1_1_2000", 2L), names(outcomes)),
+    feature_chromosome = c("1", "chr2"), feature_position = c(100, 100))
+  expected_gene <- helpers$formatSusieOutputs(stats::setNames(results, names(outcomes)),
+    expected_regions)
+  check(identical(gene$summary, expected_gene$in_cs_variant_df) &&
+          identical(gene$credible_sets, expected_gene$cs_df),
+        "Gene export must preserve complete table attributes and map coordinates by phenotype ID")
+
   no_cs <- fitted
   no_cs$sets$cs <- list()
   no_cs$sets$cs_index <- integer()

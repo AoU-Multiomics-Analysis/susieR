@@ -55,6 +55,28 @@ run_pgen_sample_selection_tests <- function(repo_dir) {
     expect_error_message(inferPgenSampleMetadata(c("s1", "s2"), c("s1", "s2"), "s1"),
                          "Covariates are missing retained sample IDs")
   })
+  run_named_test("the loader supplies feature coordinates from BED interval midpoints", {
+    data <- LoadData(opt)
+    expect_identical_value(data$region_df$feature_chromosome, c("1", "1"),
+                           "site interval chromosomes")
+    expect_identical_value(data$region_df$feature_position, c(100, 200),
+                           "site interval midpoints")
+    expanded_bed <- file.path(directory, "expanded-phenotypes.bed")
+    writeLines(c("#chr\tstart\tend\tphenotype_id\ttrait_only\ts2\tNA\t001\ts1",
+                 "chr1\t0\t2\ttrait1\t99\t2\t3\tNA\t1",
+                 "2\t120\t180\ttrait2\t99\t5\t6\t7\t4"), expanded_bed)
+    expanded_opt <- opt
+    expanded_opt$expression_matrix <- expanded_bed
+    expanded <- LoadData(expanded_opt)
+    expect_identical_value(expanded$region_df$phenotype_id, c("trait1", "trait2"),
+                           "expanded interval phenotype order")
+    expect_identical_value(expanded$region_df$region, c("chr1:-99-101", "2:50-250"),
+                           "expanded interval regions")
+    expect_identical_value(expanded$region_df$feature_chromosome, c("chr1", "2"),
+                           "expanded interval chromosomes")
+    expect_identical_value(expanded$region_df$feature_position, c(1, 150),
+                           "expanded interval midpoints")
+  })
   run_named_test("the loader retains phenotype NA values and matches an explicit intersection", {
     inferred <- LoadData(opt)
     explicit_opt <- opt

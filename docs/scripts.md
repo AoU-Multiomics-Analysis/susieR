@@ -10,7 +10,7 @@ Results are written to three Parquet files and two diagnostic TSV files:
 
 | Output | Description |
 |---|---|
-| `<out_prefix>.parquet` | Variants belonging to credible sets. Corresponds to the `SusieParquet` WDL output. |
+| `<out_prefix>.parquet` | Variants belonging to credible sets, with `distance_to_feature_bp` equal to variant position minus the feature midpoint. Corresponds to the `SusieParquet` WDL output. |
 | `<out_prefix>.lbf_variable.parquet` | Log-Bayes factors per credible set. Corresponds to `SusielbfParquet`. |
 | `<out_prefix>.full_susie.parquet` | Fine-mapping statistics for all tested variants. Corresponds to `FullSusieParquet`. |
 | `<out_prefix>.variant_position_summary.tsv` | Per-phenotype summary of tested variant counts, upstream/downstream counts, min/max variant distance from the feature, and requested cis-window size. Corresponds to `VariantPositionSummary`. |

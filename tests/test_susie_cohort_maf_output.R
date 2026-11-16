@@ -22,7 +22,7 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
   n <- 120L
   p <- 20L
   variant_ids <- paste0("chr1_", 1000L + seq_len(p), "_A_G")
-  variant_ids[[2L]] <- variant_ids[[1L]]
+  variant_ids[1:4] <- c("chr1_90_A_G", "chr1_90_A_G", "chr1_100_A_G", "chr1_110_A_G")
   X <- matrix(rnorm(n * p), nrow = n,
               dimnames = list(NULL, variant_ids))
   X[, 2L] <- X[, 1L] + rnorm(n, sd = 0.1)
@@ -45,7 +45,10 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
     c(240L, 238L, 0L, NA_integer_, rep(240L, 16L)), variant_ids)
   results$gene_maf$cohort_mac <- stats::setNames(
     c(30, 89.25, 0, NA_real_, rep(20, 16L)), variant_ids)
-  regions <- tibble::tibble(phenotype_id = rev(names(results)), region = "chr1_1_2000")
+  # Outcome order differs from fit order. The region midpoint is deliberately
+  # different from the feature midpoint, and chromosome prefixes can differ.
+  regions <- tibble::tibble(phenotype_id = rev(names(results)), region = "chr1_1_2000",
+    feature_chromosome = c("chr2", "1"), feature_position = 100)
   fits_before <- serialize(results, NULL)
   seed_before <- .Random.seed
   reference <- helpers$formatSusieOutputs(old_results, regions)
@@ -58,6 +61,8 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
   }
   compact <- tables$in_cs_variant_df
   cohort_columns <- c("cohort_maf", "cohort_an", "cohort_mac")
+  distance_column <- "distance_to_feature_bp"
+  expected_distance <- c(-10, -10, 0, 10, rep(NA_real_, 4L))
   expected_maf <- c(0.125, 0.375, NA_real_, 0.25, rep(NA_real_, 4L))
   expected_an <- c(240, 238, 0, NA_real_, rep(NA_real_, 4L))
   expected_mac <- c(30, 89.25, 0, NA_real_, rep(NA_real_, 4L))
@@ -71,8 +76,31 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
         "Compact AN must use physical predictor positions and numeric NA for old fits")
   check(is.double(compact$cohort_mac) && identical(compact$cohort_mac, expected_mac),
         "Compact MAC must preserve physical positions, fractions, zeros, and unknown values")
-  check(identical(tail(names(compact), 4L), c(cohort_columns, "feature_converged")),
-        "Compact count columns must follow MAF and precede feature convergence")
+  check(identical(tail(names(compact), 5L),
+                  c(cohort_columns, distance_column, "feature_converged")),
+        "Compact metadata must precede feature convergence")
+  check(is.double(compact$distance_to_feature_bp) &&
+          identical(compact$distance_to_feature_bp, expected_distance),
+        "Distance must use the feature midpoint, preserve repeated rows, and omit other chromosomes")
+  no_coordinates <- helpers$formatSusieOutputs(results,
+    dplyr::select(regions, phenotype_id, region))
+  check(identical(no_coordinates$in_cs_variant_df$distance_to_feature_bp, rep(NA_real_, 8L)),
+        "Older coordinate metadata must give numeric unknown distances")
+  for (missing_column in c("feature_chromosome", "feature_position")) {
+    partial_coordinates <- helpers$formatSusieOutputs(results,
+      dplyr::select(regions, -dplyr::all_of(missing_column)))
+    check(identical(partial_coordinates$in_cs_variant_df$distance_to_feature_bp,
+                    rep(NA_real_, 8L)),
+          paste("Missing", missing_column, "must give unknown distances"))
+  }
+  check(identical(dplyr::select(compact, -dplyr::all_of(distance_column)),
+                  dplyr::select(no_coordinates$in_cs_variant_df, -dplyr::all_of(distance_column))),
+        "Distance metadata must preserve all scientific values and physical rows")
+  for (name in c("variant_df", "lbf_df", "cs_df", "covariate_explained_variants")) {
+    check(!distance_column %in% names(tables[[name]]) &&
+            identical(tables[[name]], no_coordinates[[name]]),
+          paste(name, "must keep its schema and values when feature coordinates are added"))
+  }
   check(is.double(reference$in_cs_variant_df$cohort_maf) &&
           identical(reference$in_cs_variant_df$cohort_maf, rep(NA_real_, 8L)),
         "Compact output from all old fits must have numeric unknown MAF")
@@ -130,6 +158,8 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
   check(identical(arrow::read_parquet(files[["summary"]])$cohort_an, expected_an) &&
           identical(arrow::read_parquet(files[["summary"]])$cohort_mac, expected_mac),
         "Compact Parquet must preserve numeric AN and MAC, including zeros and missing values")
+  check(identical(arrow::read_parquet(files[["summary"]])$distance_to_feature_bp, expected_distance),
+        "Compact Parquet must preserve signed distances and missing values")
   check(identical(readRDS(files[["rds"]]), results) &&
           identical(serialize(results, NULL), fits_before),
         "Export must keep fit metadata and scientific values unchanged")
@@ -148,6 +178,8 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
               identical(empty$in_cs_variant_df[[column]], double())
             }, logical(1))),
           "Empty compact output must include numeric MAF, AN, and MAC")
+    check(identical(empty$in_cs_variant_df$distance_to_feature_bp, double()),
+          "Empty compact output must include numeric distance")
     check(all(purrr::map_lgl(empty[c("variant_df", "lbf_df", "cs_df")],
                             ~ !any(cohort_columns %in% names(.x)))),
           "Other empty output tables must keep their existing schemas")
@@ -157,8 +189,10 @@ run_susie_cohort_maf_output_tests <- function(repo_dir = ".") {
     check(all(vapply(cohort_columns, function(column) {
       identical(empty_parquet[[column]], double())
     }, logical(1))), "Empty compact Parquet must keep numeric cohort metadata types")
+    check(identical(empty_parquet$distance_to_feature_bp, double()),
+          "Empty compact Parquet must keep numeric distance")
   }
-  check(!any(cohort_columns %in% names(helpers$InitEmptyInCSVariantDf())),
+  check(!any(c(cohort_columns, distance_column) %in% names(helpers$InitEmptyInCSVariantDf())),
         "The shared compact constructor default must keep the checkpointed schema")
   if (length(failures)) stop(paste(failures, collapse = "\n"), call. = FALSE)
   message("SuSiE compact cohort metadata tests passed: physical rows, cached output, old fits, empty schemas, and Parquet")

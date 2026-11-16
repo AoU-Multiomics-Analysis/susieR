@@ -13,6 +13,14 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
       !all(outcome_ids %in% region_df$phenotype_id)) {
     stop("region_df must map each unique outcome ID to one region", call. = FALSE)
   }
+  # Legacy callers can lack feature coordinates. A region can be asymmetric,
+  # so its midpoint is not a substitute for the recorded feature position.
+  if (!"feature_chromosome" %in% names(region_df)) {
+    region_df$feature_chromosome <- rep(NA_character_, nrow(region_df))
+  }
+  if (!"feature_position" %in% names(region_df)) {
+    region_df$feature_position <- rep(NA_real_, nrow(region_df))
+  }
   if (!is.null(extracted_results)) {
     extracted_ids <- names(extracted_results)
     if (!is.list(extracted_results) || (length(extracted_results) &&
@@ -46,7 +54,8 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
   empty_lbf_df <- InitEmptyLbfDf()
   empty_in_cs_variant_df <- InitEmptyInCSVariantDf(
     include_covariate_diagnostics = TRUE, include_phenotype_residual_sd = TRUE,
-    include_cohort_maf = TRUE, include_cohort_counts = TRUE
+    include_cohort_maf = TRUE, include_cohort_counts = TRUE,
+    include_feature_distance = TRUE
   )
   empty_cs_df <- InitEmptyCS()
   covariate_explained_variants <- dplyr::bind_rows(
@@ -81,6 +90,9 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
       dplyr::left_join(region_df, by = "phenotype_id") %>%
       tidyr::separate(variant_id, c("chr", "pos", "ref", "alt"), sep = "_", remove = FALSE) %>%
       dplyr::mutate(chr = stringr::str_remove_all(chr, "chr")) %>%
+      dplyr::mutate(distance_to_feature_bp = dplyr::if_else(
+        normalize_chr(chr) == normalize_chr(feature_chromosome) & is.finite(feature_position),
+        as.double(pos) - feature_position, NA_real_)) %>%
       dplyr::mutate(cs_index = cs_id) %>%
       dplyr::mutate(cs_id = paste(phenotype_id, cs_index, sep = "_"))
   }
@@ -114,7 +126,8 @@ formatSusieOutputs <- function(results, region_df, extracted_results = NULL) {
                        chromosome = chr, position = pos, ref, alt, cs_id, cs_index,
                        region, pip, z, cs_min_r2, cs_avg_r2, cs_size, posterior_mean,
                        posterior_sd, cs_log10bf, has_covariate_explained_variant,
-                       phenotype_residual_SD, cohort_maf, cohort_an, cohort_mac)
+                       phenotype_residual_SD, cohort_maf, cohort_an, cohort_mac,
+                       distance_to_feature_bp)
   } else {
     in_cs_variant_df <- empty_in_cs_variant_df
     cs_df <- empty_cs_df

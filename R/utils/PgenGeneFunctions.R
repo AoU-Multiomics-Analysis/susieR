@@ -477,9 +477,13 @@ runPgenGene <- function(gene_id, outcomes, reader, output_root, base_seed,
     readr::write_tsv(index, extra_files[["index"]], quote = "needed")
     fit_progress(status, count = count, fitted = fitted)
   }
-  regions <- tibble::tibble(
-    phenotype_id = outcome_ids,
-    region = vapply(outcomes, function(outcome) outcome$region, character(1)))
+  regions <- purrr::imap_dfr(outcomes, function(outcome, outcome_id) {
+    metadata <- as.data.frame(SummarizedExperiment::rowData(outcome$se)) |>
+      dplyr::filter(.data$phenotype_id == .env$outcome$phenotype_id)
+    tibble::tibble(phenotype_id = outcome_id, region = outcome$region,
+      feature_chromosome = as.character(metadata$chromosome[[1L]]),
+      feature_position = as.double(metadata$phenotype_pos[[1L]]))
+  })
   tables <- formatSusieOutputs(results, regions, extracted_results = extracted_results)
   files <- c(writeSusieOutputs(results, tables, prefix), extra_files)
   log_line(paste0("Gene complete: ", gene_id))

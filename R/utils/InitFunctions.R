@@ -85,7 +85,8 @@ empty_lbf_df
 InitEmptyInCSVariantDf <- function(include_covariate_diagnostics = FALSE,
                                   include_phenotype_residual_sd = FALSE,
                                   include_cohort_maf = FALSE,
-                                  include_cohort_counts = FALSE) {
+                                  include_cohort_counts = FALSE,
+                                  include_feature_distance = FALSE) {
 empty_in_cs_variant_df = dplyr::tibble(
   molecular_trait_id = character(),
   variant = character(),
@@ -121,6 +122,11 @@ if (include_cohort_maf) {
 if (include_cohort_counts) {
   empty_in_cs_variant_df <- dplyr::mutate(
     empty_in_cs_variant_df, cohort_an = numeric(), cohort_mac = numeric()
+  )
+}
+if (include_feature_distance) {
+  empty_in_cs_variant_df <- dplyr::mutate(
+    empty_in_cs_variant_df, distance_to_feature_bp = numeric()
   )
 }
 empty_in_cs_variant_df

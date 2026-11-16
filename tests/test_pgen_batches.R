@@ -156,7 +156,7 @@ run_pgen_batch_tests <- function(repo_dir) {
     region = "chr1:6-16", pip = .9, z = 4, cs_min_r2 = .8, cs_avg_r2 = .9, cs_size = 1L,
     posterior_mean = .4, posterior_sd = .1, cs_log10bf = 3,
     has_covariate_explained_variant = FALSE, phenotype_residual_SD = 1.25,
-    cohort_maf = 0.125, cohort_an = 8, cohort_mac = 1))
+    cohort_maf = 0.125, cohort_an = 8, cohort_mac = 1, distance_to_feature_bp = -1))
   cs <- bind_cols(own[1, ], tibble(molecular_trait_id = "a", cs_id = "a_1", cs_index = "1",
     region = "chr1:6-16", cs_log10bf = 3, cs_avg_r2 = .9, cs_min_r2 = .8, cs_size = 1,
     low_purity = FALSE, has_covariate_explained_variant = FALSE))
@@ -165,11 +165,12 @@ run_pgen_batch_tests <- function(repo_dir) {
   summary_tables <- list(
     bind_rows(summary, summary, mutate(summary, pip = .2, z = -2, posterior_mean = -.3,
                               phenotype_residual_SD = 2.5, cohort_maf = 0.375,
-                              cohort_an = 0, cohort_mac = 0)) %>%
+                              cohort_an = 0, cohort_mac = 0, distance_to_feature_bp = 25.5)) %>%
       mutate(feature_converged = c(TRUE, TRUE, FALSE), first_note = c("first", "first", "different")),
     mutate(summary, molecular_trait_id = "foreign", outcome_id = "outside",
       phenotype_id = "foreign", gene_id = "unlisted gene", cs_id = "unknown set",
       cs_size = 99L, cohort_maf = 0.25, cohort_an = 12, cohort_mac = 2.5,
+      distance_to_feature_bp = 0,
       feature_converged = TRUE, second_note = "second"))
   cs_tables <- list(
     bind_rows(cs, cs, mutate(cs, cs_size = -5, low_purity = TRUE)) %>%
@@ -300,6 +301,26 @@ run_pgen_batch_tests <- function(repo_dir) {
                     names(arrow::read_parquet("aggregate/credible_sets.parquet"))))
   }
 
+  # Keep supplied distances in row order. Older files have unknown distances.
+  mixed_distance <- list(select(summary_tables[[1L]], -distance_to_feature_bp),
+                         summary_tables[[2L]])
+  emit(sums = mixed_distance)
+  without_warnings(aggregate())
+  mixed_distance_output <- arrow::read_parquet("aggregate/susie.parquet")
+  stopifnot(identical(mixed_distance_output, bind_rows(mixed_distance)),
+    identical(mixed_distance_output$distance_to_feature_bp,
+              c(NA_real_, NA_real_, NA_real_, 0)))
+  old_distance <- lapply(summary_tables, function(table) select(table, -distance_to_feature_bp))
+  emit(sums = old_distance)
+  without_warnings(aggregate())
+  old_distance_output <- arrow::read_parquet("aggregate/susie.parquet")
+  stopifnot("All old compact inputs must receive numeric unknown distances" =
+    identical(old_distance_output, bind_rows(old_distance) %>%
+      mutate(distance_to_feature_bp = NA_real_)),
+    is.double(old_distance_output$distance_to_feature_bp),
+    !"distance_to_feature_bp" %in%
+      names(arrow::read_parquet("aggregate/credible_sets.parquet")))
+
   # Fill absent metadata only. Conflicting or unknown index values stay unknown.
   metadata_index <- tibble(outcome_id = c("a", "a", "b", "conflict", "conflict"),
     converged = c(TRUE, TRUE, FALSE, TRUE, FALSE),
@@ -339,6 +360,7 @@ run_pgen_batch_tests <- function(repo_dir) {
   stopifnot(nrow(empty) == 0L, is.double(empty$phenotype_residual_SD),
     is.logical(empty$feature_converged), is.double(empty$cohort_maf),
     identical(empty$cohort_an, double()), identical(empty$cohort_mac, double()),
+    identical(empty$distance_to_feature_bp, double()),
     nrow(arrow::read_parquet("aggregate/credible_sets.parquet")) == 0L)
   check_tsv("aggregate/outcome_index.tsv", bind_rows(index_tables))
 

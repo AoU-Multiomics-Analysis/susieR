@@ -415,9 +415,18 @@ run_pgen_gene_tests <- function(repo_dir) {
               result$index$credible_set_count[[3L]] == 0L,
               identical(unique(result$summary$region), unname(vapply(outcomes[1:2], `[[`, character(1), "region"))))
     regions <- tibble(phenotype_id = names(outcomes),
-                      region = vapply(outcomes, `[[`, character(1), "region"))
+                      region = vapply(outcomes, `[[`, character(1), "region"),
+                      feature_chromosome = c("1", "1", "1"),
+                      feature_position = c(100, 210, 100))
     fresh <- compare_reused_outputs(fits, regions, file.path(temp, "reuse-mixed"))
     expect_identical_value(result$summary, fresh$in_cs_variant_df, "gene summary rows")
+    signal_rows <- result$summary |>
+      dplyr::filter((molecular_trait_id == "outcome / α" & variant == "chr1_80_A_G") |
+                      (molecular_trait_id == "outcome2" & variant == "chr1_150_A_G")) |>
+      dplyr::distinct(molecular_trait_id, distance_to_feature_bp)
+    expect_identical_value(signal_rows, tibble::tibble(
+      molecular_trait_id = c("outcome / α", "outcome2"),
+      distance_to_feature_bp = c(-20, -60)), "gene output distances use each phenotype")
     expect_identical_value(result$credible_sets, fresh$cs_df, "gene credible-set rows")
     expect_identical_value(result$diagnostics, fresh$covariate_explained_variants,
                            "gene diagnostic rows")
@@ -555,7 +564,8 @@ run_pgen_gene_tests <- function(repo_dir) {
     stopifnot(identical(tables$in_cs_variant_df,
                         mutate(InitEmptyInCSVariantDf(TRUE, include_phenotype_residual_sd = TRUE,
                                                      include_cohort_maf = TRUE,
-                                                     include_cohort_counts = TRUE),
+                                                     include_cohort_counts = TRUE,
+                                                     include_feature_distance = TRUE),
                                feature_converged = logical())),
               identical(tables$lbf_df, InitEmptyLbfDf()),
               identical(tables$variant_df,

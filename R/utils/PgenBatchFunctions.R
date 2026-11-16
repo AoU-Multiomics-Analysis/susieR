@@ -550,7 +550,7 @@ aggregatePgenBatches <- function(expected_outcomes, summary_files, credible_set_
   lookup <- .pgenAggregateLookup(index)
   summary <- .pgenAddAggregateMetadata(
     .pgenBindAggregateTables(lapply(summary_files, read_parquet)), lookup)
-  for (column in c("cohort_maf", "cohort_an", "cohort_mac")) {
+  for (column in c("cohort_maf", "cohort_an", "cohort_mac", "distance_to_feature_bp")) {
     if (!column %in% names(summary)) summary[[column]] <- rep(NA_real_, nrow(summary))
   }
   cs <- .pgenAddAggregateMetadata(

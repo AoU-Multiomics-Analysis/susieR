@@ -257,6 +257,21 @@ each absent field. Counts cannot be recovered from old MAF values or an imputed
 matrix. Full variant, LBF, and credible-set table schemas stay unchanged.
 Recording this metadata does not change model inputs, PIPs, credible sets, or effects.
 
+The compact variant Parquets also contain numeric `distance_to_feature_bp`.
+This is the variant position minus the feature midpoint, in base pairs. The
+feature midpoint is `floor((BED start + BED end) / 2)`, as used to select the cis
+window. Negative values indicate a lower genomic coordinate; positive values
+indicate a higher coordinate. The sign does not use feature strand. For an SV,
+the calculation uses the position in its variant ID, rather than its interval
+or length.
+
+The distance is recorded in per-gene, batch, and combined compact files. A
+variant on another chromosome, or a feature with no recorded coordinates, has
+a numeric missing value. Old compact files receive missing distances during
+aggregation. The aggregator preserves any recorded distances. The calculation
+uses feature metadata, so clipping a cis window at chromosome start does not
+change the reference position.
+
 **Output correction, 2026-11-09:** Earlier exporters put the assigned effect's
 alpha value in `pip`. Full-table variants outside retained credible sets
 received missing PIPs. Those exports need to be regenerated from the original

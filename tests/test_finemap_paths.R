@@ -166,6 +166,14 @@ run_finemap_path_tests <- function(repo_dir = ".") {
     gt <- raw_genotypes[, samples, drop = FALSE]
     gt <- gt[rowSums(round(gt, 0), na.rm = TRUE) != 0, , drop = FALSE]
     gt[gt == -1] <- NA_real_
+    expected_an <- 2 * rowSums(!is.na(gt))
+    expected_alt <- rowSums(gt, na.rm = TRUE)
+    expected_mac <- pmin(expected_alt, expected_an - expected_alt)
+    invalid_observed <- apply(gt, 1L, function(row) {
+      any(!is.finite(row[!is.na(row)]) | row[!is.na(row)] < 0 | row[!is.na(row)] > 2)
+    })
+    expected_an[invalid_observed] <- NA_real_
+    expected_mac[invalid_observed] <- NA_real_
     all_missing <- rowSums(!is.na(gt)) == 0L
     means <- rowMeans(gt, na.rm = TRUE)
     means[is.na(means)] <- 0
@@ -185,11 +193,15 @@ run_finemap_path_tests <- function(repo_dir = ".") {
     fitted$phenotype_residual_SD <- stats::sd(drop(y))
     fitted$variant_id <- colnames(x)
     fitted$cohort_maf <- unname(expected_maf[match(colnames(x), rownames(gt))])
+    fitted$cohort_an <- unname(expected_an[match(colnames(x), rownames(gt))])
+    fitted$cohort_mac <- unname(expected_mac[match(colnames(x), rownames(gt))])
     fitted
   }
   compare_fit <- function(reference, actual) {
     stopifnot(identical(reference$variant_id, actual$variant_id),
               isTRUE(all.equal(reference$cohort_maf, actual$cohort_maf, tolerance = 1e-12)),
+              identical(reference$cohort_an, actual$cohort_an),
+              identical(reference$cohort_mac, actual$cohort_mac),
               isTRUE(all.equal(reference$phenotype_residual_SD,
                                actual$phenotype_residual_SD, tolerance = 1e-12)),
               identical(reference$sets$cs, actual$sets$cs),

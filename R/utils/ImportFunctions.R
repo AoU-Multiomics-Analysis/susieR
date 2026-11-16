@@ -477,7 +477,9 @@ LoadData <- function(opt_list) {
                     filter(phenotype_id %in% phenotype_list$phenotype_id) %>% 
                     transmute(phenotype_id,region = paste0(chromosome,':',
                                                            phenotype_pos - cis_distance,'-',
-                                                           phenotype_pos + cis_distance))
+                                                           phenotype_pos + cis_distance),
+                              feature_chromosome = as.character(chromosome),
+                              feature_position = phenotype_pos)
     if (!is.null(opt_list$AdditionalGenotypesBed)) {
         # Additional genotypes are subset to phenotypes being fine-mapped and
         # stored as a variant x sample matrix before merging into dosage data.

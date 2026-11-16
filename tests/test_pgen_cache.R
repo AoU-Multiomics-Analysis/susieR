@@ -25,25 +25,35 @@ run_pgen_cache_state_tests <- function(repo_dir) {
                                            empty = integer()))
   cache$blocks <- list(
     list(indices = c(5L, 2L), gt_hat = matrix(c(5, -5, 2, -2), nrow = 2L),
-         cohort_maf = c(.375, .125), flagged_indices = integer(),
+         cohort_maf = c(.375, .125), cohort_an = c(6, 8), cohort_mac = c(2, 1),
+         flagged_indices = integer(),
          diagnostics = .pgenCacheEmptyDiagnostics()),
     list(indices = c(8L, 3L), gt_hat = matrix(c(8, -8, 3, -3), nrow = 2L),
-         cohort_maf = c(.5, .25), flagged_indices = integer(),
+         cohort_maf = c(.5, .25), cohort_an = c(4, 6), cohort_mac = c(2, 1.5),
+         flagged_indices = integer(),
          diagnostics = .pgenCacheEmptyDiagnostics()))
   run_named_test("cached MAF follows physical predictors with repeated labels", {
     left <- getPgenGenotypeCacheWindow(cache, "left")
     expect_identical_value(left$cohort_maf, c(.125, .25, .375), "left physical MAF order")
     expect_identical_value(left$variant_names, c("duplicate", "v3", "duplicate"))
+    expect_identical_value(left$cohort_an, c(8, 6, 6), "left observed AN order")
+    expect_identical_value(left$cohort_mac, c(1, 1.5, 2), "left observed MAC order")
     right <- getPgenGenotypeCacheWindow(cache, "right")
     expect_identical_value(right$cohort_maf, c(.25, .375, .5), "right physical MAF order")
+    expect_identical_value(right$cohort_an, c(6, 6, 4), "right observed AN order")
+    expect_identical_value(right$cohort_mac, c(1.5, 2, 2), "right observed MAC order")
   })
   run_named_test("rolling eviction keeps MAF aligned with resident genotype columns", {
     cache$mode <- "rolling"
     left <- getPgenGenotypeCacheWindow(cache, "left")
     expect_identical_value(left$cohort_maf, c(.125, .25, .375), "evicted window MAF")
     expect_identical_value(cache$blocks[[2L]]$cohort_maf, .25, "retained block MAF")
+    expect_identical_value(cache$blocks[[2L]]$cohort_an, 6, "retained block AN")
+    expect_identical_value(cache$blocks[[2L]]$cohort_mac, 1.5, "retained block MAC")
     empty <- getPgenGenotypeCacheWindow(cache, "empty")
     expect_identical_value(empty$cohort_maf, numeric(), "empty window MAF")
+    expect_identical_value(empty$cohort_an, numeric(), "empty window AN")
+    expect_identical_value(empty$cohort_mac, numeric(), "empty window MAC")
   })
   invisible(TRUE)
 }
@@ -89,15 +99,20 @@ run_pgen_cache_tests <- function(repo_dir) {
   observe_reads <- function(code) {
     observer <- new.env(parent = emptyenv())
     observer$indices <- list()
+    observer$raw_indices <- list()
     tracer <- substitute({
       .cache_read_observer <- captured
-      .cache_read_observer$indices[[length(.cache_read_observer$indices) + 1L]] <- variant_subset
+      if (meanimpute) {
+        .cache_read_observer$indices[[length(.cache_read_observer$indices) + 1L]] <- variant_subset
+      } else {
+        .cache_read_observer$raw_indices[[length(.cache_read_observer$raw_indices) + 1L]] <- variant_subset
+      }
     }, list(captured = observer))
     suppressMessages(trace("ReadList", tracer = tracer,
       where = asNamespace("pgenlibr"), print = FALSE))
     on.exit(suppressMessages(untrace("ReadList", where = asNamespace("pgenlibr"))), add = TRUE)
     value <- force(code)
-    list(value = value, indices = observer$indices)
+    list(value = value, indices = observer$indices, raw_indices = observer$raw_indices)
   }
   run_named_test("automatic cache selection uses overlap and exact memory limits", {
     whole <- planPgenGenotypeCache(reader, worklist, selected)
@@ -150,7 +165,11 @@ run_pgen_cache_tests <- function(repo_dir) {
     x <- x - input_design %*% solve(crossprod(input_design)) %*% crossprod(input_design, x)
     dimnames(x) <- list(selected, reader$variants$variant_id[indices])
     alt_af <- rowMeans(mat) / 2
-    list(x = x, indices = as.integer(indices), maf = unname(pmin(alt_af, 1 - alt_af)))
+    observed <- calls[indices, selected, drop = FALSE]
+    an <- 2 * rowSums(!is.na(observed))
+    ac <- rowSums(observed, na.rm = TRUE)
+    list(x = x, indices = as.integer(indices), maf = unname(pmin(alt_af, 1 - alt_af)),
+         an = unname(as.double(an)), mac = unname(as.double(pmin(ac, an - ac))))
   }
   run_named_test("whole cache prepares each physical variant once and matches R", {
     plan <- planPgenGenotypeCache(reader, worklist, selected, mode = "whole")
@@ -162,6 +181,8 @@ run_pgen_cache_tests <- function(repo_dir) {
       stopifnot(isTRUE(all.equal(result$gt_hat, expected$x, tolerance = 1e-13)))
       expect_identical_value(result$variant_indices, expected$indices)
       stopifnot(isTRUE(all.equal(result$cohort_maf, expected$maf, tolerance = 1e-15)))
+      expect_identical_value(result$cohort_an, expected$an, "whole-cache observed AN")
+      expect_identical_value(result$cohort_mac, expected$mac, "whole-cache observed MAC")
       stopifnot(!result$guard_required)
     }
     first <- getPgenGenotypeCacheWindow(cache, "A")
@@ -170,6 +191,10 @@ run_pgen_cache_tests <- function(repo_dir) {
     high_alt <- getPgenGenotypeCacheWindow(cache, "B")
     stopifnot(isTRUE(all.equal(high_alt$cohort_maf[high_alt$variant_indices == 7L], 1 / 6,
                               tolerance = 1e-15)))
+    expect_identical_value(high_alt$cohort_an[high_alt$variant_indices == 7L], 12,
+                           "ALT-major AN")
+    expect_identical_value(high_alt$cohort_mac[high_alt$variant_indices == 7L], 2,
+                           "ALT-major minor REF count")
     summary <- pgenGenotypeCacheSummary(cache)
     stopifnot(summary$variants_read == 8, summary$variants_prepared == 6,
               summary$excluded_variants == 2, summary$cache_hits > 0,
@@ -189,12 +214,16 @@ run_pgen_cache_tests <- function(repo_dir) {
         stopifnot(isTRUE(all.equal(result$gt_hat, expected$x, tolerance = 1e-13)))
         expect_identical_value(result$variant_indices, expected$indices)
         stopifnot(isTRUE(all.equal(result$cohort_maf, expected$maf, tolerance = 1e-15)))
+        expect_identical_value(result$cohort_an, expected$an, "rolling-cache observed AN")
+        expect_identical_value(result$cohort_mac, expected$mac, "rolling-cache observed MAC")
       }
     })
     # The native retry removes all-missing physical row 5 only. Later reads
     # contain entering rows only; evicted ordinary rows 2 and 4 are read again.
     expect_identical_value(observed$indices,
       list(2:6, c(2L, 3L, 4L, 6L), 7L, 8:9, c(2L, 4L)), "native entering-variant reads")
+    expect_identical_value(observed$raw_indices,
+      list(2:6, 7L, 8:9, c(2L, 4L)), "observed counts read only entering variants")
     summary <- pgenGenotypeCacheSummary(cache)
     # A reads 5 rows (2 exclusions), B reads 7, D reads 8,9, then A rereads 2,4.
     stopifnot(summary$variants_read == 10, summary$cache_hits > 0,
@@ -269,6 +298,7 @@ run_pgen_cache_tests <- function(repo_dir) {
     dimnames(expected) <- list(selected, large_reader$variants$variant_id[keep])
     stopifnot(isTRUE(all.equal(result$gt_hat, expected, tolerance = 1e-13)),
               max(lengths(observed$indices)) <= 256L,
+              max(lengths(observed$raw_indices)) <= 256L,
               length(cache$blocks) == 3L,
               pgenGenotypeCacheSummary(cache)$variants_read == 600,
               pgenGenotypeCacheSummary(cache)$resident_variants == 598)
@@ -279,6 +309,7 @@ run_pgen_cache_tests <- function(repo_dir) {
     # A disjoint/new portion was prepared with the union and needs no new reads.
     observed <- observe_reads(getPgenGenotypeCacheWindow(cache, "right"))
     stopifnot(length(observed$indices) == 0L)
+    stopifnot(length(observed$raw_indices) == 0L)
   })
   message("All prepared PGEN cache tests passed.")
   invisible(TRUE)

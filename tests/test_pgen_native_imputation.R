@@ -89,6 +89,15 @@ run_pgen_native_imputation_tests <- function(repo_dir) {
     expect_identical_value(imputePgenHardcalls(reader, sentinel), expected,
                            "minus-one imputation")
   })
+  run_named_test("fallback native imputation returns observed counts after row removal", {
+    missing <- calls[c(4L, 2L, 3L), selected, drop = FALSE]
+    counted <- imputePgenHardcalls(reader, missing, include_cohort_counts = TRUE)
+    counts <- attr(counted, "cohort_counts")
+    attr(counted, "cohort_counts") <- NULL
+    expect_identical_value(counted, imputePgenHardcalls(reader, missing), "same fallback matrix")
+    expect_identical_value(counts$cohort_an, c(4, 6), "fallback observed AN")
+    expect_identical_value(counts$cohort_mac, c(1, 3), "fallback observed MAC")
+  })
   run_named_test("native imputation retains relative inputs after a directory change", {
     original_directory <- getwd()
     setwd(directory)
@@ -239,6 +248,77 @@ run_pgen_native_imputation_tests <- function(repo_dir) {
     stopifnot(typeof(observed$value) == "double", observed$hardcall_calls == 0L,
       length(observed$calls) == 1L, isTRUE(observed$calls[[1L]]$meanimpute))
   })
+  run_named_test("native count sidecar uses observed calls in the exact selected samples", {
+    expected_first <- rbind(c(1, 0.5, 0), c(1.5, 1, 2), c(0, 2, 1),
+                            c(2, 2, 2), c(0, 0, 0))
+    dimnames(expected_first) <- list(ids[c(1L, 2L, 3L, 5L, 6L)], selected)
+    observed <- observe_native(readPgenVariants(reader, 1:6,
+      sample_ids = selected, include_cohort_counts = TRUE))
+    if (inherits(observed$value, "error")) stop(observed$value)
+    expect_identical_value(observed$value$genotypes, expected_first, "unchanged native matrix")
+    expect_identical_value(observed$value$variant_indices, c(1L, 2L, 3L, 5L, 6L))
+    expect_identical_value(observed$value$cohort_an, c(4, 4, 6, 4, 4), "observed AN")
+    expect_identical_value(observed$value$cohort_mac, c(1, 1, 3, 0, 0), "observed MAC")
+    stopifnot(observed$hardcall_calls == 0L,
+      sum(vapply(observed$calls, function(call) !call$meanimpute, logical(1))) == 1L,
+      sum(vapply(observed$calls, function(call) call$meanimpute, logical(1))) == 2L)
+    empty <- readPgenVariants(reader, 4L, sample_ids = selected,
+                             include_cohort_counts = TRUE)
+    expect_identical_value(empty$cohort_an, numeric(), "empty native AN")
+    expect_identical_value(empty$cohort_mac, numeric(), "empty native MAC")
+  })
+  run_named_test("native observed counts preserve fractional stored dosages", {
+    dose_files <- file.path(directory, c("fractional.pgen", "fractional.pvar", "fractional.psam"))
+    writer <- pgenlibr::NewPgenWriter(dose_files[[1L]], 6L, 1L,
+                                    nonref_flags = FALSE, dosage_present = TRUE)
+    tryCatch(pgenlibr::AppendDosages(writer, c(.25, 1.75, NA, 2, .5, 0)),
+             finally = pgenlibr::ClosePgenWriter(writer))
+    writeLines(c("#CHROM\tPOS\tID\tREF\tALT", "1\t201\tfractional\tA\tG"), dose_files[[2L]])
+    writeLines(c("#IID", samples), dose_files[[3L]])
+    dose_reader <- do.call(openPgenReader, as.list(dose_files))
+    tryCatch({
+      baseline <- readPgenVariants(dose_reader, 1L, sample_ids = selected)
+      result <- readPgenVariants(dose_reader, 1L, sample_ids = selected,
+                                include_cohort_counts = TRUE)
+      expect_identical_value(result$genotypes, baseline$genotypes, "fractional native matrix")
+      expect_identical_value(result$cohort_an, 4, "dosages count even without hardcalls")
+      expect_identical_value(result$cohort_mac, .25, "fractional minor REF count")
+      hardcalls <- readPgenWindow(dose_reader, "1", 201L, 201L, as_double = TRUE,
+                                 sample_ids = selected)
+      counted_fallback <- imputePgenHardcalls(dose_reader, hardcalls,
+                                             include_cohort_counts = TRUE)
+      fallback_counts <- attr(counted_fallback, "cohort_counts")
+      attr(counted_fallback, "cohort_counts") <- NULL
+      expect_identical_value(counted_fallback, result$genotypes,
+                             "fallback fractional native matrix")
+      expect_identical_value(fallback_counts$cohort_an, 4, "fallback dosage AN")
+      expect_identical_value(fallback_counts$cohort_mac, .25, "fallback fractional MAC")
+    }, finally = closePgenReader(dose_reader))
+  })
+  run_named_test("fallback counts match complete hardcall predictors used by the fit", {
+    dose_files <- file.path(directory, c("called-dosage.pgen", "called-dosage.pvar", "called-dosage.psam"))
+    writer <- pgenlibr::NewPgenWriter(dose_files[[1L]], 6L, 1L,
+                                    nonref_flags = FALSE, dosage_present = TRUE)
+    tryCatch(pgenlibr::AppendDosages(writer, c(.05, .05, 1, 2, 0, 2)),
+             finally = pgenlibr::ClosePgenWriter(writer))
+    writeLines(c("#CHROM\tPOS\tID\tREF\tALT", "1\t202\tcalled-dosage\tA\tG"), dose_files[[2L]])
+    writeLines(c("#IID", samples), dose_files[[3L]])
+    dose_reader <- do.call(openPgenReader, as.list(dose_files))
+    tryCatch({
+      hardcalls <- readPgenWindow(dose_reader, "1", 202L, 202L, as_double = TRUE)
+      stopifnot(!anyNA(hardcalls))
+      baseline <- imputePgenHardcalls(dose_reader, hardcalls)
+      counted <- imputePgenHardcalls(dose_reader, hardcalls, include_cohort_counts = TRUE)
+      counts <- attr(counted, "cohort_counts")
+      attr(counted, "cohort_counts") <- NULL
+      expect_identical_value(counted, baseline, "complete fallback model predictors")
+      expect_identical_value(counts$cohort_an, 12, "complete fallback observed AN")
+      expect_identical_value(counts$cohort_mac, 5, "complete fallback hardcall MAC")
+      native <- readPgenVariants(dose_reader, 1L, include_cohort_counts = TRUE)
+      stopifnot(native$cohort_mac > 5, native$cohort_mac < 5.2,
+                !identical(native$genotypes, hardcalls))
+    }, finally = closePgenReader(dose_reader))
+  })
   run_named_test("first native read is independent of the missing-code output policy", {
     expected_first <- rbind(c(1, 0.5, 0), c(1.5, 1, 2), c(0, 2, 1))
     dimnames(expected_first) <- list(ids[1:3], selected)
@@ -299,6 +379,10 @@ run_pgen_native_imputation_tests <- function(repo_dir) {
       expect_identical_value(readPgenWindow(duplicate_reader, "1", 301L, 301L,
         meanimpute = TRUE, sample_ids = selected), expected_duplicate[c(1L, 3L), , drop = FALSE],
         "duplicate-position window")
+      counted <- readPgenVariants(duplicate_reader, 1:3, sample_ids = selected,
+                                 include_cohort_counts = TRUE)
+      expect_identical_value(counted$cohort_an, c(4, 6, 4), "duplicate physical AN order")
+      expect_identical_value(counted$cohort_mac, c(1, 3, 1), "duplicate physical MAC order")
     }, finally = closePgenReader(duplicate_reader))
   })
   run_named_test("first native read validates sample subsets against the open reader", {

@@ -230,10 +230,47 @@ dosage representation. An entirely missing legacy row, or a feature outside
 the diploid dosage range, has unknown MAF. Additional features must encode ALT
 copy counts for this allele-frequency interpretation to apply.
 
-The column is carried through per-gene, batch, and combined compact files.
-Older fits or compact files without recorded MAF receive numeric missing
-values. The full variant, LBF, and credible-set table schemas stay unchanged.
-Recording MAF does not change model inputs, PIPs, credible sets, or effects.
+The compact variant Parquets also contain numeric `cohort_an` and `cohort_mac`:
+
+- `cohort_an` is twice the number of samples with an observed diploid dosage.
+- `cohort_mac` is the smaller of the observed ALT dosage sum and
+  `cohort_an` minus that sum. It can be fractional for dosage-valued inputs.
+
+These counts use the final samples in each fit, before mean imputation,
+centering, or covariate adjustment. NA and -1 are missing calls and do not
+contribute to either count. A retained row with no observed calls has AN=0 and
+MAC=0, while its MAF is unknown. A nonmissing value outside the diploid dosage
+range gives unknown counts. Native PGEN preparation keeps its current mean
+imputation and all-missing exclusions. A bounded raw-dosage read records counts
+for each new block; cache hits reuse the count vectors.
+
+Counts use the same genotype representation as the fit and `cohort_maf`.
+Native-first and cached PGEN paths use stored dosages. Legacy hardcall paths,
+including additional-genotype fits, count their observed hardcalls. When native
+imputation replaces a hardcall row with stored dosages, its counts come from the
+observed stored dosages. This records the predictors actually fitted without
+changing their values or mixing count and MAF representations.
+
+All three columns are carried through per-gene, batch, and combined compact
+variant files. Older fits or compact files receive numeric missing values for
+each absent field. Counts cannot be recovered from old MAF values or an imputed
+matrix. Full variant, LBF, and credible-set table schemas stay unchanged.
+Recording this metadata does not change model inputs, PIPs, credible sets, or effects.
+
+The compact variant Parquets also contain numeric `distance_to_feature_bp`.
+This is the variant position minus the feature midpoint, in base pairs. The
+feature midpoint is `floor((BED start + BED end) / 2)`, as used to select the cis
+window. Negative values indicate a lower genomic coordinate; positive values
+indicate a higher coordinate. The sign does not use feature strand. For an SV,
+the calculation uses the position in its variant ID, rather than its interval
+or length.
+
+The distance is recorded in per-gene, batch, and combined compact files. A
+variant on another chromosome, or a feature with no recorded coordinates, has
+a numeric missing value. Old compact files receive missing distances during
+aggregation. The aggregator preserves any recorded distances. The calculation
+uses feature metadata, so clipping a cis window at chromosome start does not
+change the reference position.
 
 **Output correction, 2026-11-09:** Earlier exporters put the assigned effect's
 alpha value in `pip`. Full-table variants outside retained credible sets
